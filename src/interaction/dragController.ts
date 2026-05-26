@@ -2,12 +2,12 @@ import { Vector3, type PerspectiveCamera, type Ray } from "three";
 import { type ArcballControls } from "three/examples/jsm/controls/ArcballControls.js";
 import { Polyhedron } from "../geometry/polyhedron";
 import { type Mesh } from "../geometry/HalfEdge";
-import { type MorphPlan } from "../operations/types";
+import { type MorphPlan, type OperationKind } from "../operations/types";
 import { buildTruncate, closestIncidentEdge } from "../operations/truncate";
 import { buildKis } from "../operations/kis";
 import { buildSnub } from "../operations/snub";
 import { buildGyro } from "../operations/gyro";
-import { RelaxSolver } from "../solver/solver";
+import { RelaxSolver, type Strategy } from "../solver/solver";
 import { extractTopology } from "../solver/topology";
 import { type Signature, describeSignature } from "../identify/configurations";
 import { identify, buildGraphData, namedGraphFor } from "../identify/identify";
@@ -15,6 +15,8 @@ import { SceneView, type Marker, type MarkerKind } from "../render/sceneView";
 import { Picker } from "./picker";
 import { Selection } from "./selection";
 import { Readout } from "../ui/readout";
+import { History, type HistoryEntry } from "../history/history";
+import { HistoryPanel } from "../ui/historyPanel";
 import { config } from "../config";
 
 const DRAG_START_PIXELS = 4;
@@ -41,6 +43,7 @@ interface Drag {
   id: number;
   allowMax: boolean;
   hasSelection: boolean; // operating on a multi-select subset (drives green feedback)
+  selCount: number | null; // size of that subset (null = whole solid), for the label
   addedToSelection: boolean; // this Cmd-drag added the handle to the selection (temp)
   t: number;
   weld: boolean;
@@ -66,6 +69,8 @@ export class DragController {
 
   private readonly picker = new Picker();
   private readonly selection = new Selection();
+  private readonly history = new History();
+  private readonly panel = new HistoryPanel((index) => this.jumpTo(index));
 
   private worker: Worker | null = null;
   private isoReq = 0;
@@ -74,6 +79,7 @@ export class DragController {
 
   constructor(
     initial: Polyhedron,
+    seedLabel: string,
     private readonly view: SceneView,
     private readonly camera: PerspectiveCamera,
     private readonly controls: ArcballControls,
@@ -90,18 +96,101 @@ export class DragController {
         this.onIsoResult(e.data.id, e.data.result);
     }
     this.attach();
+    this.history.reset(initial, seedLabel);
     this.view.setPolyhedron(this.current, false);
     this.runIdentify(this.current);
   }
 
-  /** Replace the whole polyhedron (e.g. loading a new seed / reset). */
-  load(poly: Polyhedron): void {
+  /** Replace the whole polyhedron (e.g. loading a new seed / reset), starting a
+   *  fresh history rooted at the new seed. */
+  load(poly: Polyhedron, seedLabel: string): void {
     this.solver = null;
     this.invalid = false;
     this.current = poly;
     this.selection.clear();
+    this.history.reset(poly, seedLabel);
     this.view.setPolyhedron(poly, false);
     this.runIdentify(poly);
+  }
+
+  // ---- undo / redo / jump --------------------------------------------------
+  undo(): void {
+    const entry = this.history.undo();
+    if (entry) this.restore(entry);
+  }
+
+  redo(): void {
+    const entry = this.history.redo();
+    if (entry) this.restore(entry);
+  }
+
+  /** Jump to an arbitrary point in the history (driven by the panel clicks). */
+  jumpTo(index: number): void {
+    const entry = this.history.jumpTo(index);
+    if (entry) this.restore(entry);
+  }
+
+  /** Show a previously-committed state without re-solving (it's already relaxed). */
+  private restore(entry: HistoryEntry): void {
+    this.solver = null; // abandon any in-progress relaxation
+    this.mode = "idle";
+    this.pending = null;
+    this.drag = null;
+    this.selection.clear();
+    this.current = entry.poly;
+    this.invalid = entry.invalid;
+    this.view.setPolyhedron(entry.poly, entry.invalid);
+    this.refreshHighlights();
+    this.runIdentify(entry.poly);
+  }
+
+  private renderHistory(): void {
+    this.panel.render(this.history.list, this.history.current);
+  }
+
+  /**
+   * Human-readable label for a committed operation (e.g. "Rectify", "Kis 1 face").
+   * `selCount` is null when the operation affected the whole solid.
+   *
+   * Welding (the max end) only fully Rectifies/Joins when every element takes part.
+   * On a partial selection the welded end is a HYBRID — elements with a selected
+   * neighbour merge (rectify/join) while those bordering unselected ones stay cut
+   * (truncate/kis) — so it reads "Truncate/Rectify N" / "Kis/Join N".
+   */
+  private static label(
+    kind: OperationKind,
+    weld: boolean,
+    selCount: number | null,
+  ): string {
+    const partial = selCount != null;
+    let base: string;
+    if (kind === "truncate") {
+      base = !weld ? "Truncate" : partial ? "Truncate/Rectify" : "Rectify";
+    } else if (kind === "kis") {
+      base = !weld ? "Kis" : partial ? "Kis/Join" : "Join";
+    } else {
+      base = kind === "snub" ? "Snub" : "Gyro";
+    }
+    if (!partial) return base;
+    const onFaces = kind === "kis" || kind === "gyro";
+    const noun = onFaces
+      ? selCount === 1 ? "face" : "faces"
+      : selCount === 1 ? "vertex" : "vertices";
+    return `${base} ${selCount} ${noun}`;
+  }
+
+  /**
+   * Manually (re-)run the relaxation on the current shape. With `forced` set, the
+   * regularizer is locked to that single strategy instead of the automatic
+   * anti-collapse escalation — letting you isolate the coplanarity (`canonical`)
+   * step and watch it act. Ignored mid-drag. Refines the current state in place.
+   */
+  relax(forced: Strategy | null = null): void {
+    if (this.mode !== "idle" || !config.solver.enabled) return;
+    const topo = extractTopology(this.current);
+    this.solver = new RelaxSolver(this.current.mesh.vertices, topo, forced);
+    this.view.setSurfaceColor(config.render.adjustingColor);
+    this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
   }
 
   // ---- frame update --------------------------------------------------------
@@ -276,6 +365,7 @@ export class DragController {
     this.drag = {
       ...built, kind, id,
       hasSelection: sel !== null,
+      selCount: sel ? sel.size : null,
       addedToSelection,
       t: 0, weld: false,
     };
@@ -334,9 +424,14 @@ export class DragController {
         this.view.setPolyhedron(this.current, this.invalid);
       } else {
         const mesh: Mesh = this.drag.plan.commit(this.drag.t, this.drag.weld);
+        const label = DragController.label(
+          this.drag.plan.kind,
+          this.drag.weld,
+          this.drag.selCount,
+        );
         // The topology changed, so the old vertex/face ids no longer mean anything.
         this.selection.clear();
-        this.commitPoly(new Polyhedron(mesh));
+        this.commitPoly(new Polyhedron(mesh), label);
       }
     } else if (this.mode === "pending" && this.pending) {
       // a click (no drag): selection bookkeeping
@@ -355,9 +450,11 @@ export class DragController {
     this.refreshHighlights();
   }
 
-  private commitPoly(poly: Polyhedron): void {
+  private commitPoly(poly: Polyhedron, label: string): void {
     this.current = poly;
     this.invalid = false;
+    this.history.push(poly, label);
+    this.renderHistory();
     if (config.solver.enabled) {
       // Solve on consistently-oriented topology, mutating poly's vertices in place.
       const topo = extractTopology(poly);
@@ -384,6 +481,10 @@ export class DragController {
     const { name, signature } = identify(poly);
     this.lastName = name;
     this.lastSignature = signature;
+    // Record the result against the current history entry (invalid states show no
+    // name). This also runs for the seed root and on restore — both harmless.
+    this.history.annotate(this.history.current, this.invalid ? null : name, this.invalid);
+    this.renderHistory();
     this.readout.show({
       name,
       signature,

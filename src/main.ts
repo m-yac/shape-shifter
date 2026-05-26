@@ -15,6 +15,10 @@ import { DragController } from "./interaction/dragController";
 import { Readout } from "./ui/readout";
 
 const app = document.getElementById("app")!;
+const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
+
+/** Title-case a seed key ("tetrahedron" → "Tetrahedron") for the history root. */
+const seedLabel = (name: string): string => name.charAt(0).toUpperCase() + name.slice(1);
 
 // --- renderer ---------------------------------------------------------------
 const renderer = new WebGLRenderer({ antialias: true });
@@ -46,6 +50,7 @@ rig.frame(new Vector3());
 
 const controller = new DragController(
   initialPoly,
+  seedLabel(currentSeed),
   view,
   rig.camera,
   rig.controls,
@@ -53,18 +58,43 @@ const controller = new DragController(
   readout,
 );
 
-// --- seed loading via keyboard ----------------------------------------------
+// --- undo / redo + seed loading via keyboard --------------------------------
 window.addEventListener("keydown", (e) => {
+  // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y. (Camera is kept;
+  // shapes are normalized to ~unit so no reframe is needed.)
+  const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+  if (mod && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) controller.redo();
+    else controller.undo();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "y") {
+    e.preventDefault();
+    controller.redo();
+    return;
+  }
+
+  // Manual relaxation (debugging the post-release solve). Plain keys (no modifier).
+  if (config.debug.manualRelax && !mod) {
+    const k = e.key.toLowerCase();
+    const d = config.debug;
+    if (k === d.relaxKey) return void controller.relax(null);
+    if (k === d.forceFacesKey) return void controller.relax("faces");
+    if (k === d.forceCanonicalKey) return void controller.relax("canonical");
+    if (k === d.forceSpherizeKey) return void controller.relax("spherize");
+  }
+
   const enabled = config.seeds.enabled;
   if (config.seeds.numberKeyToLoadSeed && /^[1-9]$/.test(e.key)) {
     const idx = parseInt(e.key, 10) - 1;
     if (idx < enabled.length) {
       currentSeed = enabled[idx];
-      controller.load(new Polyhedron(getSeed(currentSeed)));
+      controller.load(new Polyhedron(getSeed(currentSeed)), seedLabel(currentSeed));
       rig.frame(new Vector3());
     }
   } else if (e.key.toLowerCase() === config.seeds.resetKey) {
-    controller.load(new Polyhedron(getSeed(currentSeed)));
+    controller.load(new Polyhedron(getSeed(currentSeed)), seedLabel(currentSeed));
     rig.frame(new Vector3());
   }
 });

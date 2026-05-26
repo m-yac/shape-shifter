@@ -34,11 +34,57 @@
         user-select: none;
         white-space: pre;
       }
+      /* Operation history list on the right. Click an entry to jump to that state. */
+      #history {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        max-height: calc(100vh - 24px);
+        overflow-y: auto;
+        font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #e8e8e8;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        user-select: none;
+        text-align: left;
+        max-width: 38vw;
+      }
+      .history-item {
+        padding: 2px 6px;
+        /* border-radius: 4px; */
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .history-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+      }
+      /* The current state. */
+      .history-item.current {
+        background: rgba(78, 224, 122, 0.18);
+      }
+      .history-item.current .history-label {
+        color: #4ee07a;
+      }
+      /* Redo entries (after the current point) are dimmed. */
+      .history-item.future {
+        opacity: 0.4;
+      }
+      .history-label {
+        font-weight: 600;
+      }
+      .history-item.invalid .history-label {
+        color: #d98a8a;
+      }
+      .history-name {
+        padding-left: 1.4em;
+        opacity: 0.75;
+        font-style: italic;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
     <div id="readout"></div>
+    <div id="history"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

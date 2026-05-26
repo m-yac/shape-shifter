@@ -35,9 +35,19 @@ export class RelaxSolver {
   private readonly radius: number;
   private readonly batch = 10;
 
-  constructor(vertices: Vector3[], private readonly topo: SolverTopology) {
+  /**
+   * @param forced  when set, locks the regularization to this single strategy
+   *                instead of the automatic anti-collapse escalation — used by the
+   *                manual relax keys to isolate the coplanarity (canonical) step.
+   */
+  constructor(
+    vertices: Vector3[],
+    private readonly topo: SolverTopology,
+    private readonly forced: Strategy | null = null,
+  ) {
     this.mesh = { vertices, faces: topo.orientedFaces };
     this.radius = meshRadius(this.mesh) || 1;
+    if (forced) this.strategy = forced;
   }
 
   get done(): boolean {
@@ -143,6 +153,10 @@ export class RelaxSolver {
    * Shapes that never flatten (Platonic, Archimedean) simply stay in `faces`.
    */
   private chooseStrategy(Rg: typeof config.solver.regularity): void {
+    if (this.forced) {
+      this.strategy = this.forced; // locked by the manual relax keys
+      return;
+    }
     const ang = minAdjacentFaceAngle(this.mesh, this.topo.edgeFaces);
     const safe = deg(Rg.coplanar.safeAngleDeg);
     const danger = deg(Rg.coplanar.dangerAngleDeg);

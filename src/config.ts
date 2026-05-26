@@ -155,6 +155,20 @@ export const config = {
   },
 
   // ---------------------------------------------------------------------------
+  // DEBUG — manual relaxation controls for experimenting with the post-release
+  //   solve. Each key re-runs relaxation on the CURRENT shape; the "force"
+  //   variants lock the regularizer to one strategy instead of the automatic
+  //   anti-collapse escalation, so you can isolate the coplanarity step.
+  // ---------------------------------------------------------------------------
+  debug: {
+    manualRelax: true, // enable the keys below
+    relaxKey: "g", // re-relax with the automatic (escalating) strategy
+    forceFacesKey: "f", // force regular-faces regularization
+    forceCanonicalKey: "c", // force the coplanarity / anti-collapse (dual/midsphere) step
+    forceSpherizeKey: "v", // force spherize (last-resort inflate)
+  },
+
+  // ---------------------------------------------------------------------------
   // CAMERA.
   // ---------------------------------------------------------------------------
   camera: {
