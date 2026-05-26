@@ -21,9 +21,9 @@ export const config = {
     // the corresponding gesture simply does nothing.
     operations: {
       truncate: true, // drag a vertex inward (no modifier)
-      rectify: true, // the magnetic "max" end of the truncate drag
+      rectify: true, // the welded "max" end of the truncate drag (drag fully in)
       kis: true, // drag a face center outward (no modifier)
-      join: true, // the magnetic "max" end of the kis drag
+      join: true, // the welded "max" end of the kis drag (drag fully out)
       snub: false, // Shift + drag a vertex — PHASE 2 (not yet implemented)
       gyro: false, // Shift + drag a face   — PHASE 2 (not yet implemented)
     },
@@ -40,10 +40,6 @@ export const config = {
   // INTERACTION — how dragging, snapping and selection feel.
   // ---------------------------------------------------------------------------
   interaction: {
-    // How close (fraction of the full 0..1 drag range) the parameter must get to
-    // an end before it "magnetically" snaps to it. 0.06 == within 6% of an end.
-    magneticThreshold: 0.06,
-
     // Pixel radius around a vertex / face-center within which hovering counts as
     // "over" it: the marker takes its prominent appearance and is grabbable.
     hoverPixelRadius: 22,
@@ -51,6 +47,12 @@ export const config = {
     // Larger radius: when the cursor is merely NEAR the polyhedron, the single
     // closest drag point becomes subtly visible (a hint) without being grabbable.
     proximityPixelRadius: 60,
+
+    // A marker is pickable only while at least one of its faces points toward the
+    // camera by MORE than this margin (degrees) past perpendicular. Faces that are
+    // edge-on (within the margin of 90°) or back-facing are treated as occluded,
+    // so you can't grab a handle on the far/silhouette side of the solid.
+    pickNormalMarginDeg: 4,
 
     // Camera orbit: left-drag on empty space and right-drag both rotate; the
     // wheel zooms. Left-drag that grabs a vertex/face does the operation instead.
@@ -87,7 +89,7 @@ export const config = {
       // Iterations spent improving regularity once the shape is planar.
       iterations: 256,
       // Step size for the regularizing nudge each iteration (0..1).
-      stepFactor: 0.5,
+      stepFactor: 2,
       // Damping starts here and decays by `dampingRate` each iteration so the
       // motion settles instead of oscillating. effective step = stepFactor * damp.
       dampingStart: 1.0,
@@ -157,11 +159,12 @@ export const config = {
   // ---------------------------------------------------------------------------
   camera: {
     fov: 45,
-    startDistance: 4.5, // distance from origin (the polyhedron is normalized ~unit)
+    startDistance: 3.5, // distance from origin (the polyhedron is normalized ~unit)
     minDistance: 1.5,
     maxDistance: 25,
     rotateSpeed: 2.0,
-    zoomSpeed: 1.0,
+    scaleFactor: 1.2,
+    dampingFactor: 8,
     autoFrame: true, // reframe distance to fit each newly loaded seed
   },
 

@@ -7,8 +7,8 @@ export type OperationKind = "truncate" | "kis" | "snub" | "gyro";
 /**
  * A live, in-progress operation. Built when a drag starts; the topology is fixed
  * for the duration of the drag and only the parameter `t` (in [0, 1]) changes.
- *   t = 0  → geometrically identical to the original (no-op end, magnetic)
- *   t = 1  → the "max" form: Rectify / Join (welded), also magnetic
+ *   t = 0  → geometrically identical to the original (no-op end)
+ *   t = 1  → the "max" form: Rectify / Join (welded)
  */
 export interface MorphPlan {
   kind: OperationKind;
@@ -32,9 +32,9 @@ export interface MorphPlan {
   };
 
   /**
-   * Final mesh for parameter t. When `weld` is true (t reached the magnetic max)
-   * the topology collapses to the Rectify/Join form; otherwise it is the
-   * intermediate (truncated / kissed) topology at that t.
+   * Final mesh for parameter t. When `weld` is true (t reached the max end) the
+   * topology collapses to the Rectify/Join form; otherwise it is the intermediate
+   * (truncated / kissed) topology at that t.
    */
   commit(t: number, weld: boolean): Mesh;
 }

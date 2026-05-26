@@ -4,7 +4,7 @@ import { type Mesh } from "../geometry/HalfEdge";
 /**
  * Merge the given vertex-index pairs into single vertices (union-find), then
  * rebuild faces dropping the collapsed (now-degenerate) edges. This is how the
- * magnetic "max" of the Truncate drag becomes a true Rectify: each original edge
+ * "max" end of the Truncate drag becomes a true Rectify: each original edge
  * carried two cut vertices that coincide at the midpoint, and welding them
  * deletes the old edge — exactly "new vertices combine along old edges".
  */

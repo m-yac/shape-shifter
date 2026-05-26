@@ -19,6 +19,15 @@ export class Selection {
     if (this.ids.size === 0) this.kind = null;
   }
 
+  /** Ensure `id` is in the selection (switching kind if needed); never removes. */
+  add(kind: MarkerKind, id: number): void {
+    if (this.kind !== kind) {
+      this.kind = kind;
+      this.ids.clear();
+    }
+    this.ids.add(id);
+  }
+
   clear(): void {
     this.kind = null;
     this.ids.clear();

@@ -1,5 +1,5 @@
-import { type PerspectiveCamera, type Ray } from "three";
-import { type TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import { Vector3, type PerspectiveCamera, type Ray } from "three";
+import { type ArcballControls } from "three/examples/jsm/controls/ArcballControls.js";
 import { Polyhedron } from "../geometry/polyhedron";
 import { type Mesh } from "../geometry/HalfEdge";
 import { type MorphPlan } from "../operations/types";
@@ -20,6 +20,13 @@ import { config } from "../config";
 const DRAG_START_PIXELS = 4;
 const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
+// A release with t below this is treated as no change (there's no longer a
+// magnetic snap-to-zero, so this just avoids committing a negligible drag).
+const MIN_COMMIT_T = 1e-3;
+// When the welded max (rectify / join) is disabled, stop the drag just short of
+// it so coincident vertices / faces don't produce degenerate geometry.
+const MAX_T_WITHOUT_WELD = 0.94;
+
 interface Pending {
   marker: Marker | null;
   shift: boolean;
@@ -33,6 +40,8 @@ interface Drag {
   kind: MarkerKind;
   id: number;
   allowMax: boolean;
+  hasSelection: boolean; // operating on a multi-select subset (drives green feedback)
+  addedToSelection: boolean; // this Cmd-drag added the handle to the selection (temp)
   t: number;
   weld: boolean;
 }
@@ -53,6 +62,7 @@ export class DragController {
   private hover: Marker | null = null;
   private hoverInRange = false;
   private hoverRay: Ray | null = null;
+  private hoverMulti = false; // Cmd/Ctrl held while hovering (would drag as a selection)
 
   private readonly picker = new Picker();
   private readonly selection = new Selection();
@@ -66,7 +76,7 @@ export class DragController {
     initial: Polyhedron,
     private readonly view: SceneView,
     private readonly camera: PerspectiveCamera,
-    private readonly controls: TrackballControls,
+    private readonly controls: ArcballControls,
     private readonly canvas: HTMLCanvasElement,
     private readonly readout: Readout,
   ) {
@@ -110,7 +120,7 @@ export class DragController {
 
   // ---- listeners -----------------------------------------------------------
   private attach(): void {
-    // Capture phase so we can decide (and disable orbit) BEFORE OrbitControls
+    // Capture phase so we can decide (and disable orbit) BEFORE ArcballControls
     // sees the pointerdown.
     this.canvas.addEventListener("pointerdown", (e) => this.onDown(e), true);
     this.canvas.addEventListener("pointermove", (e) => this.onMove(e));
@@ -120,11 +130,31 @@ export class DragController {
       this.hover = null;
       this.refreshHighlights();
     });
+    // Pressing / releasing Cmd-Ctrl while hovering re-tints the preview (green when
+    // a drag would now treat the handle as part of the selection).
+    window.addEventListener("keydown", (e) => this.onModifierChange(e));
+    window.addEventListener("keyup", (e) => this.onModifierChange(e));
+  }
+
+  private onModifierChange(e: KeyboardEvent): void {
+    if (this.mode !== "idle" || !config.features.multiSelect) return;
+    const multi = IS_MAC ? e.metaKey : e.ctrlKey;
+    if (multi === this.hoverMulti) return;
+    this.hoverMulti = multi;
+    if (this.hover) this.refreshHighlights();
   }
 
   private allMarkers(): Marker[] {
     return [...this.view.vertexMarkers, ...this.view.faceMarkers];
   }
+
+  /**
+   * Camera-facing test (same metric the picker uses to cull occluded markers),
+   * bound to the live camera. Used to restrict vertex-drag edge-snapping to edges
+   * whose midpoint is in view, so you can't drag along a back/side edge.
+   */
+  private inView = (point: Vector3, normals: Vector3[]): boolean =>
+    Picker.facesCamera(point, normals, this.camera);
 
   private onDown(e: PointerEvent): void {
     if (e.button !== 0) return; // left only; other buttons orbit
@@ -150,6 +180,8 @@ export class DragController {
 
   private onMove(e: PointerEvent): void {
     if (this.mode === "idle") {
+      this.hoverMulti =
+        (IS_MAC ? e.metaKey : e.ctrlKey) && config.features.multiSelect;
       // While the solver is relaxing, nothing is interactable yet (positions are
       // mid-flight), so suppress hover entirely.
       if (config.features.hoverHighlight && !this.solver) {
@@ -178,22 +210,32 @@ export class DragController {
     if (this.mode === "dragging" && this.drag) {
       const ray = this.picker.ray(e.clientX, e.clientY, this.canvas, this.camera);
       const snap = this.drag.plan.snap(ray);
-      const thr = config.interaction.magneticThreshold;
+      // No end magnetism: t follows the cursor directly. Only the very end welds
+      // (rectify / join); if that end is disabled, stop just short of it.
       let tEff = snap.t;
       let weld = false;
-      if (snap.t <= thr) tEff = 0;
-      else if (snap.t >= 1 - thr) {
-        if (this.drag.allowMax) {
-          tEff = 1;
-          weld = true;
-        } else tEff = 1 - thr;
+      if (snap.t >= 1) {
+        if (this.drag.allowMax) weld = true;
+        else tEff = MAX_T_WITHOUT_WELD;
       }
       this.drag.t = tEff;
       this.drag.weld = weld;
       const verts = this.drag.plan.positions(tEff);
+      // Hide the big hover markers during the drag (as in the non-selection case).
+      // When operating on a selection, the green "sticks around" via the small drag
+      // marker + range line instead.
       this.view.showPreview({ vertices: verts, faces: this.drag.plan.previewFaces });
-      this.view.setDragMarker(snap.point); // small sphere on the targeted vertex
-      if (snap.highlight) this.view.setEdgeHighlight(snap.highlight.a, snap.highlight.b);
+      const green = this.drag.hasSelection;
+      this.view.setDragMarker(
+        snap.point, // small sphere on the targeted vertex
+        green ? config.render.selectedColor : config.render.dragMarkerColor,
+      );
+      if (snap.highlight)
+        this.view.setEdgeHighlight(
+          snap.highlight.a,
+          snap.highlight.b,
+          green ? config.render.selectedColor : config.render.dragLineColor,
+        );
       else this.view.clearEdgeHighlight();
     }
   }
@@ -209,21 +251,34 @@ export class DragController {
     const kind = p.marker.kind;
     const id = p.marker.id;
 
+    // Cmd/Ctrl + drag behaves like Cmd-clicking the handle first (adding it to the
+    // selection) and then dragging the whole selection — but TEMPORARILY: if the
+    // drag commits nothing, the add is undone on release (see onUp / the early
+    // return below), so an aimless Cmd-drag doesn't leave the handle selected.
+    const addedToSelection = p.multi && !this.selection.isSelected(kind, id);
+    if (p.multi) this.selection.add(kind, id);
+
     // Decide the participating selection set (or null = affect everything).
     let sel: Set<number> | null = null;
     if (this.selection.kind === kind && this.selection.ids.size > 0) {
-      if (p.multi || this.selection.ids.has(id)) sel = this.selection.setFor(kind);
-      else this.selection.clear();
+      if (this.selection.ids.has(id)) sel = this.selection.setFor(kind);
+      else this.selection.clear(); // dragging an unselected handle drops the selection
     }
 
     const built = this.buildPlan(kind, id, p.shift, sel);
     if (!built) {
+      if (addedToSelection) this.selection.toggle(kind, id); // undo the temporary add
       this.mode = "idle";
       this.pending = null;
       return;
     }
     this.solver = null; // abandon any in-progress relaxation
-    this.drag = { ...built, kind, id, t: 0, weld: false };
+    this.drag = {
+      ...built, kind, id,
+      hasSelection: sel !== null,
+      addedToSelection,
+      t: 0, weld: false,
+    };
     this.mode = "dragging";
     const verts = this.drag.plan.positions(0);
     this.view.showPreview({ vertices: verts, faces: this.drag.plan.previewFaces });
@@ -244,7 +299,10 @@ export class DragController {
           return { plan: buildSnub(this.current, id, sel), allowMax: false };
         }
         if (!ops.truncate) return null;
-        return { plan: buildTruncate(this.current, id, sel), allowMax: ops.rectify };
+        return {
+          plan: buildTruncate(this.current, id, sel, this.inView),
+          allowMax: ops.rectify,
+        };
       } else {
         if (shift) {
           if (!ops.gyro) return null;
@@ -268,12 +326,16 @@ export class DragController {
     this.view.hideDragMarker();
 
     if (this.mode === "dragging" && this.drag) {
-      const thr = config.interaction.magneticThreshold;
-      if (this.drag.t <= thr) {
-        // magnetic minimum → discard, no change
+      if (this.drag.t <= MIN_COMMIT_T) {
+        // negligible drag → no change. A Cmd-drag's add to the selection was only
+        // temporary, so undo it (the handle wasn't selected before this drag).
+        if (this.drag.addedToSelection)
+          this.selection.toggle(this.drag.kind, this.drag.id);
         this.view.setPolyhedron(this.current, this.invalid);
       } else {
         const mesh: Mesh = this.drag.plan.commit(this.drag.t, this.drag.weld);
+        // The topology changed, so the old vertex/face ids no longer mean anything.
+        this.selection.clear();
         this.commitPoly(new Polyhedron(mesh));
       }
     } else if (this.mode === "pending" && this.pending) {
@@ -373,25 +435,50 @@ export class DragController {
     }
     if (!this.hover || !config.features.hoverHighlight) return;
 
+    // "Affected" = this handle is part of the green selection — either already
+    // command-clicked, or Cmd is held so a drag would add it. Those are previewed
+    // green; a plain handle keeps the neutral hover look.
     const selected = this.selection.isSelected(this.hover.kind, this.hover.id);
+    const affected = selected || (this.hoverMulti && this.hoverInRange);
     // Within drag range → prominent; merely nearby → subtle proximity hint.
-    const state = selected ? "selected" : this.hoverInRange ? "hover" : "proximity";
+    const state = affected ? "selected" : this.hoverInRange ? "hover" : "proximity";
     this.view.showMarker(this.hover.kind, this.hover.id, state);
 
-    // In range, also preview WHAT would be dragged: the snapped edge (vertex) or
-    // the whole face (face center).
     if (this.hoverInRange && this.hoverRay) {
-      if (this.hover.kind === "vertex" && config.features.operations.truncate) {
-        const e = closestIncidentEdge(this.current, this.hover.id, this.hoverRay);
-        // Match the drag tube exactly (current snapped point → rectify max), so the
-        // highlight doesn't jump when you click to start dragging.
-        this.view.setEdgeHighlight(e.point, e.mid);
-      } else if (this.hover.kind === "face" && config.features.operations.kis) {
-        const verts = this.current.faces[this.hover.id].map((i) =>
-          this.current.vertices[i].clone(),
-        );
-        this.view.setFaceHighlight(verts);
-      }
+      this.showHoverPreview(this.hover, this.hoverRay, affected);
+    }
+  }
+
+  /**
+   * Hover preview of what a drag would affect: the incident edge (vertex) or the
+   * whole face (face center). `affected` marks a command-clicked / Cmd-held handle
+   * — part of the green selection — and is the explicit split between rendering a
+   * plain handle and a selected one. Today they differ only in color; if rectify /
+   * join ever applies in the command-click case, the `affected` branch is where the
+   * geometry (e.g. the vertex line length) should diverge from the plain preview.
+   */
+  private showHoverPreview(marker: Marker, ray: Ray, affected: boolean): void {
+    if (marker.kind === "vertex" && config.features.operations.truncate) {
+      const e = closestIncidentEdge(this.current, marker.id, ray, this.inView);
+      // While only hovering (not dragging) the line spans the FULL drag range: the
+      // vertex center (e.from) → the rectify max (e.mid, the edge midpoint). It does
+      // NOT shrink to the snapped cursor position; that only happens during a drag.
+      // `affected` distinguishes a command-clicked / Cmd-held handle (drawn green)
+      // from a plain one, and is the seam where a future rectify/join preview for
+      // the selected case could use a different far endpoint (a different length).
+      this.view.setEdgeHighlight(
+        e.from,
+        e.mid,
+        affected ? config.render.selectedColor : config.render.dragLineColor,
+      );
+    } else if (marker.kind === "face" && config.features.operations.kis) {
+      const verts = this.current.faces[marker.id].map((i) =>
+        this.current.vertices[i].clone(),
+      );
+      this.view.setFaceHighlight(
+        verts,
+        affected ? config.render.selectedColor : config.render.faceHighlightColor,
+      );
     }
   }
 }

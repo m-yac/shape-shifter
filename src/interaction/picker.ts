@@ -11,6 +11,23 @@ import { config } from "../config";
 export class Picker {
   private raycaster = new Raycaster();
 
+  /**
+   * Does any of `normals` point toward the camera by MORE than
+   * `pickNormalMarginDeg` past perpendicular? Normals must be unit-length and
+   * oriented outward. With a unit view direction, n·view == cos(angle), so being
+   * "within the margin of 90°" means |cos| <= sin(margin); we require
+   * n·view > sin(margin) to count as facing. Used to cull occluded markers and
+   * to decide which edges a vertex can be dragged along (their far endpoint must
+   * itself be facing the camera).
+   */
+  static facesCamera(position: Vector3, normals: Vector3[], camera: Camera): boolean {
+    const view = camera.position.clone().sub(position).normalize();
+    const minDot = Math.sin(
+      (config.interaction.pickNormalMarginDeg * Math.PI) / 180,
+    );
+    return normals.some((n) => n.dot(view) > minDot);
+  }
+
   private ndc(clientX: number, clientY: number, canvas: HTMLCanvasElement): Vector2 {
     const r = canvas.getBoundingClientRect();
     return new Vector2(
@@ -75,9 +92,9 @@ export class Picker {
     let bestDepth = Infinity;
 
     for (const m of markers) {
-      // Cull the far hemisphere (markers occluded by a convex, centered solid).
-      const outward = m.position; // center is the origin
-      if (camPos.clone().sub(m.position).dot(outward) <= 0) continue;
+      // Cull markers whose faces are all edge-on or back-facing (occluded on a
+      // convex, centered solid). Normals are pre-oriented outward in SceneView.
+      if (!Picker.facesCamera(m.position, m.normals, camera)) continue;
 
       const p = m.position.clone().project(camera);
       if (p.z > 1) continue; // behind far plane / camera

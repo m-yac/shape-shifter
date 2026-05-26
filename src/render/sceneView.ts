@@ -27,6 +27,7 @@ export interface Marker {
   kind: MarkerKind;
   id: number;
   position: Vector3;
+  normals: Vector3[];
   mesh: ThreeMesh;
 }
 
@@ -221,7 +222,8 @@ export class SceneView {
   }
 
   /** Show the small sphere on the vertex currently targeted by the drag. */
-  setDragMarker(point: Vector3): void {
+  setDragMarker(point: Vector3, color: number = config.render.dragMarkerColor): void {
+    (this.dragMarker.material as MeshBasicMaterial).color.setHex(color);
     this.dragMarker.position.copy(point);
     this.dragMarker.visible = true;
   }
@@ -269,17 +271,36 @@ export class SceneView {
       return mesh;
     };
 
+    // Per-face Newell normals, oriented OUTWARD (the solid is centered at the
+    // origin, so a face's outward direction is its centroid direction). The
+    // stored winding isn't guaranteed outward, hence the flip — same reasoning
+    // as setFaceHighlight. The picker uses these to cull faces that point away.
+    const faceNormals = poly.faces.map((f) => {
+      const n = newellNormal(f.map((i) => poly.vertices[i]));
+      const c = faceCentroidOf(poly.vertices, f);
+      if (n.dot(c) < 0) n.negate();
+      return n;
+    });
+
     if (config.render.showVertexMarkers) {
       poly.vertices.forEach((p, id) => {
         const mesh = makeMarker("vertex", this.vertexGeo, p);
-        this.vertexMarkers.push({ kind: "vertex", id, position: p.clone(), mesh });
+        this.vertexMarkers.push({
+          kind: "vertex", id,
+          position: p.clone(), mesh,
+          normals: poly.faces
+            .map((f, fi) => (f.includes(id) ? faceNormals[fi] : null))
+            .filter((n): n is Vector3 => n !== null) });
       });
     }
     if (config.render.showFaceMarkers) {
       poly.faces.forEach((f, id) => {
         const c = faceCentroidOf(poly.vertices, f);
         const mesh = makeMarker("face", this.faceGeo, c);
-        this.faceMarkers.push({ kind: "face", id, position: c, mesh });
+        this.faceMarkers.push({
+          kind: "face", id,
+          position: c, mesh,
+          normals: [faceNormals[id]] });
       });
     }
   }
@@ -336,7 +357,8 @@ export class SceneView {
   }
 
   /** Translucent overlay over a hovered face (lifted slightly off the surface). */
-  setFaceHighlight(points: Vector3[]): void {
+  setFaceHighlight(points: Vector3[], color: number = config.render.faceHighlightColor): void {
+    this.faceHighlightMat.color.setHex(color);
     const n = newellNormal(points);
     // Ensure the lift is OUTWARD (away from the origin) regardless of the face's
     // stored winding, otherwise the overlay sinks behind the surface and vanishes.
@@ -364,7 +386,8 @@ export class SceneView {
   }
 
   /** Show the drag range line between two world points (sized in updateMarkerScales). */
-  setEdgeHighlight(a: Vector3, b: Vector3): void {
+  setEdgeHighlight(a: Vector3, b: Vector3, color: number = config.render.dragLineColor): void {
+    (this.dragTube.material as MeshBasicMaterial).color.setHex(color);
     this.dragA.copy(a);
     this.dragB.copy(b);
     this.dragTube.visible = true;

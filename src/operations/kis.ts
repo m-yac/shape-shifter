@@ -90,18 +90,32 @@ export function buildKis(
     if (!kissed.has(f.id)) continue;
     const centroid = faceCentroidHE(f);
     const normal = faceNormalHE(f);
-    // Estimate the join height using one representative neighbouring face.
-    const h = f.halfedge;
-    const g = h.twin!.face;
-    const P1 = h.origin.position;
-    const P2 = h.next.origin.position;
-    const cg = faceCentroidHE(g);
-    const ng = faceNormalHE(g);
-    const solved = joinHeight(P1, P2, centroid, normal, cg, ng);
-    // Fallback: half the centroid->vertex distance, so the handle still has a
-    // sensible magnetic max even on irregular inputs.
-    const fallback = 0.5 * centroid.distanceTo(P1);
-    const hJoin = solved && solved > 1e-6 ? solved : fallback;
+    // Join height = apex rise at which a pyramid triangle becomes coplanar with its
+    // neighbour's (so they merge into a quad). Only edges shared with ANOTHER kissed
+    // face actually merge, so take the LARGEST such height — that way every mergeable
+    // edge has reached (or passed) coplanarity, i.e. the faces visibly join. (Using
+    // one representative edge under-rises on irregular solids / partial selections.)
+    let hJoin = 0;
+    let he = f.halfedge;
+    const start = he;
+    do {
+      const g = he.twin!.face;
+      if (kissed.has(g.id)) {
+        const solved = joinHeight(
+          he.origin.position,
+          he.next.origin.position,
+          centroid,
+          normal,
+          faceCentroidHE(g),
+          faceNormalHE(g),
+        );
+        if (solved && solved > 1e-6) hJoin = Math.max(hJoin, solved);
+      }
+      he = he.next;
+    } while (he !== start);
+    // Fallback (e.g. an isolated kissed face with no kissed neighbours, so nothing
+    // merges): half the centroid->vertex distance, so the handle still has a max.
+    if (hJoin <= 1e-6) hJoin = 0.5 * centroid.distanceTo(f.halfedge.origin.position);
     kfaces.set(f.id, { id: f.id, centroid, normal, hJoin, apex: apexIdx++ });
   }
   const apexCount = apexIdx - V;

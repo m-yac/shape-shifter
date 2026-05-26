@@ -1,9 +1,29 @@
 import { Vector3, Ray } from "three";
-import { type Mesh, outgoingHalfEdges, faceVertices } from "../geometry/HalfEdge";
-import { type Polyhedron } from "../geometry/polyhedron";
+import {
+  type Mesh,
+  type HalfEdge,
+  outgoingHalfEdges,
+  faceVertices,
+} from "../geometry/HalfEdge";
+import { type Polyhedron, faceNormalHE, faceCentroidHE } from "../geometry/polyhedron";
 import { type MorphPlan } from "./types";
 import { weldVertexPairs } from "./weld";
 import { closestLineParam, distancePointToRay } from "../util/lines";
+
+/** A point is "in view" if any of the given (outward) normals faces the camera. */
+export type InViewTest = (point: Vector3, normals: Vector3[]) => boolean;
+
+/** Outward unit normals of the two faces sharing half-edge `h` (its midpoint's
+ *  facing depends on these). Centroid-orient like SceneView since face winding
+ *  isn't guaranteed outward. */
+function edgeFaceNormals(h: HalfEdge): Vector3[] {
+  const faces = h.twin ? [h.face, h.twin.face] : [h.face];
+  return faces.map((f) => {
+    const n = faceNormalHE(f);
+    if (n.dot(faceCentroidHE(f)) < 0) n.negate();
+    return n;
+  });
+}
 
 /**
  * Truncate ↔ Rectify, driven by dragging a vertex inward along a connected edge.
@@ -26,6 +46,7 @@ export function buildTruncate(
   poly: Polyhedron,
   draggedVid: number,
   selected: Set<number> | null,
+  inView: InViewTest | null = null,
 ): MorphPlan {
   const dcel = poly.dcel;
 
@@ -125,7 +146,7 @@ export function buildTruncate(
     point: Vector3;
     highlight?: { a: Vector3; b: Vector3 };
   } {
-    const e = closestIncidentEdge(poly, draggedVid, ray);
+    const e = closestIncidentEdge(poly, draggedVid, ray, inView);
     const t = Math.max(0, Math.min(1, e.frac / 0.5));
     // Orange range line: from the current cut vertex to the rectify (midpoint) max.
     return { t, point: e.point, highlight: { a: e.point.clone(), b: e.mid.clone() } };
@@ -147,11 +168,17 @@ export function buildTruncate(
  * (`from` = the vertex, `to` = its neighbor), the rectify max point (`mid`), the
  * snapped point along the edge, and the cut fraction (0..0.5). Used by the drag
  * snapping and by hover feedback (which edge would be dragged).
+ *
+ * When `inView` is given, only edges whose MIDPOINT is in view (per its two
+ * adjacent faces' outward normals) are considered, so you can't drag along an
+ * edge on the back/side of the solid. If that leaves no candidate, falls through
+ * to the degenerate result below (no edge offered → the drag does nothing).
  */
 export function closestIncidentEdge(
   poly: Polyhedron,
   vid: number,
   ray: Ray,
+  inView: InViewTest | null = null,
 ): { from: Vector3; to: Vector3; mid: Vector3; point: Vector3; frac: number } {
   const v = poly.dcel.vertices[vid];
   let best:
@@ -160,6 +187,8 @@ export function closestIncidentEdge(
   for (const h of outgoingHalfEdges(v)) {
     const from = h.origin.position;
     const edge = h.next.origin.position.clone().sub(from);
+    const mid = from.clone().add(edge.clone().multiplyScalar(0.5));
+    if (inView && !inView(mid, edgeFaceNormals(h))) continue;
     let frac = closestLineParam(from, edge, ray.origin, ray.direction);
     frac = Math.max(0, Math.min(0.5, frac));
     const point = from.clone().add(edge.clone().multiplyScalar(frac));
@@ -168,7 +197,7 @@ export function closestIncidentEdge(
       best = {
         from: from.clone(),
         to: from.clone().add(edge),
-        mid: from.clone().add(edge.clone().multiplyScalar(0.5)),
+        mid,
         point,
         frac,
         dist,
