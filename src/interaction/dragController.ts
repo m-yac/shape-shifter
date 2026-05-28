@@ -244,14 +244,18 @@ export class DragController {
     });
     // Pressing / releasing Cmd-Ctrl while hovering re-tints the preview (green when
     // a drag would now treat the handle as part of the selection).
-    window.addEventListener("keydown", (e) => this.onModifierChange(e));
-    window.addEventListener("keyup", (e) => this.onModifierChange(e));
+    window.addEventListener("keydown", (e) => this.onKeyDown(e));
+    window.addEventListener("keyup", (e) => this.onKeyDown(e));
   }
 
-  private onModifierChange(e: KeyboardEvent): void {
+  private onKeyDown(e: KeyboardEvent): void {
     // Shift held/released DURING a drag morphs truncate↔snub / kis↔gyro live.
     if (this.mode === "dragging" && this.drag) {
-      if (e.shiftKey !== this.drag.shiftHeld) {
+      if (e.key == 'Escape') {
+        this.drag.t = 0;
+        this.onUp(new PointerEvent("pointerup", { button: 0 }), true);
+      }
+      else if (e.shiftKey !== this.drag.shiftHeld) {
         if (e.shiftKey) this.enterShift(); // freeze base level, build snub/gyro
         else this.drag.shiftHeld = false; // revert to base tracking the mouse
         if (this.drag.lastRay) this.updateDragPreview(this.drag.lastRay);
@@ -488,7 +492,7 @@ export class DragController {
     }
   }
 
-  private onUp(e: PointerEvent): void {
+  private onUp(e: PointerEvent, pointerStillDown: boolean = false): void {
     if (e.button !== 0) {
       this.controls.enabled = true;
       return;
@@ -529,8 +533,10 @@ export class DragController {
     this.mode = "idle";
     this.pending = null;
     this.drag = null;
-    this.controls.enabled = true; // restore camera orbit
-    this.refreshHighlights();
+    if (!pointerStillDown) {
+      this.controls.enabled = true; // restore camera orbit
+      this.refreshHighlights();
+    }
   }
 
   private commitPoly(poly: Polyhedron, label: string): void {
