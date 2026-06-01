@@ -169,6 +169,16 @@ export const config = {
   },
 
   // ---------------------------------------------------------------------------
+  // INTRO CUTSCENE.
+  // ---------------------------------------------------------------------------
+
+  intro: {
+    cameraDistance: 7, // initial camera distance from origin
+    bootDuration: 6, // second(s)
+    shapeFadeInDuration: 10, // second(s)
+  },
+
+  // ---------------------------------------------------------------------------
   // CAMERA.
   // ---------------------------------------------------------------------------
   camera: {
@@ -212,6 +222,7 @@ export const config = {
     phosphorWarn: "#e0a36a", // invalid / warning text (amber)
     glowColor: "78, 224, 122", // rgb of the phosphor glow (text-shadow + 3D bloom tint)
     glass: "#0a0f0c", // CRT glass color behind the 3D canvas
+    monitorBright: "25, 29, 38", // rgb of the monitor when it starts up
     room: "#04060a", // the void behind the monitor
     bezelLight: "#3b3e37", // plastic frame: lit edge
     bezelDark: "#1c1e19", // plastic frame: shadowed edge

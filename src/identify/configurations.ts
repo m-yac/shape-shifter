@@ -92,7 +92,7 @@ function superscript(num: number): string {
   let result = "";
   num = Math.floor(num);
   while (num > 0) {
-    result += "⁰¹²³⁴⁵⁶⁷⁸⁹"[num % 10];
+    result = "⁰¹²³⁴⁵⁶⁷⁸⁹"[num % 10] + result;
     num = Math.floor(num / 10);
   }
   return result;

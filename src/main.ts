@@ -21,6 +21,7 @@ import { SceneView } from "./render/sceneView";
 import { DragController } from "./interaction/dragController";
 import { Readout } from "./ui/readout";
 import { Screen } from "./ui/screen";
+import { IntroCutscene } from "./interaction/introCutscene";
 
 const app = document.getElementById("app")!;
 const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -102,19 +103,30 @@ let currentSeed: string = config.seeds.initial;
 const initialPoly = new Polyhedron(getSeed(currentSeed));
 rig.frame(new Vector3());
 
-const controller = new DragController(
+let controller: DragController | null = null;
+let intro: IntroCutscene | null = new IntroCutscene(
   initialPoly,
-  seedLabel(currentSeed),
   view,
   rig.camera,
   rig.controls,
-  renderer.domElement,
-  readout,
-  screen,
-);
+  () => {
+    intro = null;
+    rig.frame(new Vector3());
+    controller = new DragController(
+      initialPoly,
+      seedLabel(currentSeed),
+      view,
+      rig.camera,
+      rig.controls,
+      renderer.domElement,
+      readout,
+      screen,
+    );
+  });
 
 // --- undo / redo + seed loading via keyboard --------------------------------
 window.addEventListener("keydown", (e) => {
+  if (!controller) return;
   // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y. (Camera is kept;
   // shapes are normalized to ~unit so no reframe is needed.)
   const mod = IS_MAC ? e.metaKey : e.ctrlKey;
@@ -157,7 +169,8 @@ window.addEventListener("keydown", (e) => {
 // --- render loop ------------------------------------------------------------
 function animate(): void {
   requestAnimationFrame(animate);
-  controller.update();
+  if (intro) intro.update();
+  if (controller) controller.update();
   rig.update();
   composer.render();
 }

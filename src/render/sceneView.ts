@@ -135,7 +135,7 @@ export class SceneView {
   private vertexGeo = new SphereGeometry(config.render.vertexMarkerRadius, 14, 10);
   private faceGeo = new SphereGeometry(config.render.faceMarkerRadius, 14, 10);
 
-  constructor(scene: Scene) {
+  constructor(public readonly scene: Scene) {
     this.faceMat = new MeshStandardMaterial({
       color: config.render.faceColor,
       transparent: config.render.faceOpacity < 1,

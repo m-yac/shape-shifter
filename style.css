@@ -1,6 +1,6 @@
 @font-face {
   font-family: AST_PremiumExec;
-  src: url(WebPlus_AST_PremiumExec.woff);
+  src: url(oldschool_pc_font_pack_v2.2_web/WebPlus_AST_PremiumExec.woff);
   font-display: block;
 }
 /* ---------------------------------------------------------------------
@@ -71,6 +71,14 @@ canvas {
   color: var(--phosphor, #86f2b0);
   text-shadow: var(--glow, 0 0 6px rgba(78, 224, 122, 0.45));
   white-space: pre;
+}
+#console {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: var(--glass, #0a0f0c);
+  z-index: 3;
 }
 .cannotSnubGyro {
   opacity: 0.4;
