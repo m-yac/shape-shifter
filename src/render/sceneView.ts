@@ -10,6 +10,7 @@ import {
   MeshBasicMaterial,
   SphereGeometry,
   CylinderGeometry,
+  Color,
   Vector3,
 } from "three";
 
@@ -132,6 +133,12 @@ export class SceneView {
 
   private faceMat: MeshStandardMaterial;
   private faceHighlightMat: MeshBasicMaterial;
+
+  // Transient emissive "glow" pulse (used on a new-shape discovery). The bloom
+  // pass turns the raised emissive into a bright halo. 0 duration => inactive.
+  private glowStart = 0;
+  private glowDur = 0;
+  private glowPeak = 0;
   private vertexGeo = new SphereGeometry(config.render.vertexMarkerRadius, 14, 10);
   private faceGeo = new SphereGeometry(config.render.faceMarkerRadius, 14, 10);
 
@@ -146,6 +153,11 @@ export class SceneView {
       roughness: 0.6,
       metalness: 0.0,
       side: 2, // DoubleSide
+      // Emissive starts dark; pulseGlow() drives emissiveIntensity for the
+      // discovery flash (its color tracks the current face color, so the shape
+      // appears to brighten from within).
+      emissive: new Color(config.render.faceColor),
+      emissiveIntensity: 0,
     });
     this.faceMesh = new ThreeMesh(new BufferGeometry(), this.faceMat);
     this.edges = new LineSegments(
@@ -227,6 +239,29 @@ export class SceneView {
   /** Recolor the surface (e.g. the green "adjusting" tint while relaxing). */
   setSurfaceColor(hex: number): void {
     this.faceMat.color.setHex(hex);
+  }
+
+  /** Start an emissive glow pulse that peaks at `strength` and fades over
+   *  `seconds` (used for the new-shape discovery flash). */
+  pulseGlow(strength: number, seconds: number): void {
+    this.faceMat.emissive.copy(this.faceMat.color);
+    this.glowPeak = strength;
+    this.glowStart = performance.now();
+    this.glowDur = Math.max(1, seconds * 1000);
+  }
+
+  /** Advance time-based visual effects (the glow pulse). Call once per frame. */
+  updateEffects(nowMs: number): void {
+    if (this.glowDur <= 0) return;
+    const t = (nowMs - this.glowStart) / this.glowDur;
+    if (t >= 1) {
+      this.faceMat.emissiveIntensity = 0;
+      this.glowDur = 0;
+      return;
+    }
+    // Quick attack, gentle decay.
+    const env = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+    this.faceMat.emissiveIntensity = this.glowPeak * Math.max(0, env);
   }
 
   /** Show the small sphere on the vertex currently targeted by the drag. */

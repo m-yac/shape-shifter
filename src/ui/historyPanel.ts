@@ -1,8 +1,9 @@
 import { type HistoryEntry } from "../history/history";
-import { Screen, Popup } from "./screen";
+import { config } from "../config";
+import { Screen, Popup, fadeIn } from "./screen";
 
 /** Width of the history panel, in character cells. */
-const HISTORY_COLS = 26;
+const HISTORY_COLS = 28;
 
 /**
  * Right-side HISTORY panel: a box-drawing popup whose body lists the operations
@@ -17,6 +18,7 @@ const HISTORY_COLS = 26;
 export class HistoryPanel {
   private readonly popup: Popup;
   private last: { entries: readonly HistoryEntry[]; current: number } | null = null;
+  private forced = false; // force-visible even with only the seed (intro skip)
 
   constructor(
     private readonly screen: Screen,
@@ -25,7 +27,7 @@ export class HistoryPanel {
     // stop just above it (rather than growing down into it) and scrolls instead.
     private readonly reservedBottomRows: () => number = () => 0,
   ) {
-    this.popup = new Popup(screen, { cols: HISTORY_COLS, rows: 3, title: "HISTORY" });
+    this.popup = new Popup(screen, { cols: HISTORY_COLS, rows: 3, title: config.ui.titles.history });
     this.popup.body.classList.add("history-body"); // grid-snapping scroll (see CSS)
     this.popup.mount();
     screen.onLayout(() => this.draw());
@@ -36,24 +38,38 @@ export class HistoryPanel {
     this.draw();
   }
 
+  /** Force the panel visible immediately (e.g. the intro was skipped) and fade
+   *  it in, rather than waiting for the first edit. */
+  reveal(): void {
+    if (this.forced) return;
+    this.forced = true;
+    this.draw();
+    fadeIn(this.popup.el);
+  }
+
   /** Size the box to its content (clamped to the screen) and (re)fill its body. */
   private draw(): void {
     if (!this.last) return;
     const s = this.screen;
     const { entries, current } = this.last;
 
+    // Stay hidden until the user's first operation (unless force-revealed by an
+    // intro skip): with only the seed entry there's no history worth showing.
+    if (!this.forced && entries.length <= 1) {
+      this.popup.el.style.display = "none";
+      return;
+    }
+    this.popup.el.style.display = "";
+
     const cols = Math.min(HISTORY_COLS, Math.max(10, s.cols - 1));
-    // Each entry is one label line, plus a name line when it has a resolved name.
-    let lines = 0;
-    for (const e of entries) lines += 1 + (!e.isSeed && e.name ? 1 : 0);
     // Stop just above the bottom-left readout box rather than growing into it; the
     // body scrolls (snapping to the grid) once the content exceeds this height.
     const maxRows = Math.max(3, s.rows - this.reservedBottomRows());
-    const rows = Math.max(3, Math.min(lines + 2, maxRows));
 
-    this.popup.resize(cols, rows);
-    this.popup.placeAt(s.cols - cols, 0); // top-right corner
-
+    // Size the body to its final width (with a generous height so nothing scrolls
+    // yet) and fill it, then measure: a long label/name wraps onto extra grid rows
+    // (see the hanging indent in CSS), so we can't assume one row per entry line.
+    this.popup.resize(cols, maxRows);
     const body = this.popup.body;
     body.replaceChildren();
     entries.forEach((entry, i) => {
@@ -80,6 +96,14 @@ export class HistoryPanel {
       item.addEventListener("click", () => this.onJump(i));
       body.appendChild(item);
     });
+
+    // Measure the wrapped content (whole grid rows) and shrink the box to fit it,
+    // capped at maxRows; beyond that the body scrolls.
+    const last = body.lastElementChild as HTMLElement | null;
+    const contentRows = last ? Math.ceil((last.offsetTop + last.offsetHeight) / s.rowH) : 1;
+    const rows = Math.max(3, Math.min(contentRows + 2, maxRows));
+    this.popup.resize(cols, rows);
+    this.popup.placeAt(s.cols - cols, 0); // top-right corner
 
     // Keep the active entry in view as the list grows.
     (body.children[current] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest" });

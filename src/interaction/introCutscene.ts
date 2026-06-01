@@ -3,6 +3,18 @@ import { Polyhedron } from "../geometry/polyhedron";
 import { SceneView } from "../render/sceneView";
 import { Fog, PerspectiveCamera } from "three";
 import { config } from "../config";
+import { BootSequence } from "./bootSequence";
+import { Screen, fadeOut } from "../ui/screen";
+import { GlitchOverlay } from "../ui/glitch";
+
+/** Parse a "#rrggbb" hex color into an [r, g, b] triple of 0..255 ints. */
+function hexRgb(hex: string): [number, number, number] {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
 
 export class IntroCutscene {
   private fog: Fog;
@@ -10,14 +22,37 @@ export class IntroCutscene {
   private startTime: number = 0;
   private consoleEl: HTMLElement;
 
+  // The faux-BIOS boot screen that plays in the console overlay on launch.
+  private boot: BootSequence;
+  private bootDone = false;
+  private warmupDone = false;
+  private consoleFadingOut = false;
+  // performance.now() when the shape fade-in began (the boot signals this partway
+  // through its closing message); 0 until then.
+  private fadeStart = 0;
+
+  // CRT warm-up flash colors (monitor power-on color -> dark glass).
+  private readonly brightRgb: [number, number, number];
+  private readonly glassRgb: [number, number, number];
+
   constructor(
     private readonly poly: Polyhedron,
     private readonly view: SceneView,
     private readonly camera: PerspectiveCamera,
     private readonly controls: ArcballControls,
+    screen: Screen,
+    private readonly glitch: GlitchOverlay,
     private whenFinished: () => void
   ) {
     this.consoleEl = document.getElementById("console")!;
+    this.boot = new BootSequence(this.consoleEl, screen, glitch, () => {
+      if (this.fadeStart === 0) this.fadeStart = performance.now();
+    });
+
+    this.brightRgb = config.theme.monitorBright
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10)) as [number, number, number];
+    this.glassRgb = hexRgb(config.theme.glass);
 
     this.fog = new Fog(config.render.backgroundColor, 0, config.intro.cameraDistance - 1);
     this.distance = config.intro.cameraDistance;
@@ -28,10 +63,23 @@ export class IntroCutscene {
     this.view.setPolyhedron(this.poly, false);
   }
 
+  private finished = false;
+
   private finish(): void {
+    if (this.finished) return;
+    this.finished = true;
     this.view.scene.fog = null;
     this.controls.enabled = true;
+    this.glitch.clear(); // leave the app with a clean screen (also covers a skip)
     this.whenFinished();
+  }
+
+  /** Abort the whole intro (e.g. the user pressed a key): drop the boot screen
+   *  and jump straight to the shape, fully visible, with the app UI shown. */
+  skip(): void {
+    if (this.finished) return;
+    this.consoleEl.style.display = "none";
+    this.finish();
   }
 
   updateFadeIn(t: number): void {
@@ -43,29 +91,57 @@ export class IntroCutscene {
     this.fog.near = (config.camera.startDistance + 1) * t8;
   }
 
+  /** Blend the console background from the warm monitor color to the glass over
+   *  the first `warmupDuration` seconds: the CRT "powering on" before any text.
+   *  Runs only until warm-up completes, then leaves the background to the boot
+   *  sequence (which goes transparent for the closing message). */
+  private updateWarmup(t: number): void {
+    if (this.warmupDone) return;
+    const k = Math.min(1, t / config.intro.warmupDuration);
+    if (k >= 1) {
+      this.consoleEl.style.backgroundColor = ""; // revert to the CSS glass color
+      this.warmupDone = true;
+      return;
+    }
+    const mix = (i: number) => Math.round(this.brightRgb[i] + (this.glassRgb[i] - this.brightRgb[i]) * k);
+    this.consoleEl.style.backgroundColor = `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
+  }
+
   update(): void {
     const now = performance.now();
     if (this.startTime == 0) {
       this.startTime = now;
     }
-    let t = (now - this.startTime) / 1000;
+    const t = (now - this.startTime) / 1000;
 
-    const tBoot = t / config.intro.bootDuration;
-    if (tBoot < 1) {
-      this.consoleEl.style = `background-color: rgba(${config.theme.monitorBright}, ${1 - tBoot});`
-      // update boot
+    // Phase 1: the boot sequence runs on its own clock over a solid console
+    // (with a brief power-on flash) until it has finished. The console does NOT
+    // fade out; the boot makes its own background transparent for the closing
+    // message, which stays on screen over the fading-in shape.
+    if (!this.bootDone) {
+      this.updateWarmup(t);
+      this.bootDone = this.boot.update();
     }
-    if (tBoot >= 1 && this.consoleEl.style[0] != "background-color: unset;") {
-      this.consoleEl.style = "background-color: unset;";
-    }
-    t -= config.intro.bootDuration;
 
-    const tFadeIn = t / config.intro.shapeFadeInDuration;
-    if (tFadeIn < 1) {
-      return this.updateFadeIn(tFadeIn);
-    }
-    t -= config.intro.shapeFadeInDuration
+    // Phase 2: the shape fades in behind the closing message (triggered by the
+    // boot partway through typing it). The message fades out so it's gone just
+    // before the shape finishes; once it has fully faded in, control passes on.
+    if (this.fadeStart === 0) return; // not yet at the fade-in beat
+    const elapsed = (now - this.fadeStart) / 1000;
+    const total = config.intro.shapeFadeInDuration;
 
+    // Start fading the closing message out early, so the fade completes a touch
+    // before the shape's fade-in does (rather than lingering past it).
+    const fadeOutSeconds = 0.6;
+    const finishGap = 0.4; // leave the message gone this long before the shape lands
+    if (!this.consoleFadingOut && total - elapsed <= fadeOutSeconds + finishGap) {
+      this.consoleFadingOut = true;
+      fadeOut(this.consoleEl, fadeOutSeconds);
+    }
+
+    if (elapsed < total) {
+      return this.updateFadeIn(elapsed / total);
+    }
     this.finish();
   }
 }

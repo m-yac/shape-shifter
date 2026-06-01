@@ -20,8 +20,17 @@ import { buildGyro } from "../operations/gyro";
  *     (winding is fixed automatically; positions only need to form a valid solid)
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/** The family a named solid belongs to (shown in the discovery popup). */
+export type SolidType =
+  | "Platonic solid"
+  | "Archimedean solid"
+  | "Catalan solid"
+  | "Johnson solid"
+  | "Dihedral solid";
+
 export interface NamedPolyhedron {
   name: string;
+  type: SolidType;
   mesh: Mesh;
 }
 
@@ -52,61 +61,70 @@ const join = (mesh: Mesh): Mesh =>
 const gyro = (mesh: Mesh): Mesh =>
   buildGyro(new Polyhedron(mesh), 0, null).commit(1, true);
 
+const P: SolidType = "Platonic solid";
+const A: SolidType = "Archimedean solid";
+const C: SolidType = "Catalan solid";
+
 export const NAMED: NamedPolyhedron[] = [
   // Platonic solids
-  { name: "Tetrahedron", mesh: seed("tetrahedron") },
-  { name: "Cube", mesh: seed("cube") },
-  { name: "Octahedron", mesh: seed("octahedron") },
-  { name: "Dodecahedron", mesh: seed("dodecahedron") },
-  { name: "Icosahedron", mesh: seed("icosahedron") },
+  { name: "Tetrahedron", type: P, mesh: seed("tetrahedron") },
+  { name: "Cube", type: P, mesh: seed("cube") },
+  { name: "Octahedron", type: P, mesh: seed("octahedron") },
+  { name: "Dodecahedron", type: P, mesh: seed("dodecahedron") },
+  { name: "Icosahedron", type: P, mesh: seed("icosahedron") },
 
   // Archimedean solids
 
   // 1. Truncated
-  { name: "Truncated tetrahedron", mesh: truncate(getSeed("tetrahedron")) },
-  { name: "Truncated cube", mesh: truncate(getSeed("cube")) },
-  { name: "Truncated octahedron", mesh: truncate(getSeed("octahedron")) },
-  { name: "Truncated dodecahedron", mesh: truncate(getSeed("dodecahedron")) },
-  { name: "Truncated icosahedron", mesh: truncate(getSeed("icosahedron")) },
+  { name: "Truncated tetrahedron", type: A, mesh: truncate(getSeed("tetrahedron")) },
+  { name: "Truncated cube", type: A, mesh: truncate(getSeed("cube")) },
+  { name: "Truncated octahedron", type: A, mesh: truncate(getSeed("octahedron")) },
+  { name: "Truncated dodecahedron", type: A, mesh: truncate(getSeed("dodecahedron")) },
+  { name: "Truncated icosahedron", type: A, mesh: truncate(getSeed("icosahedron")) },
 
   // 2. Rectified
-  { name: "Cuboctahedron", mesh: rectify(getSeed("cube")) },
-  { name: "Icosidodecahedron", mesh: rectify(getSeed("icosahedron")) },
+  { name: "Cuboctahedron", type: A, mesh: rectify(getSeed("cube")) },
+  { name: "Icosidodecahedron", type: A, mesh: rectify(getSeed("icosahedron")) },
 
   // 3. Truncated-Rectified
-  { name: "Truncated Cuboctahedron", mesh: truncate(rectify(getSeed("cube"))) },
-  { name: "Truncated Icosidodecahedron", mesh: truncate(rectify(getSeed("icosahedron"))) },
+  { name: "Truncated Cuboctahedron", type: A, mesh: truncate(rectify(getSeed("cube"))) },
+  { name: "Truncated Icosidodecahedron", type: A, mesh: truncate(rectify(getSeed("icosahedron"))) },
 
   // 4. Double-Rectified
-  { name: "Rhombicuboctahedron", mesh: rectify(rectify(getSeed("cube"))) },
-  { name: "Rhombiccosidodecahedron", mesh: rectify(rectify(getSeed("icosahedron"))) },
+  { name: "Rhombicuboctahedron", type: A, mesh: rectify(rectify(getSeed("cube"))) },
+  { name: "Rhombiccosidodecahedron", type: A, mesh: rectify(rectify(getSeed("icosahedron"))) },
 
   // 5. Snub-Rectified
-  { name: "Snub cuboctahedron", mesh: snub(rectify(getSeed("cube"))) },
-  { name: "Snub Icosidodecahedron", mesh: snub(rectify(getSeed("icosahedron"))) },
+  { name: "Snub cuboctahedron", type: A, mesh: snub(rectify(getSeed("cube"))) },
+  { name: "Snub Icosidodecahedron", type: A, mesh: snub(rectify(getSeed("icosahedron"))) },
 
   // Catalan solids
 
   // 1. Kissed
-  { name: "Triakis tetrahedron", mesh: kis(getSeed("tetrahedron")) },
-  { name: "Tetrakis hexahedron", mesh: kis(getSeed("cube")) },
-  { name: "Triakis octahedron", mesh: kis(getSeed("octahedron")) },
-  { name: "Pentakis dodecahedron", mesh: kis(getSeed("dodecahedron")) },
-  { name: "Triakis icosahedron", mesh: kis(getSeed("icosahedron")) },
+  { name: "Triakis tetrahedron", type: C, mesh: kis(getSeed("tetrahedron")) },
+  { name: "Tetrakis hexahedron", type: C, mesh: kis(getSeed("cube")) },
+  { name: "Triakis octahedron", type: C, mesh: kis(getSeed("octahedron")) },
+  { name: "Pentakis dodecahedron", type: C, mesh: kis(getSeed("dodecahedron")) },
+  { name: "Triakis icosahedron", type: C, mesh: kis(getSeed("icosahedron")) },
 
   // 2. Joined
-  { name: "Rhombic dodecahedron", mesh: join(getSeed("cube")) },
-  { name: "Rhombic triacontahedron", mesh: join(getSeed("dodecahedron")) },
+  { name: "Rhombic dodecahedron", type: C, mesh: join(getSeed("cube")) },
+  { name: "Rhombic triacontahedron", type: C, mesh: join(getSeed("dodecahedron")) },
 
   // 3. Kissed-Joined
-  { name: "Disdyakis dodecahedron", mesh: kis(join(getSeed("cube"))) },
-  { name: "Disdyakis triacontahedron", mesh: kis(join(getSeed("dodecahedron"))) },
+  { name: "Disdyakis dodecahedron", type: C, mesh: kis(join(getSeed("cube"))) },
+  { name: "Disdyakis triacontahedron", type: C, mesh: kis(join(getSeed("dodecahedron"))) },
 
   // 4. Double-Joined
-  { name: "Deltoidal icositetrahedron", mesh: join(join(getSeed("cube"))) },
-  { name: "Deltoidal hexecontahedron", mesh: join(join(getSeed("dodecahedron"))) },
+  { name: "Deltoidal icositetrahedron", type: C, mesh: join(join(getSeed("cube"))) },
+  { name: "Deltoidal hexecontahedron", type: C, mesh: join(join(getSeed("dodecahedron"))) },
 
   // 5. Gyro-Joined
-  { name: "Pentagonal icositetrahedron", mesh: gyro(join(getSeed("cube"))) },
-  { name: "Pentagonal hexecontahedron", mesh: gyro(join(getSeed("dodecahedron"))) },
+  { name: "Pentagonal icositetrahedron", type: C, mesh: gyro(join(getSeed("cube"))) },
+  { name: "Pentagonal hexecontahedron", type: C, mesh: gyro(join(getSeed("dodecahedron"))) },
 ];
+
+/** The family ("Platonic solid", …) of a named solid, or null if unknown. */
+export function solidTypeFor(name: string): SolidType | null {
+  return NAMED.find((n) => n.name === name)?.type ?? null;
+}

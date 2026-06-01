@@ -84,6 +84,35 @@ canvas {
   opacity: 0.4;
 }
 /* --------------------------------------------------------------------
+   Glitch overlay: a full-grid <pre> of random "corrupted" glyphs that
+   sits above the boot text and the 3D view (but below the discovery
+   popup). Click-through so it never blocks dragging. (See ui/glitch.ts.) */
+.glitch {
+  left: 0;
+  top: 0;
+  margin: 0; /* <pre> has a default margin that would offset it from the grid */
+  width: 100%;
+  height: 100%;
+  z-index: 4;
+  pointer-events: none;
+  color: var(--glitch-color, #c8ffd9);
+  overflow: hidden;
+}
+/* The congratulations popup shown on a new-shape discovery. It rides above
+   the glitch overlay (which may still be flashing) and accepts clicks so it
+   can be dismissed. Its bright phosphor body matches the celebratory tone. */
+.discovery-popup {
+  z-index: 6;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.discovery-popup .popup-frame {
+  color: var(--phosphor-bright, #d2ffe2);
+}
+.discovery-text {
+  color: var(--phosphor-bright, #d2ffe2);
+}
+/* --------------------------------------------------------------------
    Popups / panels: a box-drawing frame with a scrollable inner area. */
 .popup-frame {
   position: absolute;
@@ -119,12 +148,19 @@ canvas {
   scroll-snap-type: y mandatory;
 }
 /* History entries (rendered into the HISTORY popup's body). Vertical
-   padding stays 0 so each line is exactly one grid row tall. */
+   padding stays 0 so each (possibly wrapped) line is exactly one grid row tall. */
 .history-item {
   padding: 0;
   cursor: pointer;
-  white-space: nowrap;
   scroll-snap-align: start;
+}
+/* A long operation label wraps instead of being clipped; continuation lines hang
+   under the text after the "└─► " prefix (4 cells). Whole-cell padding / indent
+   (1ch == one character cell here) keeps the wrap on the character grid. */
+.history-label {
+  white-space: pre-wrap;
+  padding-left: 4ch;
+  text-indent: -4ch;
 }
 .history-item:hover {
   background: rgba(78, 224, 122, 0.1);
@@ -141,8 +177,12 @@ canvas {
 .history-item.invalid .history-label {
   color: var(--phosphor-warn, #e0a36a);
 }
+/* The shape name beneath an operation: indented 2 cells, wrapping with a further
+   1-cell hang so continuation lines sit under the text inside the "(". */
 .history-name {
-  padding-left: 2ch;
+  white-space: pre-wrap;
+  padding-left: 3ch;
+  text-indent: -1ch;
   opacity: 0.7;
   font-style: italic;
 }

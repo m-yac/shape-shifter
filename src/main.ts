@@ -21,6 +21,8 @@ import { SceneView } from "./render/sceneView";
 import { DragController } from "./interaction/dragController";
 import { Readout } from "./ui/readout";
 import { Screen } from "./ui/screen";
+import { ShapesPanel } from "./ui/shapesPanel";
+import { GlitchOverlay } from "./ui/glitch";
 import { IntroCutscene } from "./interaction/introCutscene";
 
 const app = document.getElementById("app")!;
@@ -35,6 +37,11 @@ const screen = new Screen(
   document.getElementById("grid")!,
 );
 screen.layout();
+
+// --- glitch overlay ---------------------------------------------------------
+// A single corruption overlay on top of the grid, shared by the boot sequence
+// (which choreographs it) and the new-shape discovery flash. Ticked every frame.
+const glitch = new GlitchOverlay(screen, document.getElementById("grid")!);
 
 // --- renderer ---------------------------------------------------------------
 // When pixelateRender is on, the buffer is rendered at one texel per font pixel
@@ -66,7 +73,10 @@ scene.add(fill);
 // --- camera + view + controller ---------------------------------------------
 const rig = new CameraRig(renderer.domElement);
 const view = new SceneView(scene);
-const readout = new Readout(screen);
+// The top-left SHAPES panel appears once the intro finishes; the SELECTION
+// readout box tucks in just below it.
+let shapesPanel: ShapesPanel | null = null;
+const readout = new Readout(screen, () => shapesPanel?.reservedRows() ?? 0);
 
 // --- post-processing: phosphor bloom over the 3D view -----------------------
 // UnrealBloom gives the polyhedra the same soft halo the text gets from its
@@ -109,9 +119,14 @@ let intro: IntroCutscene | null = new IntroCutscene(
   view,
   rig.camera,
   rig.controls,
+  screen,
+  glitch,
   () => {
     intro = null;
     rig.frame(new Vector3());
+    // The bottom-left readout appears now (via the controller). The top-left
+    // SHAPES panel and the HISTORY panel stay hidden until the first edit.
+    shapesPanel = new ShapesPanel(screen);
     controller = new DragController(
       initialPoly,
       seedLabel(currentSeed),
@@ -121,8 +136,38 @@ let intro: IntroCutscene | null = new IntroCutscene(
       renderer.domElement,
       readout,
       screen,
+      glitch,
+      shapesPanel,
+      () => {
+        // First edit: reveal the panels that wait for it.
+        shapesPanel?.show();
+        readout.enableSelection();
+      },
     );
+    readout.fadeIn(); // the bottom-left popup fades in as the intro hands off
   });
+
+function skipIntro(e: Event) {
+  if (!intro) return;
+  e.stopImmediatePropagation();
+  e.preventDefault();
+  intro.skip(); // synchronously runs the whenFinished above (creates the panels)
+  shapesPanel?.show();
+  controller?.revealHistory();
+  readout.enableSelection();
+}
+
+// Any key or click skips the intro and jumps straight to the app, revealing every panel
+// immediately (no first edit needed). Registered before the main keyboard
+// handler and stops the event there, so the skipping keystroke isn't also
+// interpreted as an app shortcut.
+window.addEventListener("keyup", (e) => {
+  if (e.key.length == 1 || e.key == "Escape")
+    skipIntro(e);
+});
+window.addEventListener("pointerup", (e) => {
+  skipIntro(e);
+});
 
 // --- undo / redo + seed loading via keyboard --------------------------------
 window.addEventListener("keydown", (e) => {
@@ -171,6 +216,7 @@ function animate(): void {
   requestAnimationFrame(animate);
   if (intro) intro.update();
   if (controller) controller.update();
+  glitch.tick(performance.now());
   rig.update();
   composer.render();
 }

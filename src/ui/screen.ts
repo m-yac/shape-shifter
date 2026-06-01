@@ -48,6 +48,27 @@ export function textGlow(intensity: number, rgb: string): string {
   return `${core}, ${halo}`;
 }
 
+// --- fade helpers ------------------------------------------------------------
+
+/** Fade an element in from transparent: snap to opacity 0, then transition to 1.
+ *  (Used for the popups appearing at the end of the intro.) */
+export function fadeIn(el: HTMLElement, seconds = 0.5): void {
+  el.style.transition = "none";
+  el.style.opacity = "0";
+  void el.offsetWidth; // force a reflow so the opacity change actually animates
+  el.style.transition = `opacity ${seconds}s ease`;
+  el.style.opacity = "1";
+}
+
+/** Fade an element out to transparent, then hide it once the transition ends. */
+export function fadeOut(el: HTMLElement, seconds = 0.5): void {
+  el.style.transition = `opacity ${seconds}s ease`;
+  el.style.opacity = "0";
+  window.setTimeout(() => {
+    el.style.display = "none";
+  }, seconds * 1000);
+}
+
 // --- text helpers -----------------------------------------------------------
 
 /** Pad (or truncate) `text` to exactly `width` columns, centered. */
@@ -190,6 +211,7 @@ export class Screen {
     root.setProperty("--phosphor-dim", t.phosphorDim);
     root.setProperty("--phosphor-warn", t.phosphorWarn);
     root.setProperty("--glow", textGlow(t.bloom.intensity, t.glowColor));
+    root.setProperty("--glitch-color", config.glitch.color);
     root.setProperty("--glass", t.glass);
     root.setProperty("--room", t.room);
     root.setProperty("--bezel-light", t.bezelLight);

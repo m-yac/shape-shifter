@@ -40,6 +40,9 @@ export const config = {
   // INTERACTION — how dragging, snapping and selection feel.
   // ---------------------------------------------------------------------------
   interaction: {
+    // A release with a t value (between 0 and 1) below this is treated as no change
+    minCommitT: 1e-3,
+
     // Pixel radius around a vertex / face-center within which hovering counts as
     // "over" it: the marker takes its prominent appearance and is grabbable.
     hoverPixelRadius: 22,
@@ -174,8 +177,252 @@ export const config = {
 
   intro: {
     cameraDistance: 7, // initial camera distance from origin
-    bootDuration: 6, // second(s)
+    // CRT "power-on" flash: the console starts at the bright monitor color and
+    // settles to the dark glass over this long before the boot text appears.
+    warmupDuration: 0.6, // second(s)
+    // The 3D shape fades in behind the boot sequence's closing message; once it
+    // has fully faded in the console is hidden and the app takes over.
     shapeFadeInDuration: 10, // second(s)
+  },
+
+  // ---------------------------------------------------------------------------
+  // GLITCH — a character-grid "corruption" overlay: random cells flip to random
+  //   glyphs. ONE intensity (0..1) drives it — at 0 it is off, at 1 the entire
+  //   grid is filled with churning random characters. Crucially, LOW intensities
+  //   don't just thin the coverage, they also make the corruption come in
+  //   occasional BURSTS rather than a steady fill (so a small percentage both
+  //   shrinks each flicker and makes them pop up less often).
+  //
+  //   The same overlay is used twice: choreographed across the boot sequence
+  //   (interaction/bootSequence.ts) and as the flash when a new shape is
+  //   discovered (see `discovery` below).
+  // ---------------------------------------------------------------------------
+  glitch: {
+    enabled: true,
+    // The pool of glyphs a corrupted cell can show (one picked at random per
+    // cell, per refresh). Edit this to change the texture of the corruption.
+    chars: "█▓▒░▚▞▙▟◣◢╳╱╲@#$%&*?/\\<>=+-:;01ABEFΔΞΣΨΦ",
+    // The glitch glyph color (defaults to a bright phosphor); a CSS color string.
+    color: "#c8ffd9",
+    // How often (ms) the whole random field is regenerated — the flicker rate.
+    refreshMs: 55,
+
+    // CLUSTERING. Corrupted cells aren't scattered uniformly; they're carved out
+    // of an animated value-noise field, so the corruption appears in moving
+    // BLOBS rather than evenly-spread static. `scale` is how many grid cells span
+    // one noise lattice cell (bigger = larger, smoother blobs); `timeScale` is
+    // how fast the blobs drift/morph (units per second). The coverage (0..1) is
+    // the slice of the noise field that lights up, so it still reads as a
+    // percentage — just clumped.
+    noise: {
+      scale: 5,
+      timeScale: 1.6,
+    },
+
+    // AUTO-BURST. When an "auto" intensity p (0..1) is set, bursts pop up at
+    // random with NO steady fill: the gap between them eases from `maxGapMs`
+    // (at p→0, rare) to `minGapMs` (at p→1, constant), and each burst's peak
+    // coverage is p * `peakScale`. Each burst's coverage decays linearly to 0
+    // over a random duration in [minBurstMs, maxBurstMs]. This is what produces
+    // the "intermittent slight reappearances" during the closing message.
+    burst: {
+      minGapMs: 110,
+      maxGapMs: 2400,
+      minBurstMs: 90,
+      maxBurstMs: 340,
+      peakScale: 1.0,
+    },
+    // The boot-sequence glitch choreography lives inline as "glitch" steps in
+    // config.bootText (program + closing), so the whole arc is editable there.
+  },
+
+  // ---------------------------------------------------------------------------
+  // DISCOVERY — the celebration the first time you MAKE a named shape (Platonic,
+  //   Archimedean, Catalan now; Johnson solids, their duals and a few dihedral
+  //   solids later — hence the eventual 250). The shape glows, the screen
+  //   glitches, then a popup congratulates you and names the kind of solid.
+  //   The very FIRST discovery of the session is made especially strong via the
+  //   `first*` multipliers below.
+  // ---------------------------------------------------------------------------
+  discovery: {
+    enabled: true,
+    total: 250, // the eventual shape count (shown in the SHAPES panel as N/250)
+
+    // Remember discoveries across page reloads (localStorage). Off by default so
+    // the experience is reproducible; turn on to make discoveries permanent.
+    persist: false,
+    storageKey: "polyhedra-craft:discovered",
+
+    // Shapes you "already have" at launch and so never trigger a discovery. The
+    // boot story finds exactly the tetrahedron (1/250), so it starts discovered.
+    preDiscovered: ["Tetrahedron"],
+
+    // The bright emissive glow pulse on the shape (picked up by the 3D bloom).
+    glowStrength: 1.6, // peak emissive intensity
+    glowDurationS: 1.6,
+
+    // The glitch flash over the screen (coverage peak + how long it decays over).
+    // Kept well below the boot sequence's peak: a discovery should sparkle with
+    // clustered corruption, never black out the whole screen.
+    glitchBurst: 0.22,
+    glitchDurationS: 0.9,
+
+    // The first discovery of the session multiplies both effects for extra punch.
+    // (The glow goes big; the glitch only nudges up — coverage stays comfortable.)
+    firstGlowMultiplier: 2.4,
+    firstGlitchMultiplier: 1.6,
+
+    // The congratulations popup: how long after the glitch it appears, and how
+    // long it stays before auto-dismissing (0 = stay until clicked/keyed away).
+    popupDelayS: 0.35,
+    popupHoldS: 6,
+  },
+
+  // ---------------------------------------------------------------------------
+  // UI TEXT — the titles drawn in each panel's box-drawing frame, and the
+  //   contents of the SHAPES panel + the new-shape DISCOVERY popup. Tokens in
+  //   {braces} are substituted at runtime:
+  //     SHAPES panel:     {count} {total}
+  //     DISCOVERY popup:  {banner} {name} {type} {count} {total}
+  // ---------------------------------------------------------------------------
+  ui: {
+    // Frame titles for each panel / popup.
+    titles: {
+      polyhedron: "SHAPE", // bottom-left status box (ui/readout.ts)
+      selection: "SELECTION", //   top-left selection box (ui/readout.ts)
+      history: "HISTORY", //       top-right operation list (ui/historyPanel.ts)
+      shapes: "LIBRARY", //         top-left discovered-shapes panel (ui/shapesPanel.ts)
+      discovery: "WOW", //   new-shape popup (ui/discoveryPopup.ts)
+    },
+
+    // The SHAPES panel body (one line).
+    shapesPanel: "{count}/{total} shapes",
+
+    // The new-shape DISCOVERY popup. `banner` is the headline (the first
+    // discovery of the run uses `bannerFirst` instead); `lines` is the body,
+    // one entry per centered row ("" = a blank row).
+    discoveryPopup: {
+      banner: "CONGRATULATIONS YOU MADE A MISSING SHAPE",
+      bannerFirst: "CONGRATULATIONS YOU MADE A MISSING SHAPE",
+      lines: [
+        "{banner}",
+        "",
+        "Its name is: {name}",
+        "({type})",
+        "",
+        "Library: {count} / {total} total shapes",
+      ],
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // BOOT TEXT — the script for the faux-BIOS boot sequence (see
+  //   interaction/bootSequence.ts). Each of the three screens below is a flat
+  //   list, played top to bottom. To re-skin the power-on story, just edit /
+  //   add / remove / reorder lines.
+  //
+  //   A bare string is one printed line (use "" for a blank line). An object is
+  //   a line with extra behaviour, set by `kind`:
+  //     (none)      a normal line of text (same as a bare string)
+  //     "pause"     no text; just wait (use with `delay`)
+  //     "memory"    a counts-up-in-place memory test after `text` (to `totalK`)
+  //     "check"     "text ........ [ OK ]"   (a POST subsystem check)
+  //     "command"   print `prompt`, then "type" `text` and press Enter
+  //     "load"      a shape-library entry: "NNN  text ..... [ OK | ERR ]"
+  //                 after `wait`s; `ok` picks OK vs ERR, `n` auto-increments
+  //     "glitch"    drive the corruption overlay: `level` (+ `ramp` seconds) sets
+  //                 the steady coverage, `auto` enables intermittent bursts,
+  //                 `burst` fires one transient burst (over `burstS`)
+  //     "clear"     wipe the screen
+  //     "reveal"    clear + go transparent (show the 3D view) + fade in + cursor
+  //     "shape"     start the real polyhedron fading in behind the text
+  //     "vcenter"   pad with blanks so the printed lines BELOW are centered
+  //   A text entry with `center: true` types itself out from the screen center.
+  //   `delay` (seconds) on any entry is an extra pause AFTER it. The leader
+  //   dots and the [ OK ]/[ ERR ] tokens are generated by bootSequence.ts.
+  // ---------------------------------------------------------------------------
+  bootText: {
+    bios: [
+      { kind: "pause", delay: 0.8 },
+      "LAGRANGE Mathematical Computing BIOS  v2.71PM",
+      "Copyright © 2186-2189  East Belt Systems Ltd.",
+      { text: "", delay: 0.15 },
+      { text: "Modus Ponens Processor . . . . Operational", delay: 0.1 },
+      { text: "Contradiction Engine   . . . . Installed", delay: 0.1 },
+      { text: "Splines                . . . . Reticulated", delay: 0.1 },
+      { kind: "memory", text: "Memory Test : ", totalK: 16384, delay: 0.1 },
+      { text: "Detecting Installed Peripherals ...", delay: 0.1 },
+      { text: "  Algebra Bus       . . . GrabGroup-7920", delay: 0.1 },
+      { text: "  Integrator Chip   . . . RIEMANN3", delay: 0.1 },
+      { text: "  Mani-folder (TM)  . . . FoldLabs Clopen", delay: 0.1 },
+      "",
+      { kind: "check", text: "Gödel Enforcer" },
+      { kind: "check", text: "Countability Meter" },
+      { kind: "check", text: "Riemann Hypothesis Solution" },
+      { kind: "check", text: "Goldbach Counterexample Generator" },
+      { kind: "check", text: "Internal 5D Core" },
+      { kind: "check", text: "Injection Injector" },
+      { kind: "check", text: "Category of Categories" },
+      "",
+      { text: "Starting ErDOS ..." },
+      "",
+      { kind: "command", prompt: "C:\\> ", text: "ss250.exe", delay: 0.2 },
+    ],
+
+    program: [
+      { kind: "clear" }, // wipe the BIOS screen before the program's splash
+      { kind: "pause", delay: 1.0 },
+      "   _____ __  _____    ____  ______         ",
+      "  / ___// / / /   |  / __ \\/ ____/         ",
+      "  \\__ \\/ /_/ / /| | / /_/ / __/            ",
+      " ___/ / __  / ___ |/ ____/ /___            ",
+      "/____/_/ /_/_/__|_/_/___/_____/__________  ",
+      "  / ___// / / /  _/ ____/_  __/ ____/ __ \\ ",
+      "  \\__ \\/ /_/ // // /_    / / / __/ / /_/ / ",
+      " ___/ / __  // // __/   / / / /___/ _, _/  ",
+      "/____/_/ /_/___/_/_    /_/ /_____/_/ |_|   ",
+      "  |__ \\ / ____/ __ \\                       ",
+      "  __/ //___ \\/ / / /                       ",
+      " / __/____/ / /_/ /                        ",
+      "/____/_____/\\____/                         ",
+      "",
+      "Shaper Shifter 250",
+      "© 2189 Working Mathematician Supply Inc.",
+      { text: "", delay: 1.2 },
+      { text: "Loading shape library:", delay: 0.4 },
+      { kind: "load", text: "Tetrahedron", ok: true, wait: 1.9 },
+      { kind: "glitch", level: 0.15, ramp: 3 },
+      { kind: "load", text: "Cube", ok: false, wait: 4 },
+      { kind: "glitch", level: 0.25, ramp: 3.5 },
+      { text: "", delay: 1.0 },
+      { text: "[ PANIC ] UNEXPECTED ERROR", delay: 0.1 },
+      { text: "", delay: 0.8 },
+      { text: "Could not access shape library.", delay: 1.0 },
+      { text: "", delay: 0.8 },
+      { text: "Trying again:", delay: 0.4 },
+      { kind: "load", text: "Tetrahedron", ok: true, wait: 0.8 },
+      { kind: "glitch", level: 0.4, ramp: 3.0 },
+      { kind: "load", text: "Cube", ok: false, wait: 4 },
+      { kind: "glitch", level: 0.5, ramp: 3.5 },
+      "",
+      { text: "[ PANIC ] OUTSIDE INTERFERENCE DETECTED", delay: 0.1 },
+      { kind: "glitch", level: 0.8, ramp: 2.0, delay: 1.2 },
+    ],
+
+    closing: [
+      { kind: "reveal" },
+      { kind: "glitch", level: 0, ramp: 0, auto: 0.2 },
+      { kind: "pause", delay: 1.2 },
+      { kind: "vcenter" },
+      { kind: "shape" },
+      { text: "Sorry.", center: true, delay: 1.4, lnAfterDelay: true },
+      "",
+      "",
+      { text: "Looks like you'll have to make", center: true, lnAfterDelay: true },
+      { text: "all the shapes yourself.", center: true },
+      { kind: "pause", delay: 0.6 },
+      { kind: "glitch", level: 0, ramp: 1.0, auto: 0 },
+    ],
   },
 
   // ---------------------------------------------------------------------------

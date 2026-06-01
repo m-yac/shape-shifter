@@ -5,7 +5,13 @@ import { config } from "../config";
 import { Polyhedron } from "../geometry/polyhedron";
 import { canSnub } from "../operations/snub";
 import { canGyro } from "../operations/gyro";
-import { Screen, Popup } from "./screen";
+import { Screen, Popup, fadeIn } from "./screen";
+
+// Columns by which the wrapped (continuation) lines of a readout box hang-indent.
+// A long faces/vertices configuration list that overflows the screen wraps and
+// the continuation lines sit indented under their label. Whole cells keep the
+// indent on the character grid (see setupWrap below).
+const READOUT_INDENT_COLS = 2;
 
 /** "vertex"/"vertices" or "face"/"faces" agreeing with `n`. */
 function plural(element: "vertex" | "face", n: number): string {
@@ -50,30 +56,51 @@ export class Readout {
   private selectionKind: MarkerKind | null = null;
   // Non-null only while a drag is live; `count` is the participating subset size,
   // or null when the operation affects every element of its kind (the whole solid).
-  private drag: { kind: OperationKind; weld: boolean; count: number | null } | null = null;
+  private drag: { kind: OperationKind; weld: boolean; count: number | null, t: number } | null = null;
   private verified: boolean = false;
   private invalid: boolean = false;
   private solving: boolean = false;
+  // The top-left SELECTION box stays hidden until the first edit (like the SHAPES
+  // and HISTORY panels), so a fresh launch isn't cluttered before you've acted.
+  private selectionEnabled: boolean = false;
 
-  constructor(private readonly screen: Screen) {
+  constructor(
+    private readonly screen: Screen,
+    // Rows occupied by the top-left SHAPES panel; the SELECTION box starts just
+    // below it rather than overlapping it.
+    private readonly reservedTopRows: () => number = () => 0,
+  ) {
     // Each readout block lives in the body of its own box-drawing popup (matching
     // the HISTORY panel). Each frame hugs its content and re-fits into its corner
     // on every layout: the polyhedron info bottom-left, the selection info top-left.
-    this.polyBox = new Popup(screen, { cols: 12, rows: 5, title: "POLYHEDRON" });
+    this.polyBox = new Popup(screen, { cols: 12, rows: 5, title: config.ui.titles.polyhedron });
     this.polyBox.mount();
     this.polyEl = document.createElement("div");
     this.polyEl.className = "popup-resize";
+    this.setupWrap(this.polyEl);
     this.polyBox.body.appendChild(this.polyEl);
 
-    this.selBox = new Popup(screen, { cols: 12, rows: 4, title: "SELECTION" });
+    this.selBox = new Popup(screen, { cols: 12, rows: 4, title: config.ui.titles.selection });
     this.selBox.mount();
     this.selEl = document.createElement("div");
     this.selEl.className = "popup-resize";
+    this.setupWrap(this.selEl);
     this.selBox.body.appendChild(this.selEl);
 
     this.polyBox.el.style.display = "none"; // nothing to show until setPoly()
     this.selBox.el.style.display = "none"; //  shown only while something is selected
     screen.onLayout(() => this.layout());
+  }
+
+  /** Fade the bottom-left POLYHEDRON box in (its first appearance after the intro). */
+  fadeIn(): void {
+    fadeIn(this.polyBox.el);
+  }
+
+  /** Allow the top-left SELECTION box to appear (called on the user's first edit
+   *  / on intro skip). Until then, selections don't surface a popup. */
+  enableSelection(): void {
+    this.selectionEnabled = true;
   }
 
   /** Hide both frames (no polyhedron, or the readout feature is off). */
@@ -92,14 +119,32 @@ export class Readout {
     }
   }
 
-  /** Size a popup to hug `el` (white-space:pre, so offsetWidth is its widest line)
-   *  plus a one-cell frame, and pin it to a screen corner. Returns its row count. */
+  /** Let a readout body wrap once it would overflow the screen, with a hanging
+   *  indent so continuation lines sit under their label. A negative text-indent
+   *  cancels the padding on the first line (flush left), and both are whole cells
+   *  so the wrapped text stays on the character grid. The actual wrap width is the
+   *  max-width set per-layout in fit(). */
+  private setupWrap(el: HTMLElement): void {
+    const indent = READOUT_INDENT_COLS * this.screen.colW;
+    el.style.whiteSpace = "pre-wrap";
+    el.style.paddingLeft = `${indent}px`;
+    el.style.textIndent = `${-indent}px`;
+  }
+
+  /** Size a popup to hug `el` (white-space pre-wrap with width:max-content, so
+   *  offsetWidth is its widest line until it hits the max-width cap) plus a
+   *  one-cell frame, and pin it to a screen corner. Returns its row count. */
   private fit(popup: Popup, el: HTMLElement, corner: "tl" | "bl"): number {
     const s = this.screen;
+    // Cap the body so a long config list wraps before the box runs off-screen.
+    // The +READOUT_INDENT_COLS accounts for the hanging-indent padding, so the
+    // framed box still reaches the full screen width.
+    el.style.maxWidth = `${(s.cols - 2 - READOUT_INDENT_COLS) * s.colW}px`;
     const cols = Math.min(s.cols, Math.max(3, Math.ceil(el.offsetWidth / s.colW) + 2));
     const rows = Math.min(s.rows, Math.max(3, Math.ceil(el.offsetHeight / s.rowH) + 2));
     popup.resize(cols, rows);
-    popup.placeAt(0, corner === "tl" ? 0 : s.rows - rows);
+    const topRow = corner === "tl" ? this.reservedTopRows() : s.rows - rows;
+    popup.placeAt(0, topRow);
     return rows;
   }
 
@@ -129,7 +174,7 @@ export class Readout {
     }
     const title = this.invalid
       ? "X invalid (faces won't planarize)"
-      : (this.name ?? "Unknown polyhedron") + (this.verified ? "  ✓" : "");
+      : (this.name ?? "Unnamed non-uniform polyhedron");
     const status = this.solving ? "  …relaxing" : "";
     this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}\n`
 
@@ -145,13 +190,15 @@ export class Readout {
     this.polyEl.append(gyro);
     this.polyBox.el.style.display = "";
 
-    if (this.drag || this.selection.size > 0) {
+    if (this.selectionEnabled && (this.drag || this.selection.size > 0)) {
       let onFaces = this.selectionKind === "face";
       let verb = "Selected";
       let count = this.selection.size;
       if (this.drag) {
-        onFaces = this.drag.kind === "kis" || this.drag.kind === "gyro";
-        verb = DRAG_VERB[this.drag.kind][this.drag.weld ? 1 : 0];
+        if (this.drag.t > config.interaction.minCommitT) {
+          onFaces = this.drag.kind === "kis" || this.drag.kind === "gyro";
+          verb = DRAG_VERB[this.drag.kind][this.drag.weld ? 1 : 0];
+        }
         count =
         this.drag.count ?? (onFaces ? this.poly.faces.length : this.poly.vertices.length);
       }
@@ -203,7 +250,7 @@ export class Readout {
   }
 
   /** Reflect an in-progress drag (or pass null when the drag ends). */
-  setDrag(drag: { kind: OperationKind; weld: boolean; count: number | null } | null): void {
+  setDrag(drag: { kind: OperationKind; weld: boolean; count: number | null, t: number } | null): void {
     this.drag = drag;
     this.show();
   }

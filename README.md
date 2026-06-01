@@ -1,8 +1,8 @@
-# Polyhedron Craft
+# SHAPE SHIFTER 250
 
-An in-progress site where you try to build as many polyhedra you can using interactive versions of Conway operations.
+An in-progress game(?) where you try to build as many polyhedra you can using interactive versions of Conway operations.
 
-Currently, *all code in this repo is AI-generated*, based primarily on the following design notes (with some additional nudging regarding repository structure and visuals):
+**Warning:** Currently, *almost all of the code in this repo is AI-generated* - with the bits I wrote mostly being the strings in `src/config.ts` and some of the functions in `src/main.ts` and `src/readout.ts`. The core of the app was generated using my following design notes as reference (with some additional nudging needed around repository structure and visuals):
 
 Clicking and dragging a degree-n vertex inwards along a connected edge:
 - Truncate (variable): break up vertex into n many degree-3 vertices surrounding an n-gon face

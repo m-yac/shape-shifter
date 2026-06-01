@@ -18,14 +18,16 @@ import { Readout } from "../ui/readout";
 import { History, type HistoryEntry } from "../history/history";
 import { HistoryPanel } from "../ui/historyPanel";
 import { type Screen } from "../ui/screen";
+import { type GlitchOverlay } from "../ui/glitch";
+import { ShapesPanel } from "../ui/shapesPanel";
+import { DiscoveryPopup } from "../ui/discoveryPopup";
+import { Discoveries } from "../discoveries";
+import { solidTypeFor } from "../data/namedPolyhedra";
 import { config } from "../config";
 
 const DRAG_START_PIXELS = 4;
 const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 
-// A release with t below this is treated as no change (there's no longer a
-// magnetic snap-to-zero, so this just avoids committing a negligible drag).
-const MIN_COMMIT_T = 1e-3;
 // When the welded max (rectify / join) is disabled, stop the drag just short of
 // it so coincident vertices / faces don't produce degenerate geometry.
 const MAX_T_WITHOUT_WELD = 0.94;
@@ -90,6 +92,11 @@ export class DragController {
   private isoReq = 0;
   private lastName: string | null = null;
   private lastSignature: Signature | null = null;
+  private firstEdit = true; // pending: the next commit is the user's first edit
+
+  // First-time-made-shape tracking + its celebration (glow + glitch + popup).
+  private readonly discoveries = new Discoveries();
+  private readonly discoveryPopup: DiscoveryPopup;
 
   constructor(
     initial: Polyhedron,
@@ -100,8 +107,17 @@ export class DragController {
     private readonly canvas: HTMLCanvasElement,
     private readonly readout: Readout,
     screen: Screen,
+    // The shared corruption overlay (boot sequence + discovery flash) and the
+    // top-left SHAPES panel, so discoveries can flash the screen and bump N/250.
+    private readonly glitch: GlitchOverlay,
+    private readonly shapes: ShapesPanel,
+    // Fired once, the first time the user commits an operation (so the SHAPES /
+    // HISTORY panels can reveal themselves only after the first edit).
+    private readonly onFirstEdit: () => void = () => {},
   ) {
     this.current = initial;
+    this.discoveryPopup = new DiscoveryPopup(screen);
+    this.shapes.setCount(this.discoveries.count);
     this.panel = new HistoryPanel(
       screen,
       (index) => this.jumpTo(index),
@@ -120,6 +136,12 @@ export class DragController {
     this.history.reset(initial, seedLabel);
     this.view.setPolyhedron(this.current, false);
     this.runIdentify(this.current);
+  }
+
+  /** Force the HISTORY panel visible now (used when the intro is skipped, so all
+   *  panels show without waiting for the first edit). */
+  revealHistory(): void {
+    this.panel.reveal();
   }
 
   /** Replace the whole polyhedron (e.g. loading a new seed / reset), starting a
@@ -219,6 +241,7 @@ export class DragController {
   // ---- frame update --------------------------------------------------------
   update(): void {
     this.view.updateMarkerScales(this.camera, config.camera.startDistance);
+    this.view.updateEffects(performance.now()); // advance the discovery glow pulse
     if (this.solver) {
       const working = this.solver.advance();
       this.view.showPreview({
@@ -371,7 +394,7 @@ export class DragController {
     }
     d.t = tEff;
     d.weld = weld;
-    this.readout.setDrag({ kind: active.plan.kind, weld, count: d.selCount });
+    this.readout.setDrag({ kind: active.plan.kind, weld, count: d.selCount, t: d.t });
     const verts = active.plan.positions(tEff);
     // Hide the big hover markers during the drag (as in the non-selection case).
     // When operating on a selection, the green "sticks around" via the small drag
@@ -441,7 +464,7 @@ export class DragController {
     const active = this.activeSlot(this.drag);
     const verts = active.plan.positions(0);
     this.view.showPreview({ vertices: verts, faces: active.plan.previewFaces });
-    this.readout.setDrag({ kind: active.plan.kind, weld: this.drag.weld, count: this.drag.selCount });
+    this.readout.setDrag({ kind: active.plan.kind, weld: this.drag.weld, count: this.drag.selCount, t: this.drag.t });
     // The drag marker is positioned on the first move (when we have a snap point).
   }
 
@@ -502,7 +525,7 @@ export class DragController {
 
     if (this.mode === "dragging" && this.drag) {
       this.readout.setDrag(null); // back to the "Selected …" / idle readout
-      if (this.drag.t <= MIN_COMMIT_T) {
+      if (this.drag.t <= config.interaction.minCommitT) {
         // negligible drag → no change. A Cmd-drag's add to the selection was only
         // temporary, so undo it (the handle wasn't selected before this drag).
         if (this.drag.addedToSelection)
@@ -542,6 +565,10 @@ export class DragController {
   private commitPoly(poly: Polyhedron, label: string): void {
     this.current = poly;
     this.invalid = false;
+    if (this.firstEdit) {
+      this.firstEdit = false;
+      this.onFirstEdit();
+    }
     this.history.push(poly, label);
     this.renderHistory();
     if (config.solver.enabled) {
@@ -553,7 +580,7 @@ export class DragController {
       this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
     } else {
       this.view.setPolyhedron(poly, false);
-      this.runIdentify(poly);
+      this.runIdentify(poly, true);
     }
   }
 
@@ -562,14 +589,21 @@ export class DragController {
     this.invalid = this.solver.invalid;
     this.solver = null;
     this.view.setPolyhedron(this.current, this.invalid);
-    this.runIdentify(this.current);
+    this.runIdentify(this.current, true);
   }
 
   // ---- identification ------------------------------------------------------
-  private runIdentify(poly: Polyhedron): void {
+  // `discover` is true only when the shape was just MADE (a fresh commit / solve),
+  // so undo/redo, restore and seed loads never count as discovering a shape.
+  private runIdentify(poly: Polyhedron, discover = false): void {
     const { name, signature } = identify(poly);
     this.lastName = name;
     this.lastSignature = signature;
+    if (discover && config.discovery.enabled && !this.invalid && name) {
+      const { isNew, first } = this.discoveries.add(name);
+      this.shapes.setCount(this.discoveries.count);
+      if (isNew) this.celebrate(name, first);
+    }
     // Record the result against the current history entry (invalid states show no
     // name). This also runs for the seed root and on restore — both harmless.
     this.history.annotate(this.history.current, this.invalid ? null : name, this.invalid);
@@ -603,6 +637,27 @@ export class DragController {
     if (id !== this.isoReq || !result || !this.lastSignature) return;
     this.readout.setVerified(true);
     if (config.features.logToConsole) console.log(`[identify] verified ✓ ${this.lastName}`);
+  }
+
+  /**
+   * Celebrate making a named shape for the first time: a bright emissive glow on
+   * the shape, a glitch flash across the screen, then a popup naming the solid
+   * and its family. The very first discovery of the run is amplified.
+   */
+  private celebrate(name: string, first: boolean): void {
+    const d = config.discovery;
+    const glow = d.glowStrength * (first ? d.firstGlowMultiplier : 1);
+    this.view.pulseGlow(glow, d.glowDurationS);
+    const burst = Math.min(1, d.glitchBurst * (first ? d.firstGlitchMultiplier : 1));
+    this.glitch.burst(burst, d.glitchDurationS);
+    const type = solidTypeFor(name) ?? "Platonic solid";
+    window.setTimeout(
+      () => this.discoveryPopup.show(name, type, this.discoveries.count, first),
+      d.popupDelayS * 1000,
+    );
+    if (config.features.logToConsole) {
+      console.log(`[discovery]${first ? " FIRST!" : ""} ${name} (${type}) — ${this.discoveries.count}/${d.total}`);
+    }
   }
 
   // ---- highlights ----------------------------------------------------------
