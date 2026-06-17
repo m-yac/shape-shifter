@@ -236,7 +236,7 @@ export class SceneView {
     this.hideDragMarker();
   }
 
-  /** Recolor the surface (e.g. the green "adjusting" tint while relaxing). */
+  /** Recolor the surface (e.g. the "adjusting" tint while relaxing). */
   setSurfaceColor(hex: number): void {
     this.faceMat.color.setHex(hex);
   }

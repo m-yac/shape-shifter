@@ -58,7 +58,7 @@ interface Drag {
   lastRay: Ray | null; // last pick ray, so a Shift toggle can re-preview in place
   kind: MarkerKind;
   id: number;
-  hasSelection: boolean; // operating on a multi-select subset (drives green feedback)
+  hasSelection: boolean; // operating on a multi-select subset (drives selection feedback)
   selCount: number | null; // size of that subset (null = whole solid), for the label
   addedToSelection: boolean; // this Cmd-drag added the handle to the selection (temp)
   t: number; // active plan's current parameter (base level when Shift up; skew when down)
@@ -265,8 +265,8 @@ export class DragController {
       this.hover = null;
       this.refreshHighlights();
     });
-    // Pressing / releasing Cmd-Ctrl while hovering re-tints the preview (green when
-    // a drag would now treat the handle as part of the selection).
+    // Pressing / releasing Cmd-Ctrl while hovering re-tints the preview (the
+    // selection color when a drag would now treat the handle as part of the selection).
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
     window.addEventListener("keyup", (e) => this.onKeyDown(e));
   }
@@ -404,19 +404,19 @@ export class DragController {
     this.readout.setDrag({ kind: active.plan.kind, weld, count: d.selCount, t: d.t });
     const verts = active.plan.positions(tEff);
     // Hide the big hover markers during the drag (as in the non-selection case).
-    // When operating on a selection, the green "sticks around" via the small drag
-    // marker + range line instead.
+    // When operating on a selection, the selection highlight "sticks around" via
+    // the small drag marker + range line instead.
     this.view.showPreview({ vertices: verts, faces: active.plan.previewFaces });
-    const green = d.hasSelection;
+    const inSelection = d.hasSelection;
     this.view.setDragMarker(
       snap.point, // small sphere on the targeted vertex
-      green ? config.render.selectedColor : config.render.dragMarkerColor,
+      inSelection ? config.render.selectedColor : config.render.dragMarkerColor,
     );
     if (snap.highlight)
       this.view.setEdgeHighlight(
         snap.highlight.a,
         snap.highlight.b,
-        green ? config.render.selectedColor : config.render.dragLineColor,
+        inSelection ? config.render.selectedColor : config.render.dragLineColor,
       );
     else this.view.clearEdgeHighlight();
   }
@@ -582,7 +582,7 @@ export class DragController {
       // Solve on consistently-oriented topology, mutating poly's vertices in place.
       const topo = extractTopology(poly);
       this.solver = new RelaxSolver(poly.mesh.vertices, topo);
-      // Green "adjusting" tint signals the shape is relaxing and not yet interactable.
+      // The "adjusting" tint (blue) signals the shape is relaxing and not yet interactable.
       this.view.setSurfaceColor(config.render.adjustingColor);
       this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
     } else {
@@ -679,13 +679,13 @@ export class DragController {
     }
 
     const hovering = !!this.hover && config.features.hoverHighlight;
-    // "Affected" = this handle is part of the green selection — either already
+    // "Affected" = this handle is part of the active selection — either already
     // command-clicked, or Cmd is held so a drag would add it. Those are previewed
-    // green; a plain handle keeps the neutral hover look.
+    // in the selection color; a plain handle keeps the neutral hover look.
     const selected = hovering && this.selection.isSelected(this.hover!.kind, this.hover!.id);
     const affected = selected || (hovering && this.hoverMulti && this.hoverInRange);
 
-    // A green Cmd-hovered handle isn't in the selection set yet, but a drag would add
+    // A selection-colored Cmd-hovered handle isn't in the selection set yet, but a drag would add
     // it, so count it toward the readout's selection. Skipped while dragging/relaxing,
     // where the readout shows the live operation / status instead.
     if (this.mode === "idle" && !this.solver)
@@ -704,7 +704,7 @@ export class DragController {
 
   /**
    * Push the effective multi-selection to the readout: the committed selection plus
-   * one extra green Cmd-hovered handle that a drag would add. A handle of a different
+   * one extra Cmd-hovered handle that a drag would add. A handle of a different
    * kind would switch the selection to its kind (a drag clears the old one), so it
    * shows as a fresh selection of one.
    */
@@ -727,7 +727,7 @@ export class DragController {
   /**
    * Hover preview of what a drag would affect: the incident edge (vertex) or the
    * whole face (face center). `affected` marks a command-clicked / Cmd-held handle
-   * — part of the green selection — and is the explicit split between rendering a
+   * — part of the active selection — and is the explicit split between rendering a
    * plain handle and a selected one. Today they differ only in color; if rectify /
    * join ever applies in the command-click case, the `affected` branch is where the
    * geometry (e.g. the vertex line length) should diverge from the plain preview.
@@ -738,7 +738,7 @@ export class DragController {
       // While only hovering (not dragging) the line spans the FULL drag range: the
       // vertex center (e.from) → the rectify max (e.mid, the edge midpoint). It does
       // NOT shrink to the snapped cursor position; that only happens during a drag.
-      // `affected` distinguishes a command-clicked / Cmd-held handle (drawn green)
+      // `affected` distinguishes a command-clicked / Cmd-held handle (drawn in the selection color)
       // from a plain one, and is the seam where a future rectify/join preview for
       // the selected case could use a different far endpoint (a different length).
       this.view.setEdgeHighlight(

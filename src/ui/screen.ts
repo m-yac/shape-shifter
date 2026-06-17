@@ -2,10 +2,10 @@ import { config } from "../config";
 
 /**
  * =============================================================================
- *  THE SCREEN — a centered vintage CRT and its character grid.
+ *  THE SCREEN — a centered vintage monitor and its character grid.
  * =============================================================================
  *
- *  The app draws onto a "screen" (the glass of a CRT) that is smaller than the
+ *  The app draws onto a "screen" (the glass of the monitor) that is smaller than the
  *  browser window and wrapped in a plastic "bezel". The screen interior is
  *  always sized to a whole number of character cells from the AST PremiumExec
  *  font drawn at 2x — one cell is `colW` x `rowH` px (16 x 38). Because the
@@ -35,11 +35,20 @@ function floorTo(value: number, step: number): number {
   return Math.max(step, Math.floor(value / step) * step);
 }
 
+/** Parse a "#rrggbb" color into an "r, g, b" string (for rgba() in the glow). */
+export function hexToRgb(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `${r}, ${g}, ${b}`;
+}
+
 /**
- * A layered text-shadow that fakes phosphor bloom on selectable text: a tight
+ * A layered text-shadow that fakes the glass bloom on selectable text: a tight
  * bright core plus a wide soft halo. Both scale with `intensity` — the same knob
  * that drives the 3D UnrealBloom (config.theme.bloom.intensity) — so the text and
- * the 3D view glow by the same amount. `rgb` is "r, g, b".
+ * the 3D view glow by the same amount. `rgb` is "r, g, b" and is the TEXT's own
+ * color, so darker text yields a dimmer, smaller-looking bloom automatically.
  */
 export function textGlow(intensity: number, rgb: string): string {
   if (intensity <= 0) return "none";
@@ -153,9 +162,10 @@ export class Screen {
 
   /** Re-fit the grid to the largest whole-cell rectangle the window allows. */
   layout(): void {
-    const { viewportMargin: m, bezel: frame, padding: pad } = config.screen;
+    const { viewportMargin: m, bezel: frame, extraBezelBottom: extraBot, padding: pad } = config.screen;
     const availW = window.innerWidth - 2 * (m + frame + pad);
-    const availH = window.innerHeight - 2 * (m + frame + pad);
+    let availH = window.innerHeight - 2 * (m + frame + pad);
+    if (config.letter.enabled) availH -= extraBot;
     this.width = floorTo(availW, colW);
     this.height = floorTo(availH, rowH);
     this.cols = Math.round(this.width / colW);
@@ -206,12 +216,20 @@ export class Screen {
   private applyTheme(): void {
     const t = config.theme;
     const root = document.documentElement.style;
-    root.setProperty("--phosphor", t.phosphor);
-    root.setProperty("--phosphor-bright", t.phosphorBright);
-    root.setProperty("--phosphor-dim", t.phosphorDim);
-    root.setProperty("--phosphor-warn", t.phosphorWarn);
-    root.setProperty("--glow", textGlow(t.bloom.intensity, t.glowColor));
+    root.setProperty("--text", t.text);
+    root.setProperty("--text-bright", t.textBright);
+    root.setProperty("--text-dim", t.textDim);
+    root.setProperty("--text-warn", t.textWarn);
+    // Each text tone glows in its OWN color, so the bloom tracks the text instead
+    // of a single fixed tint (darker tones bloom less). The matching --text-* var
+    // is paired with each --text* color in style.css.
+    const i = t.bloom.intensity;
+    root.setProperty("--glow", textGlow(i, hexToRgb(t.text)));
+    root.setProperty("--glow-bright", textGlow(i, hexToRgb(t.textBright)));
+    root.setProperty("--glow-dim", textGlow(i, hexToRgb(t.textDim)));
+    root.setProperty("--glow-warn", textGlow(i, hexToRgb(t.textWarn)));
     root.setProperty("--glitch-color", config.glitch.color);
+    root.setProperty("--backlight", t.backlight);
     root.setProperty("--glass", t.glass);
     root.setProperty("--room", t.room);
     root.setProperty("--bezel-light", t.bezelLight);
@@ -225,6 +243,10 @@ export class Screen {
     document.documentElement.setAttribute("data-pixel-mask", t.pixelMaskStyle);
     root.setProperty("--vignette-opacity", t.vignette ? `${t.vignetteOpacity}` : "0");
     this.bezel.style.padding = `${config.screen.bezel}px`;
+    if (config.letter.enabled) {
+      const botPad = config.screen.bezel + config.screen.extraBezelBottom;
+      this.bezel.style.paddingBottom = `${botPad}px`;
+    }
   }
 }
 

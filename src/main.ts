@@ -24,6 +24,7 @@ import { Screen } from "./ui/screen";
 import { ShapesPanel } from "./ui/shapesPanel";
 import { GlitchOverlay } from "./ui/glitch";
 import { IntroCutscene } from "./interaction/introCutscene";
+import { LetterIntro } from "./interaction/letterIntro";
 
 const app = document.getElementById("app")!;
 const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -78,7 +79,7 @@ const view = new SceneView(scene);
 let shapesPanel: ShapesPanel | null = null;
 const readout = new Readout(screen, () => shapesPanel?.reservedRows() ?? 0);
 
-// --- post-processing: phosphor bloom over the 3D view -----------------------
+// --- post-processing: glass bloom over the 3D view --------------------------
 // UnrealBloom gives the polyhedra the same soft halo the text gets from its
 // layered text-shadow; both are scaled by config.theme.bloom.intensity so they
 // glow by the same amount (see Screen.textGlow).
@@ -114,38 +115,55 @@ const initialPoly = new Polyhedron(getSeed(currentSeed));
 rig.frame(new Vector3());
 
 let controller: DragController | null = null;
-let intro: IntroCutscene | null = new IntroCutscene(
-  initialPoly,
-  view,
-  rig.camera,
-  rig.controls,
-  screen,
-  glitch,
-  () => {
-    intro = null;
-    rig.frame(new Vector3());
-    // The bottom-left readout appears now (via the controller). The top-left
-    // SHAPES panel and the HISTORY panel stay hidden until the first edit.
-    shapesPanel = new ShapesPanel(screen);
-    controller = new DragController(
-      initialPoly,
-      seedLabel(currentSeed),
-      view,
-      rig.camera,
-      rig.controls,
-      renderer.domElement,
-      readout,
-      screen,
-      glitch,
-      shapesPanel,
-      () => {
-        // First edit: reveal the panels that wait for it.
-        shapesPanel?.show();
-        readout.enableSelection();
-      },
-    );
-    readout.fadeIn(); // the bottom-left popup fades in as the intro hands off
-  });
+let intro: IntroCutscene | null = null;
+
+// The program (the faux-BIOS boot + the shape fading in) does NOT start on load:
+// the letter rises first and the program only boots once the reader puts the
+// letter away. `startProgram` is the handoff; it's safe to call more than once.
+function startProgram(): void {
+  if (intro) return;
+  intro = new IntroCutscene(
+    initialPoly,
+    view,
+    rig.camera,
+    rig.controls,
+    screen,
+    glitch,
+    () => {
+      intro = null;
+      rig.frame(new Vector3());
+      // The bottom-left readout appears now (via the controller). The top-left
+      // SHAPES panel and the HISTORY panel stay hidden until the first edit.
+      shapesPanel = new ShapesPanel(screen);
+      controller = new DragController(
+        initialPoly,
+        seedLabel(currentSeed),
+        view,
+        rig.camera,
+        rig.controls,
+        renderer.domElement,
+        readout,
+        screen,
+        glitch,
+        shapesPanel,
+        () => {
+          // First edit: reveal the panels that wait for it.
+          shapesPanel?.show();
+          readout.enableSelection();
+        },
+      );
+      readout.fadeIn(); // the bottom-left popup fades in as the intro hands off
+    });
+}
+
+// The worn typewritten letter rises in on load and starts the program when the
+// reader puts it away (clicks the center / off the side). With the letter off,
+// the program boots immediately as before.
+if (config.letter.enabled) {
+  new LetterIntro(screen, config.letterText, startProgram);
+} else {
+  startProgram();
+}
 
 function skipIntro(e: Event) {
   if (!intro) return;

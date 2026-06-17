@@ -177,7 +177,7 @@ export const config = {
 
   intro: {
     cameraDistance: 7, // initial camera distance from origin
-    // CRT "power-on" flash: the console starts at the bright monitor color and
+    // Monitor "power-on" flash: the console starts at the bright monitor color and
     // settles to the dark glass over this long before the boot text appears.
     warmupDuration: 0.6, // second(s)
     // The 3D shape fades in behind the boot sequence's closing message; once it
@@ -202,8 +202,9 @@ export const config = {
     // The pool of glyphs a corrupted cell can show (one picked at random per
     // cell, per refresh). Edit this to change the texture of the corruption.
     chars: "█▓▒░▚▞▙▟◣◢╳╱╲@#$%&*?/\\<>=+-:;01ABEFΔΞΣΨΦ",
-    // The glitch glyph color (defaults to a bright phosphor); a CSS color string.
-    color: "#c8ffd9",
+    // The glitch glyph color (defaults to bright white, like the lit pixels); a
+    // CSS color string.
+    color: "#ffffff",
     // How often (ms) the whole random field is regenerated — the flicker rate.
     refreshMs: 55,
 
@@ -317,6 +318,59 @@ export const config = {
   },
 
   // ---------------------------------------------------------------------------
+  // LETTER TEXT
+  // ---------------------------------------------------------------------------
+
+  letterText: [
+    [
+      "Alice,",
+      "Installed on this machine is a strange operating system completely unknown to everyone else to which it has been shown, even other old-timers such as ourselves. Thus, I suspect it will be of great interest to you.",
+      "I’ve only been able to get it to run only one program: SHAPE SHIFTER 250. A fully intact version of this program likely acts as a tool for viewing and modifying polyhedra, but the disk I received was quite damaged. Instead, the program fails to load all but a few shapes and… well you’ll see.",
+      "I’ve included my notes on the following pages if they are of any help to you, but if you are at all intrigued I encourage you to boot it up and start clicking.",
+      "Good luck",
+      "Charlie"
+    ],
+    [
+      "[page 2 to be filled in later]"
+    ],
+    [
+      "[page 3 to be filled in later]"
+    ]
+  ],
+
+  // ---------------------------------------------------------------------------
+  // LETTER — the worn typewritten letter (text in `letterText`) that rises from
+  //   the bottom of the screen on load, before the program boots. See
+  //   interaction/letterIntro.ts.
+  //
+  //   The pages are a stack: the front page covers the center, the rest peek out
+  //   behind it. Click a peeking page (or the right edge of the front page) to
+  //   page forward; click the left edge to page back. Click the CENTER of a page
+  //   (or off to the side) to drop the stack down so it just peeks from the
+  //   bottom edge and let the program start. Click the peeking stack to raise it
+  //   again and keep reading.
+  //
+  //   The letter sits ON TOP of the whole monitor (above the plastic bezel). In
+  //   the lowered position it slides down until it only covers the bottom bezel,
+  //   leaving the screen itself unobstructed.
+  // ---------------------------------------------------------------------------
+  letter: {
+    enabled: false,
+    widthFrac: 0.52, // front page width  as a fraction of the screen
+    heightFrac: 0.86, // front page height as a fraction of the screen
+    peekX: 26, // px each page behind is offset to the right (so it peeks out)
+    peekY: 16, // px each page behind is offset downward
+    peekRotateDeg: 1.2, // slight rotation per page back, for a loose-stack look
+    riseDurationS: 0.55, // how quickly the stack rises in on load
+    dropDurationS: 0.6, // how quickly it drops to / rises from the bottom peek
+    // When lowered, the stack covers the bottom bezel; `peekExtraPx` is how far
+    // past the top of that bezel (onto the glass edge) it pokes — 0 leaves the
+    // whole screen clear.
+    peekExtraPx: 0,
+    edgeZoneFrac: 0.24, // left/right strips of the front page that page back / forward
+  },
+
+  // ---------------------------------------------------------------------------
   // BOOT TEXT — the script for the faux-BIOS boot sequence (see
   //   interaction/bootSequence.ts). Each of the three screens below is a flat
   //   list, played top to bottom. To re-skin the power-on story, just edit /
@@ -361,7 +415,7 @@ export const config = {
       { kind: "check", text: "Countability Meter" },
       { kind: "check", text: "Riemann Hypothesis Solution" },
       { kind: "check", text: "Goldbach Counterexample Generator" },
-      { kind: "check", text: "Internal 5D Core" },
+      { kind: "check", text: "Hypersphere Inverter" },
       { kind: "check", text: "Injection Injector" },
       { kind: "check", text: "Category of Categories" },
       "",
@@ -443,7 +497,7 @@ export const config = {
   // ---------------------------------------------------------------------------
   // SCREEN — the vintage-monitor frame and the character grid inside it.
   //
-  //   The whole app lives on a centered "screen" (a CRT) smaller than the
+  //   The whole app lives on a centered "screen" smaller than the
   //   browser window. Everything (text AND the 3D canvas) is laid out on a grid
   //   of character cells from the AST PremiumExec font (an 8x19px PC font) drawn
   //   at 2x, so one cell is 16px wide x 38px tall. The screen interior is always
@@ -456,30 +510,35 @@ export const config = {
     rowH: 38, // character cell height (em box 1900/1900 * 38px = line-height)
     viewportMargin: -20, // min gap from the browser edge to the monitor's outer frame
     bezel: 40, // plastic-frame thickness around the glass (always >= this)
+    extraBezelBottom: 80, // space for the letter
     padding: 24, // dark glass margin between the bezel and the lit pixel grid
   },
 
   // ---------------------------------------------------------------------------
-  // THEME — the CRT phosphor + plastic look. All CSS-side colors live here and
-  //   are pushed to CSS custom properties at startup (see Screen.applyTheme).
+  // THEME — the look of the pixel display + its plastic housing. The
+  //   screen is a plain white-pixel display under an old glass cover; the glass
+  //   is what blooms. All CSS-side colors live here and are pushed to CSS custom
+  //   properties at startup (see Screen.applyTheme). The text/shape glow is NOT
+  //   a fixed color: it is derived per element from that element's own color
+  //   (see Screen.applyTheme / textGlow), so darker text blooms less.
   // ---------------------------------------------------------------------------
   theme: {
-    phosphor: "#86f2b0", // base text color (green phosphor)
-    phosphorBright: "#d2ffe2", // emphasized text (titles, current entry)
-    phosphorDim: "#3f8a5e", // de-emphasized text (redo tail, hints)
-    phosphorWarn: "#e0a36a", // invalid / warning text (amber)
-    glowColor: "78, 224, 122", // rgb of the phosphor glow (text-shadow + 3D bloom tint)
-    glass: "#0a0f0c", // CRT glass color behind the 3D canvas
+    text: "#ffffff", // base text color (white)
+    textBright: "#ffffff", // emphasized text (titles, current entry)
+    textDim: "#7c8693", // de-emphasized text (redo tail, hints) — dimmer => less bloom
+    textWarn: "#e0a36a", // invalid / warning text (amber)
+    backlight: "#10141c", // backlight color that's the 3D background
+    glass: "#0a0f0c", // glass color behind the 3D canvas
     monitorBright: "25, 29, 38", // rgb of the monitor when it starts up
     room: "#04060a", // the void behind the monitor
     bezelLight: "#3b3e37", // plastic frame: lit edge
     bezelDark: "#1c1e19", // plastic frame: shadowed edge
 
-    // Phosphor "pixel" mask: a faint grid aligned to the font's pixel size. The
+    // The "pixel" mask: a faint grid aligned to the font's pixel size. The
     // 8x19 font drawn at 2x makes one source pixel exactly 2 CSS px, so a 2px
     // grid lands on every font pixel and gives each one a little definition.
     pixelMask: true,
-    pixelMaskStyle: "dots" as "lines" | "dots", // "lines": dark grid; "dots": a phosphor dot per pixel
+    pixelMaskStyle: "dots" as "lines" | "dots", // "lines": dark grid; "dots": a lit dot per pixel
     pixelSize: 2, // px period of the mask (one font pixel at 2x)
     pixelOpacity: 0.5, // darkness of the mask gridlines / gaps between dots
 
@@ -490,12 +549,13 @@ export const config = {
     // is always a whole number of texels and the upscale is an exact integer.
     pixelateRender: true,
 
-    vignette: true, // darkened screen corners (CRT curvature hint)
+    vignette: true, // darkened screen corners (old-glass falloff hint)
     vignetteOpacity: 0.55,
 
     // BLOOM — one intensity drives BOTH the CSS text glow and the WebGL
-    // UnrealBloom over the 3D view, so they read as a single phosphor bloom.
-    // radius/threshold shape only the 3D pass.
+    // UnrealBloom over the 3D view, so they read as a single glass bloom. The
+    // glow color is derived from whatever the lit pixels are (white text => white
+    // bloom). radius/threshold shape only the 3D pass.
     bloom: {
       intensity: 1.2, // master glow strength for text AND 3D (0 = off)
       scale_3d: 0.2, // glow strength multiplier for 3D only
@@ -508,9 +568,9 @@ export const config = {
   // RENDER — minimal, functional look only (no decorative visuals yet).
   // ---------------------------------------------------------------------------
   render: {
-    backgroundColor: 0x10141c,
+    backgroundColor: 0x10141c, // backlight color 
 
-    faceColor: 0x57c785,
+    faceColor: 0xffffff, // shape color when everything is good (white)
     faceOpacity: 0.92,
     invalidFaceColor: 0xb04a4a, // faces shown when the solver declares invalid
     adjustingColor: 0x5b8fb0, // faces while relaxing (NOT yet interactable)
@@ -531,7 +591,7 @@ export const config = {
 
     // Feedback colors.
     hoverColor: 0xffffff, // element under the cursor (in range)
-    selectedColor: 0x4ee07a, // multi-selected elements
+    selectedColor: 0x5ad7ff, // multi-selected elements (cyan accent, distinct from white hover)
     dragColor: 0xff7043, // (reserved) drag state for markers
 
     // The drag "range" line (current point → max). A white tube; its radius is the

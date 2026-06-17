@@ -68,8 +68,8 @@ canvas {
   font-family: AST_PremiumExec, ui-monospace, monospace;
   font-size: var(--font-px, 38px);
   line-height: var(--cell-h, 38px);
-  color: var(--phosphor, #86f2b0);
-  text-shadow: var(--glow, 0 0 6px rgba(78, 224, 122, 0.45));
+  color: var(--text, #ffffff);
+  text-shadow: var(--glow, 0 0 6px rgba(255, 255, 255, 0.45));
   white-space: pre;
 }
 #console {
@@ -95,22 +95,24 @@ canvas {
   height: 100%;
   z-index: 4;
   pointer-events: none;
-  color: var(--glitch-color, #c8ffd9);
+  color: var(--glitch-color, #ffffff);
   overflow: hidden;
 }
 /* The congratulations popup shown on a new-shape discovery. It rides above
    the glitch overlay (which may still be flashing) and accepts clicks so it
-   can be dismissed. Its bright phosphor body matches the celebratory tone. */
+   can be dismissed. Its bright body matches the celebratory tone. */
 .discovery-popup {
   z-index: 6;
   pointer-events: auto;
   cursor: pointer;
 }
 .discovery-popup .popup-frame {
-  color: var(--phosphor-bright, #d2ffe2);
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
 }
 .discovery-text {
-  color: var(--phosphor-bright, #d2ffe2);
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
 }
 /* --------------------------------------------------------------------
    Popups / panels: a box-drawing frame with a scrollable inner area. */
@@ -118,7 +120,8 @@ canvas {
   position: absolute;
   inset: 0;
   margin: 0;
-  color: var(--phosphor-dim, #3f8a5e);
+  color: var(--text-dim, #7c8693);
+  text-shadow: var(--glow-dim, var(--glow));
   pointer-events: none;
   white-space: pre;
   font: inherit;
@@ -136,7 +139,7 @@ canvas {
   width: 6px;
 }
 .popup-body::-webkit-scrollbar-thumb {
-  background: var(--phosphor-dim, #3f8a5e);
+  background: var(--text-dim, #7c8693);
 }
 .popup-body::-webkit-scrollbar-track {
   background: transparent;
@@ -163,19 +166,21 @@ canvas {
   text-indent: -4ch;
 }
 .history-item:hover {
-  background: rgba(78, 224, 122, 0.1);
+  background: rgba(255, 255, 255, 0.1);
 }
 .history-item.current {
-  background: rgba(78, 224, 122, 0.16);
+  background: rgba(255, 255, 255, 0.16);
 }
 .history-item.current .history-label {
-  color: var(--phosphor-bright, #d2ffe2);
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
 }
 .history-item.future {
   opacity: 0.4;
 }
 .history-item.invalid .history-label {
-  color: var(--phosphor-warn, #e0a36a);
+  color: var(--text-warn, #e0a36a);
+  text-shadow: var(--glow-warn, var(--glow));
 }
 /* The shape name beneath an operation: indented 2 cells, wrapping with a further
    1-cell hang so continuation lines sit under the text inside the "(". */
@@ -187,7 +192,82 @@ canvas {
   font-style: italic;
 }
 /* --------------------------------------------------------------------
-   Pixel effect layer over the lit raster: a phosphor pixel mask aligned to
+   LETTER INTRO — a worn typewritten letter that rises in before the program
+   boots (see interaction/letterIntro.ts). It is mounted on the bezel (above the
+   whole monitor) in a clipping layer, so it reads as crisp sheets of paper laid
+   over the screen and, when lowered, only covers the bottom plastic bezel. */
+.letter-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 10; /* above the screen + bezel */
+  overflow: hidden; /* clip the stack to the monitor (no paper in the room) */
+  border-radius: 24px; /* match the bezel's rounded corners */
+  pointer-events: none; /* children opt back in; the bare screen stays clickable */
+}
+.letter-backdrop {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none; /* toggled to auto in JS while the letter is raised */
+}
+.letter-stack {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%) translateY(2000px); /* JS sets the real offset */
+  will-change: transform;
+}
+/* One sheet of aged paper. All pages stack on top of each other (inset 0) and
+   are nudged apart with per-page transforms in JS so the back ones peek out. */
+.letter-page {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: 6% 8%;
+  overflow: hidden;
+  cursor: pointer;
+  pointer-events: auto; /* the layer is click-through; the pages are not */
+  border-radius: 2px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: 0.3px;
+  color: rgba(46, 39, 28, 0.86); /* faded typewriter ink */
+  text-align: left;
+  /* mottled, slightly uneven aged paper */
+  background:
+    radial-gradient(120% 120% at 30% 18%, rgba(255, 251, 236, 0.55), transparent 60%),
+    radial-gradient(90% 120% at 85% 92%, rgba(120, 100, 68, 0.18), transparent 55%),
+    linear-gradient(168deg, #e6dcc2 0%, #d8caa7 55%, #cdbf9a 100%);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 0 70px rgba(78, 62, 36, 0.35) inset;
+}
+/* Worn blotches / staining, multiplied over the paper. */
+.letter-page::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: multiply;
+  background:
+    radial-gradient(circle at 16% 78%, rgba(92, 70, 38, 0.14), transparent 16%),
+    radial-gradient(circle at 80% 26%, rgba(92, 70, 38, 0.12), transparent 20%),
+    radial-gradient(circle at 62% 90%, rgba(60, 45, 24, 0.12), transparent 24%),
+    radial-gradient(circle at 40% 45%, rgba(70, 55, 30, 0.05), transparent 40%);
+}
+.letter-line {
+  margin: 0 0 0.85em 0;
+  position: relative;
+  z-index: 1; /* above the ::after staining */
+}
+.letter-line:last-child {
+  margin-bottom: 0;
+}
+
+/* --------------------------------------------------------------------
+   Pixel effect layer over the lit raster: a pixel mask aligned to
    the font's 2px pixels, plus a corner vignette. Click-through, so text
    stays selectable. Sits at the grid origin so the mask lines up with the
    text pixels (background-position 0 0 == the grid's top-left). */
@@ -226,7 +306,7 @@ canvas {
 }
 /* "dots": one tile per font pixel (--pixel-size square), each holding a
    radial gradient that's clear in the middle and dark toward the corners
-   => a phosphor dot per pixel with darkened gaps between. On hi-DPI the
+   => a lit dot per pixel with darkened gaps between. On hi-DPI the
    circle is drawn with many device pixels so it looks round; at 1x it's a
    2x2 swatch but the dark corners still read as a grid. */
 [data-pixel-mask="dots"] #pixels::before {

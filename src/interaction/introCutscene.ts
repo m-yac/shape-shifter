@@ -31,9 +31,9 @@ export class IntroCutscene {
   // through its closing message); 0 until then.
   private fadeStart = 0;
 
-  // CRT warm-up flash colors (monitor power-on color -> dark glass).
+  // Monitor warm-up flash colors (power-on color -> backlight).
   private readonly brightRgb: [number, number, number];
-  private readonly glassRgb: [number, number, number];
+  private readonly backlightRgb: [number, number, number];
 
   constructor(
     private readonly poly: Polyhedron,
@@ -52,7 +52,7 @@ export class IntroCutscene {
     this.brightRgb = config.theme.monitorBright
       .split(",")
       .map((s) => parseInt(s.trim(), 10)) as [number, number, number];
-    this.glassRgb = hexRgb(config.theme.glass);
+    this.backlightRgb = hexRgb(config.theme.backlight);
 
     this.fog = new Fog(config.render.backgroundColor, 0, config.intro.cameraDistance - 1);
     this.distance = config.intro.cameraDistance;
@@ -91,19 +91,19 @@ export class IntroCutscene {
     this.fog.near = (config.camera.startDistance + 1) * t8;
   }
 
-  /** Blend the console background from the warm monitor color to the glass over
-   *  the first `warmupDuration` seconds: the CRT "powering on" before any text.
+  /** Blend the console background from the warm monitor color to the backlight over
+   *  the first `warmupDuration` seconds: the monitor "powering on" before any text.
    *  Runs only until warm-up completes, then leaves the background to the boot
    *  sequence (which goes transparent for the closing message). */
   private updateWarmup(t: number): void {
     if (this.warmupDone) return;
     const k = Math.min(1, t / config.intro.warmupDuration);
     if (k >= 1) {
-      this.consoleEl.style.backgroundColor = ""; // revert to the CSS glass color
+      this.consoleEl.style.backgroundColor = config.theme.backlight; // revert to the CSS backlight color
       this.warmupDone = true;
       return;
     }
-    const mix = (i: number) => Math.round(this.brightRgb[i] + (this.glassRgb[i] - this.brightRgb[i]) * k);
+    const mix = (i: number) => Math.round(this.brightRgb[i] + (this.backlightRgb[i] - this.brightRgb[i]) * k);
     this.consoleEl.style.backgroundColor = `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`;
   }
 
