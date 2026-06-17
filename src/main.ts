@@ -209,10 +209,10 @@ window.addEventListener("keydown", (e) => {
   if (config.debug.manualRelax && !mod) {
     const k = e.key.toLowerCase();
     const d = config.debug;
-    if (k === d.relaxKey) return void controller.relax(null);
-    if (k === d.forceFacesKey) return void controller.relax("faces");
-    if (k === d.forceCanonicalKey) return void controller.relax("canonical");
-    if (k === d.forceSpherizeKey) return void controller.relax("spherize");
+    if (k === d.relaxKey) return void controller.relax();
+    if (k === d.facesKey) return void controller.selectStrategy("faces");
+    if (k === d.edgesKey) return void controller.selectStrategy("edges");
+    if (k === d.verticesKey) return void controller.selectStrategy("vertices");
   }
 
   const enabled = config.seeds.enabled;

@@ -76,6 +76,22 @@ export const config = {
   solver: {
     enabled: true,
 
+    // The regularization objective used for newly-committed shapes until the user
+    // picks another via the OPTIONS panel. "edges" = canonical / midsphere form,
+    // which stays convex and never collapses a face. ("faces" / "vertices" make
+    // faces / vertex figures regular instead — see solver/solver.ts.)
+    defaultStrategy: "edges" as "vertices" | "edges" | "faces",
+
+    // Holding an OPTIONS strategy button keeps stepping the relaxation until you
+    // release; a single click still runs for at least this long so it does
+    // something visible rather than a single imperceptible step.
+    holdMinMs: 350,
+
+    // The rendered shape eases toward the solver's live vertices by this fraction
+    // each frame (0..1) instead of snapping, so size/strategy changes read as a
+    // smooth morph. 1 = no smoothing; smaller = softer, slower catch-up.
+    displaySmoothing: 0.25,
+
     planarity: {
       // Max solver iterations spent trying to flatten faces before giving up.
       maxIterations: 256,
@@ -99,30 +115,23 @@ export const config = {
       dampingRate: 0.997,
       // Stop early when the largest per-vertex move drops below this (relative).
       convergeTolerance: 1e-5,
+      // While an OPTIONS button is HELD the damping ramp is bypassed and this fixed
+      // (contractive: stepFactor*holdDamping ~ 1) strength is used, so it keeps
+      // relaxing. It still stops if the move falls below `holdConvergeTolerance`
+      // (a little looser, so a settled shape ends even while you keep holding).
+      holdDamping: 0.5,
+      holdConvergeTolerance: 1e-4,
       // Re-flatten faces between regularity steps so it never drifts off-plane.
       keepPlanar: true,
       // Planarization sub-steps applied after each regularity step (keeps faces flat).
       planarSubsteps: 2,
 
-      // After release, the solid is gently rescaled so the AVERAGE vertex distance
-      // from the origin approaches this target (keeps apparent size stable across
-      // truncate/kis edits). `rescaleRate` is the fraction eased each iteration.
+      // The solid is rescaled so the AVERAGE vertex distance from the origin equals
+      // this target, keeping its apparent size constant across edits and strategy
+      // switches. `rescaleRate` is the fraction applied each iteration; 1 = snap
+      // fully every frame, so the size never lurches and then drifts back.
       targetAverageRadius: 1,
-      rescaleRate: 0.06,
-
-      // Multi-stage ANTI-COLLAPSE. While regularizing, if adjacent faces get too
-      // close to coplanar (the solid flattening — common when forcing Catalan-like
-      // faces to be regular) the objective escalates to avoid collapse:
-      //   regular faces  →  equal vertex angles (dual-regular)  →  spherize.
-      // The measure is the MINIMUM angle (degrees) between adjacent face normals;
-      // 0° means two faces have become coplanar.
-      coplanar: {
-        safeAngleDeg: 18, // above this: keep regularizing faces
-        dangerAngleDeg: 6, // between danger and safe: equalize vertex angles
-        // below danger: spherize. Recovery back up uses these × recoverMargin
-        // (hysteresis, so it doesn't flip-flop between strategies).
-        recoverMargin: 1.6,
-      },
+      rescaleRate: 1,
     },
 
     // If planarization runs out of iterations/time, mark the polyhedron invalid.
@@ -159,16 +168,16 @@ export const config = {
 
   // ---------------------------------------------------------------------------
   // DEBUG — manual relaxation controls for experimenting with the post-release
-  //   solve. Each key re-runs relaxation on the CURRENT shape; the "force"
-  //   variants lock the regularizer to one strategy instead of the automatic
-  //   anti-collapse escalation, so you can isolate the coplanarity step.
+  //   solve. `relaxKey` re-runs the CURRENT strategy on the current shape; the
+  //   strategy keys switch the active strategy and re-solve (same as clicking the
+  //   OPTIONS-panel buttons).
   // ---------------------------------------------------------------------------
   debug: {
     manualRelax: true, // enable the keys below
-    relaxKey: "g", // re-relax with the automatic (escalating) strategy
-    forceFacesKey: "f", // force regular-faces regularization
-    forceCanonicalKey: "c", // force the coplanarity / anti-collapse (dual/midsphere) step
-    forceSpherizeKey: "v", // force spherize (last-resort inflate)
+    relaxKey: "g", // re-relax the current shape with the active strategy
+    facesKey: "f", // switch to regular-faces regularization + re-solve
+    edgesKey: "c", // switch to canonical / midsphere (edges) + re-solve
+    verticesKey: "v", // switch to regular vertex figures + re-solve
   },
 
   // ---------------------------------------------------------------------------
@@ -246,7 +255,7 @@ export const config = {
   //   `first*` multipliers below.
   // ---------------------------------------------------------------------------
   discovery: {
-    enabled: true,
+    enabled: false,
     total: 250, // the eventual shape count (shown in the SHAPES panel as N/250)
 
     // Remember discoveries across page reloads (localStorage). Off by default so
@@ -292,12 +301,23 @@ export const config = {
       polyhedron: "SHAPE", // bottom-left status box (ui/readout.ts)
       selection: "SELECTION", //   top-left selection box (ui/readout.ts)
       history: "HISTORY", //       top-right operation list (ui/historyPanel.ts)
-      shapes: "LIBRARY", //         top-left discovered-shapes panel (ui/shapesPanel.ts)
+      shapes: "OPTIONS", //         top-left options / library panel (ui/shapesPanel.ts)
       discovery: "WOW", //   new-shape popup (ui/discoveryPopup.ts)
     },
 
-    // The SHAPES panel body (one line).
-    shapesPanel: "{count}/{total} shapes",
+    // The OPTIONS panel. Line 1 shows the discovered-shape count; line 2 labels the
+    // three regularization-strategy buttons. `regularLabel` precedes them; the
+    // button captions map to the solver strategies vertices / edges / faces.
+    optionsPanel: {
+      libraryLine: {
+        label: "Library",
+        text: "{count}/{total} shapes",
+      },
+      regularLine: {
+        label: "Regular",
+        buttons: { edges: "Canonical", faces: "Faces", vertices: "Vertices" },
+      },
+    },
 
     // The new-shape DISCOVERY popup. `banner` is the headline (the first
     // discovery of the run uses `bannerFirst` instead); `lines` is the body,

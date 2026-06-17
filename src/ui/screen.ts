@@ -43,6 +43,20 @@ export function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
+/** Like "hexToRgb" but adds the inverse of the second string */
+export function hexToRgbAddInv(hex: string, hexToInv: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const rToInv = parseInt(hexToInv.slice(1, 3), 16);
+  const gToInv = parseInt(hexToInv.slice(3, 5), 16);
+  const bToInv = parseInt(hexToInv.slice(5, 7), 16);
+  const rOut = Math.min(255, r + 255 - rToInv);
+  const gOut = Math.min(255, g + 255 - gToInv);
+  const bOut = Math.min(255, b + 255 - bToInv);
+  return `${rOut}, ${gOut}, ${bOut}`;
+}
+
 /**
  * A layered text-shadow that fakes the glass bloom on selectable text: a tight
  * bright core plus a wide soft halo. Both scale with `intensity` — the same knob
@@ -224,10 +238,16 @@ export class Screen {
     // of a single fixed tint (darker tones bloom less). The matching --text-* var
     // is paired with each --text* color in style.css.
     const i = t.bloom.intensity;
+    // Raw "r, g, b" tones too, for effects that build their own rgba() (e.g. the
+    // OPTIONS buttons' inner glow on their dark glyphs).
+    root.setProperty("--text-rgb", hexToRgb(t.text));
+    root.setProperty("--text-dim-rgb", hexToRgb(t.textDim));
     root.setProperty("--glow", textGlow(i, hexToRgb(t.text)));
     root.setProperty("--glow-bright", textGlow(i, hexToRgb(t.textBright)));
     root.setProperty("--glow-dim", textGlow(i, hexToRgb(t.textDim)));
     root.setProperty("--glow-warn", textGlow(i, hexToRgb(t.textWarn)));
+    root.setProperty("--glow-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.text)));
+    root.setProperty("--glow-dim-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.textDim)));
     root.setProperty("--glitch-color", config.glitch.color);
     root.setProperty("--backlight", t.backlight);
     root.setProperty("--glass", t.glass);

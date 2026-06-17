@@ -192,6 +192,107 @@ canvas {
   font-style: italic;
 }
 /* --------------------------------------------------------------------
+   OPTIONS panel (top-left): the library count + the three regularization
+   strategy buttons. Each row is exactly one grid cell tall. */
+.options-line {
+  height: var(--cell-h, 38px);
+  line-height: var(--cell-h, 38px);
+  white-space: pre;
+}
+/* A strategy button. Inverted-press look: the background is the text color and
+   the caption is the screen's backlight color, so the lit block hugs the glyph
+   cells with no border padding (it lands on the character grid: each button is a
+   whole number of cells wide and one cell tall, like a run of solid blocks with
+   text on top). Default (unselected) is plain dim text. */
+.opt-btn {
+  position: relative;
+  display: inline-block;
+  height: var(--cell-h, 38px);
+  line-height: var(--cell-h, 38px);
+  vertical-align: top;
+  color: var(--text-dim, #7c8693);
+  text-shadow: var(--glow-dim, var(--glow));
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.opt-btn:hover {
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
+}
+/* Pressed: the active strategy, drawn as an inverted "lit block" — the fill is
+   --text and the caption shows through in the dark --backlight color, with the
+   bloom thrown OUTWARD by box-shadow (= --glow) and an inner glyph glow from
+   text-shadow (= --glow-inv).
+   The fill + glyph are built in a SHIFTED color space (see ::before / ::after
+   below): every color has the difference between white and --text (i.e.
+   255 - text) added to it, which maps --text -> white and --backlight ->
+   --glow-inv. So here the fill starts at white and the inner glow at --glow-inv
+   (both built in screen.ts; --glow-inv runs at 2x intensity to hold up against
+   the bright fill). The blend layers then clip the glyph and shift everything
+   back down. */
+.opt-btn.active {
+  background-color: #ffffff; /* shifted --text; the blends shift it back to --text */
+  color: transparent;
+  text-shadow: var(--glow-inv, #0a0f0c);
+  box-shadow: var(--glow, none); /* bloom OUTWARD from the lit block */
+}
+/* Clip + un-shift, in two blend passes (working in the shifted space described
+   above, where everything has 255 - text added so the fill is white and the glow
+   is --glow-inv):
+   ::before (lighten) draws a white-bg copy of the caption. Since white is the
+   max, lighten forces everything OUTSIDE the glyph up to white, clipping the
+   field, while the glyph pixels keep their (shifted) value.
+   ::after (difference) subtracts the same 255 - text shift back off every pixel,
+   so the field returns to --text and the inner glow returns to --backlight — now
+   with the glyph outline cleanly cut out by the lighten pass. The inverse-of-text
+   color used by both is exactly that 255 - text shift amount. */
+.opt-btn.active::before {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: black;
+  text-shadow: none;
+  box-shadow: none;
+  background-color: white;
+  mix-blend-mode: lighten;
+}
+.opt-btn.active::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: rgb(from var(--text, #ffffff) calc(255 - r) calc(255 - g) calc(255 - b));;
+  text-shadow: none;
+  box-shadow: none;
+  background-color: rgb(from var(--text, #ffffff) calc(255 - r) calc(255 - g) calc(255 - b));
+  mix-blend-mode: difference;
+}
+/* Half-pressed: active but its solve is still running (also on a fresh commit).
+   A dimmer lit block (and dimmer glow) reads as a button not yet fully seated.
+   Same shift trick as above, but relative to --text-dim instead of --text:
+   --glow-dim-inv and the inverse-of-text-dim color carry the 255 - text-dim
+   shift. */
+.opt-btn.active.running {
+  color: transparent;
+  text-shadow: var(--glow-dim-inv);
+  box-shadow: var(--glow-dim, var(--glow, none));
+}
+.opt-btn.active.running::before {
+  text-shadow: none;
+  box-shadow: none;
+}
+.opt-btn.active.running::after {
+  text-shadow: none;
+  box-shadow: none;
+  color: rgb(from var(--text-dim, #ffffff) calc(255 - r) calc(255 - g) calc(255 - b));
+  background-color: rgb(from var(--text-dim, #ffffff) calc(255 - r) calc(255 - g) calc(255 - b));
+  mix-blend-mode: difference;
+}
+
+/* --------------------------------------------------------------------
    LETTER INTRO — a worn typewritten letter that rises in before the program
    boots (see interaction/letterIntro.ts). It is mounted on the bezel (above the
    whole monitor) in a clipping layer, so it reads as crisp sheets of paper laid

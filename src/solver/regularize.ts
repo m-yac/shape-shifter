@@ -3,11 +3,61 @@ import { type Mesh } from "../geometry/HalfEdge";
 import { faceCentroidOf, newellNormal } from "../geometry/polyhedron";
 
 /**
- * Strategy 1 — REGULARIZE FACES.
- * Nudge every face toward a regular polygon inscribed in its own best-fit circle
- * (equal radii + equal angular spacing) using the best-fitting rotation. Shared
- * vertices get the average of their faces' targets. Returns the largest per-vertex
- * move this pass, relative to `radius`.
+ * Nudge one cyclic RING of vertices toward a regular polygon inscribed in its own
+ * best-fit circle (equal radii + equal angular spacing) using the best-fitting
+ * rotation, accumulating the per-vertex targets into `disp`/`count`. Used for
+ * face-regularization (a face is such a ring). Vertex-regularization needs an
+ * extra global-scale coupling, so it has its own variant below.
+ */
+function accumulateRegularRing(
+  vertices: Vector3[],
+  ring: number[],
+  stepFactor: number,
+  disp: Vector3[],
+  count: number[],
+): void {
+  const m = ring.length;
+  if (m < 3) return;
+  const c = faceCentroidOf(vertices, ring);
+  const normal = newellNormal(ring.map((i) => vertices[i]));
+
+  let e1 = vertices[ring[0]].clone().sub(c);
+  e1.addScaledVector(normal, -e1.dot(normal));
+  if (e1.lengthSq() < 1e-18) return;
+  e1.normalize();
+  const e2 = new Vector3().crossVectors(normal, e1);
+
+  let R = 0;
+  let sumSin = 0;
+  let sumCos = 0;
+  const step = (2 * Math.PI) / m;
+  for (let k = 0; k < m; k++) {
+    const d = vertices[ring[k]].clone().sub(c);
+    R += d.length();
+    const phi = Math.atan2(d.dot(e2), d.dot(e1));
+    sumSin += Math.sin(phi - k * step);
+    sumCos += Math.cos(phi - k * step);
+  }
+  R /= m;
+  const phase = Math.atan2(sumSin, sumCos);
+
+  for (let k = 0; k < m; k++) {
+    const theta = k * step + phase;
+    const target = c
+      .clone()
+      .addScaledVector(e1, R * Math.cos(theta))
+      .addScaledVector(e2, R * Math.sin(theta));
+    const vi = ring[k];
+    disp[vi].add(target.sub(vertices[vi]).multiplyScalar(stepFactor));
+    count[vi]++;
+  }
+}
+
+/**
+ * Strategy "faces" — REGULARIZE FACES.
+ * Nudge every face toward a regular polygon inscribed in its own best-fit circle.
+ * Shared vertices get the average of their faces' targets. Returns the largest
+ * per-vertex move this pass, relative to `radius`.
  */
 export function regularizeFacesStep(
   mesh: Mesh,
@@ -17,25 +67,85 @@ export function regularizeFacesStep(
   const n = mesh.vertices.length;
   const disp = Array.from({ length: n }, () => new Vector3());
   const count = new Array<number>(n).fill(0);
+  for (const face of mesh.faces)
+    accumulateRegularRing(mesh.vertices, face, stepFactor, disp, count);
+  return applyDisp(mesh, disp, count, radius);
+}
 
-  for (const face of mesh.faces) {
-    const m = face.length;
+/**
+ * Strategy "vertices" — REGULARIZE VERTEX FIGURES (the dual of regularize-faces).
+ * Where face-regularization makes every FACE a regular polygon, this makes every
+ * VERTEX FIGURE regular: it treats each vertex's cyclic ring of neighbours as a
+ * polygon and nudges those neighbours toward a regular one.
+ *
+ * The subtlety that makes this a FAITHFUL dual: a regular polygon face forces its
+ * edges to be equal, but a vertex figure is about the DIRECTIONS the edges leave
+ * the vertex, NOT the neighbour positions — the incident edges may well have
+ * different lengths (e.g. the kite edges of a Catalan solid). So we regularize the
+ * unit edge DIRECTIONS (making them an evenly-spaced cone) and keep each edge's own
+ * length, rather than forcing the neighbours onto one circle. That lets duals with
+ * two edge lengths (rhombic dodecahedron has one, the deltoidal icositetrahedron
+ * has two) both relax to their proper, un-spiky form instead of being distorted.
+ *
+ * Note a regular vertex figure does not pin the cone's opening angle, so this
+ * refines the CURRENT shape toward regular figures rather than to a unique form.
+ *
+ * `neighbors[v]` must list v's neighbours in cyclic order. Returns the largest
+ * per-vertex move this pass, relative to `radius`.
+ */
+export function regularizeVerticesStep(
+  mesh: Mesh,
+  neighbors: number[][],
+  stepFactor: number,
+  radius: number,
+): number {
+  const verts = mesh.vertices;
+  const n = verts.length;
+  const disp = Array.from({ length: n }, () => new Vector3());
+  const count = new Array<number>(n).fill(0);
+
+  for (let v = 0; v < n; v++) {
+    const ring = neighbors[v];
+    const m = ring.length;
     if (m < 3) continue;
-    const c = faceCentroidOf(mesh.vertices, face);
-    const normal = newellNormal(face.map((i) => mesh.vertices[i]));
+    const apex = verts[v];
 
-    let e1 = mesh.vertices[face[0]].clone().sub(c);
-    e1.addScaledVector(normal, -e1.dot(normal));
+    // Unit edge directions + their current lengths. Lengths are preserved, so
+    // unequal incident edges survive; only the directions get regularized.
+    const dir: Vector3[] = [];
+    const len: number[] = [];
+    let ok = true;
+    for (let k = 0; k < m; k++) {
+      const u = verts[ring[k]].clone().sub(apex);
+      const L = u.length();
+      if (L < 1e-9) {
+        ok = false;
+        break;
+      }
+      len.push(L);
+      dir.push(u.multiplyScalar(1 / L));
+    }
+    if (!ok) continue;
+
+    // The vertex figure is the polygon these directions trace on the unit sphere;
+    // best-fit its circle (the cone) then place them at equal angular spacing on it.
+    const c = new Vector3();
+    for (const d of dir) c.add(d);
+    c.multiplyScalar(1 / m);
+    const axis = newellNormal(dir);
+
+    let e1 = dir[0].clone().sub(c);
+    e1.addScaledVector(axis, -e1.dot(axis));
     if (e1.lengthSq() < 1e-18) continue;
     e1.normalize();
-    const e2 = new Vector3().crossVectors(normal, e1);
+    const e2 = new Vector3().crossVectors(axis, e1);
 
     let R = 0;
     let sumSin = 0;
     let sumCos = 0;
     const step = (2 * Math.PI) / m;
     for (let k = 0; k < m; k++) {
-      const d = mesh.vertices[face[k]].clone().sub(c);
+      const d = dir[k].clone().sub(c);
       R += d.length();
       const phi = Math.atan2(d.dot(e2), d.dot(e1));
       sumSin += Math.sin(phi - k * step);
@@ -46,12 +156,14 @@ export function regularizeFacesStep(
 
     for (let k = 0; k < m; k++) {
       const theta = k * step + phase;
-      const target = c
+      const td = c
         .clone()
         .addScaledVector(e1, R * Math.cos(theta))
-        .addScaledVector(e2, R * Math.sin(theta));
-      const vi = face[k];
-      disp[vi].add(target.sub(mesh.vertices[vi]).multiplyScalar(stepFactor));
+        .addScaledVector(e2, R * Math.sin(theta))
+        .normalize(); // regularized direction, back onto the unit sphere
+      const target = apex.clone().addScaledVector(td, len[k]); // keep this edge's length
+      const vi = ring[k];
+      disp[vi].add(target.sub(verts[vi]).multiplyScalar(stepFactor));
       count[vi]++;
     }
   }
@@ -59,7 +171,7 @@ export function regularizeFacesStep(
 }
 
 /**
- * Strategy 2 — CANONICAL / DUAL (midsphere).
+ * Strategy "edges" — CANONICAL / DUAL (midsphere).
  * Push every edge so the point on it nearest the origin is the same distance
  * from the center (i.e. all edges tangent to a common sphere). This is the
  * classic canonical form: it makes both the polyhedron AND its dual well-shaped
@@ -108,9 +220,9 @@ export function canonicalStep(
 }
 
 /**
- * Strategy 3 — SPHERIZE (last resort).
- * Pull every vertex toward the mean radius so they sit roughly evenly on a sphere
- * around the origin. Inflates a near-flat shape back to a convex blob.
+ * SPHERIZE — pull every vertex toward the mean radius so they sit roughly evenly on
+ * a sphere around the origin, inflating a near-flat shape back to a convex blob.
+ * No longer wired into the solver's strategy set, but kept as a reusable rescue step.
  */
 export function spherizeStep(mesh: Mesh, stepFactor: number, radius: number): number {
   let meanR = 0;

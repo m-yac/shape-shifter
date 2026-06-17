@@ -74,6 +74,19 @@ export class DragController {
   private current: Polyhedron;
   private invalid = false;
   private solver: RelaxSolver | null = null;
+  // The regularization objective applied to new commits, switchable via the
+  // OPTIONS panel (or the debug keys). Persists until the user picks another.
+  private strategy: Strategy = config.solver.defaultStrategy;
+  // Press-and-hold state for the OPTIONS buttons: while held the solve keeps
+  // stepping; a click still runs until `holdMinUntil` so it does something.
+  private manualHold = false;
+  private holdDown = false;
+  private holdMinUntil = 0;
+  // Rendered vertices, eased toward the solver's live vertices so the morph reads
+  // smoothly. `solveStopping` = stepping is done; we're only letting the display
+  // catch up before finalizing.
+  private displayVerts: Vector3[] | null = null;
+  private solveStopping = false;
 
   private mode: "idle" | "pending" | "dragging" = "idle";
   private pending: Pending | null = null;
@@ -118,6 +131,11 @@ export class DragController {
     this.current = initial;
     this.discoveryPopup = new DiscoveryPopup(screen);
     this.shapes.setCount(this.discoveries.count);
+    this.shapes.setActiveStrategy(this.strategy);
+    this.shapes.bindStrategy(
+      (s) => this.beginStrategy(s),
+      () => this.endStrategy(),
+    );
     this.panel = new HistoryPanel(
       screen,
       (index) => this.jumpTo(index),
@@ -148,6 +166,7 @@ export class DragController {
    *  fresh history rooted at the new seed. */
   load(poly: Polyhedron, seedLabel: string): void {
     this.solver = null;
+    this.shapes.setSolving(false);
     this.invalid = false;
     this.current = poly;
     this.selection.clear();
@@ -176,6 +195,7 @@ export class DragController {
   /** Show a previously-committed state without re-solving (it's already relaxed). */
   private restore(entry: HistoryEntry): void {
     this.solver = null; // abandon any in-progress relaxation
+    this.shapes.setSolving(false);
     this.mode = "idle";
     this.pending = null;
     this.drag = null;
@@ -224,32 +244,117 @@ export class DragController {
     return `${base} ${selCount} ${noun}`;
   }
 
-  /**
-   * Manually (re-)run the relaxation on the current shape. With `forced` set, the
-   * regularizer is locked to that single strategy instead of the automatic
-   * anti-collapse escalation — letting you isolate the coplanarity (`canonical`)
-   * step and watch it act. Ignored mid-drag. Refines the current state in place.
-   */
-  relax(forced: Strategy | null = null): void {
+  /** Re-run the active strategy's relaxation on the current shape (debug `relaxKey`
+   *  / a button re-press). Ignored mid-drag. Refines the current state in place. */
+  relax(): void {
     if (this.mode !== "idle" || !config.solver.enabled) return;
-    const topo = extractTopology(this.current);
-    this.solver = new RelaxSolver(this.current.mesh.vertices, topo, forced);
+    this.startSolve(this.current);
+  }
+
+  /**
+   * Switch the regularization strategy used for future shapes AND re-solve the
+   * current one with it now, running to convergence (the debug strategy keys).
+   * The chosen button shows "half-pressed" until this solve finishes.
+   */
+  selectStrategy(s: Strategy): void {
+    this.strategy = s;
+    this.shapes.setActiveStrategy(s);
+    if (this.mode !== "idle" || !config.solver.enabled) return;
+    this.startSolve(this.current);
+  }
+
+  /**
+   * An OPTIONS strategy button was pressed: switch strategy and start stepping the
+   * relaxation, which then continues every frame until `endStrategy` (release).
+   * A single click still runs for at least `holdMinMs` so it does something visible.
+   */
+  beginStrategy(s: Strategy): void {
+    this.strategy = s;
+    this.shapes.setActiveStrategy(s);
+    if (this.mode !== "idle" || !config.solver.enabled) return;
+    this.startSolve(this.current, true);
+  }
+
+  /** The held strategy button was released — let the current step finish. */
+  endStrategy(): void {
+    this.holdDown = false;
+  }
+
+  /** Begin an incremental relaxation of `poly` with the active strategy. When
+   *  `hold` is set it keeps stepping until the button is released (min `holdMinMs`),
+   *  otherwise it runs to convergence on its own. */
+  private startSolve(poly: Polyhedron, hold = false): void {
+    // Snapshot the shape as it looks NOW (before the solver recenters/rescales it),
+    // so the rendered geometry can ease from here into the relaxing form.
+    this.displayVerts = poly.mesh.vertices.map((v) => v.clone());
+    this.solveStopping = false;
+    const topo = extractTopology(poly);
+    this.solver = new RelaxSolver(poly.mesh.vertices, topo, this.strategy);
+    // The "adjusting" tint (blue) signals the shape is relaxing and not yet
+    // interactable; the active strategy button shows "half-pressed" meanwhile.
     this.view.setSurfaceColor(config.render.adjustingColor);
+    this.shapes.setSolving(true);
+    this.manualHold = hold;
+    this.holdDown = hold;
+    this.holdMinUntil = performance.now() + config.solver.holdMinMs;
     this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
+  }
+
+  /** Ease the display buffer toward the solver's live vertices; returns true once
+   *  it has essentially caught up (so we can finalize without a visible snap). */
+  private easeDisplay(target: Vector3[]): boolean {
+    let dv = this.displayVerts;
+    if (!dv || dv.length !== target.length) {
+      dv = this.displayVerts = target.map((v) => v.clone());
+      return true;
+    }
+    const a = config.solver.displaySmoothing;
+    let maxd = 0;
+    for (let i = 0; i < dv.length; i++) {
+      maxd = Math.max(maxd, target[i].distanceTo(dv[i]));
+      dv[i].lerp(target[i], a);
+    }
+    return maxd < 2e-3; // shape size is ~1, so this is a sub-pixel gap
   }
 
   // ---- frame update --------------------------------------------------------
   update(): void {
     this.view.updateMarkerScales(this.camera, config.camera.startDistance);
     this.view.updateEffects(performance.now()); // advance the discovery glow pulse
-    if (this.solver) {
-      const working = this.solver.advance();
-      this.view.showPreview({
-        vertices: this.solver.mesh.vertices,
-        faces: this.solver.mesh.faces,
-      });
-      if (working) this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
-      else this.finishSolve();
+    if (!this.solver) return;
+
+    // While a button is physically held, keep the solver in sustain mode so it
+    // doesn't damp itself to a premature stop.
+    this.solver.sustain = this.holdDown;
+
+    // Step the relaxation (unless we've already decided to stop), then render the
+    // SMOOTHED display rather than the solver's raw vertices.
+    const working = this.solveStopping ? false : this.solver.advance();
+    const caughtUp = this.easeDisplay(this.solver.mesh.vertices);
+    this.view.showPreview({
+      vertices: this.displayVerts!,
+      faces: this.solver.mesh.faces,
+    });
+    if (!this.solveStopping && working) {
+      this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
+    }
+
+    // Decide when to STOP stepping: a held button keeps going until released AND
+    // past the click minimum (or fully converged); an auto solve runs to converge.
+    if (!this.solveStopping) {
+      if (this.manualHold) {
+        const pastMin = performance.now() >= this.holdMinUntil;
+        if (!working || (!this.holdDown && pastMin)) this.solveStopping = true;
+      } else if (!working) {
+        this.solveStopping = true;
+      }
+    }
+    // Finalize only once the smoothed display has caught up to the frozen result.
+    if (this.solveStopping && caughtUp) {
+      this.manualHold = false;
+      this.holdDown = false;
+      this.solveStopping = false;
+      this.finishSolve();
     }
   }
 
@@ -456,6 +561,7 @@ export class DragController {
       return;
     }
     this.solver = null; // abandon any in-progress relaxation
+    this.shapes.setSolving(false);
     this.drag = {
       base, sel,
       shift: null, shiftHeld: false, frozenWeld: false, lastRay: null,
@@ -579,12 +685,7 @@ export class DragController {
     this.history.push(poly, label);
     this.renderHistory();
     if (config.solver.enabled) {
-      // Solve on consistently-oriented topology, mutating poly's vertices in place.
-      const topo = extractTopology(poly);
-      this.solver = new RelaxSolver(poly.mesh.vertices, topo);
-      // The "adjusting" tint (blue) signals the shape is relaxing and not yet interactable.
-      this.view.setSurfaceColor(config.render.adjustingColor);
-      this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
+      this.startSolve(poly); // mutates poly's vertices in place across frames
     } else {
       this.view.setPolyhedron(poly, false);
       this.runIdentify(poly, true);
@@ -595,6 +696,7 @@ export class DragController {
     if (!this.solver) return;
     this.invalid = this.solver.invalid;
     this.solver = null;
+    this.shapes.setSolving(false);
     this.view.setPolyhedron(this.current, this.invalid);
     this.runIdentify(this.current, true);
   }

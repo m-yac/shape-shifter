@@ -5,29 +5,36 @@ import { config } from "../config";
 import { planarizeStep } from "./planarize";
 import {
   regularizeFacesStep,
+  regularizeVerticesStep,
   canonicalStep,
-  spherizeStep,
-  minAdjacentFaceAngle,
   normalizeStep,
 } from "./regularize";
 import { type SolverTopology } from "./topology";
 
 export type SolverPhase = "planarize" | "regularize" | "done" | "invalid";
-export type Strategy = "faces" | "canonical" | "spherize";
 
-const deg = (d: number) => (d * Math.PI) / 180;
+/**
+ * The regularization objective, chosen by the user (the OPTIONS panel buttons):
+ *   - "faces"    make every face a regular polygon       (regularizeFacesStep)
+ *   - "edges"    canonical / midsphere form              (canonicalStep)   [default]
+ *   - "vertices" make every vertex figure regular        (regularizeVerticesStep)
+ */
+export type Strategy = "vertices" | "edges" | "faces";
 
 /**
  * Relaxation solver, run incrementally across frames so the shape visibly
- * settles. Stage 1 flattens faces (failure => INVALID). Stage 2 regularizes,
- * but escalates its objective if the solid nears collapse (adjacent faces going
- * coplanar): regular faces → equal vertex angles → spherize. Faces are kept flat
- * throughout. Mutates `vertices` in place; call `advance()` until it returns false.
+ * settles. Stage 1 flattens faces (failure => INVALID). Stage 2 regularizes using
+ * the single chosen `strategy`, keeping faces flat throughout. Mutates `vertices`
+ * in place; call `advance()` until it returns false.
  */
 export class RelaxSolver {
   readonly mesh: Mesh;
   phase: SolverPhase = "planarize";
-  strategy: Strategy = "faces";
+  readonly strategy: Strategy;
+  /** While true (an OPTIONS button is held), the regularizer keeps stepping at a
+   *  fixed strength instead of damping itself to a stop, and ignores the iteration
+   *  cap — so it genuinely keeps going until the shape settles or you release. */
+  sustain = false;
 
   private iter = 0;
   private readonly startTime = performance.now();
@@ -35,19 +42,20 @@ export class RelaxSolver {
   private readonly radius: number;
   private readonly batch = 10;
 
-  /**
-   * @param forced  when set, locks the regularization to this single strategy
-   *                instead of the automatic anti-collapse escalation — used by the
-   *                manual relax keys to isolate the coplanarity (canonical) step.
-   */
   constructor(
     vertices: Vector3[],
     private readonly topo: SolverTopology,
-    private readonly forced: Strategy | null = null,
+    strategy: Strategy = config.solver.defaultStrategy,
   ) {
     this.mesh = { vertices, faces: topo.orientedFaces };
+    // Pin the on-screen size right away (recenter + scale to the target average
+    // radius). Together with the per-frame snap in regularizeOnce this keeps the
+    // solid the SAME apparent size throughout — so neither a fresh commit nor a
+    // strategy switch makes it visibly jump in scale and then slowly drift back.
+    const Rg = config.solver.regularity;
+    normalizeStep(this.mesh, Rg.targetAverageRadius, 1);
     this.radius = meshRadius(this.mesh) || 1;
-    if (forced) this.strategy = forced;
+    this.strategy = strategy;
   }
 
   get done(): boolean {
@@ -66,9 +74,9 @@ export class RelaxSolver {
         const fn =
           this.strategy === "faces"
             ? "regularizeFacesStep() — regular faces"
-            : this.strategy === "canonical"
-              ? "canonicalStep() — dual/midsphere (anti-collapse)"
-              : "spherizeStep() — last-resort inflate";
+            : this.strategy === "vertices"
+              ? "regularizeVerticesStep() — regular vertex figures"
+              : "canonicalStep() — midsphere / canonical";
         return `${fn} + normalizeStep() · iter ${this.iter}`;
       }
       case "invalid":
@@ -108,19 +116,17 @@ export class RelaxSolver {
     Rg: typeof config.solver.regularity,
     planarStep: number,
   ): void {
-    const prev = this.strategy;
-    this.chooseStrategy(Rg);
-    // A fresh objective needs authority to reshape, so reset the damping ramp.
-    if (this.strategy !== prev) this.damping = Rg.dampingStart;
-
-    const step = Rg.stepFactor * this.damping;
+    // While held, step at a fixed (contractive) strength so it keeps relaxing
+    // instead of damping itself toward zero motion; otherwise use the decaying ramp.
+    const damp = this.sustain ? Rg.holdDamping : this.damping;
+    const step = Rg.stepFactor * damp;
     let move: number;
     if (this.strategy === "faces") {
       move = regularizeFacesStep(this.mesh, step, this.radius);
-    } else if (this.strategy === "canonical") {
-      move = canonicalStep(this.mesh, this.topo.edges, step, this.radius);
+    } else if (this.strategy === "vertices") {
+      move = regularizeVerticesStep(this.mesh, this.topo.neighbors, step, this.radius);
     } else {
-      move = spherizeStep(this.mesh, step, this.radius);
+      move = canonicalStep(this.mesh, this.topo.edges, step, this.radius);
     }
 
     // Keep faces flat, then recenter and ease the scale toward avg-radius = target.
@@ -130,44 +136,16 @@ export class RelaxSolver {
     }
     const avg = normalizeStep(this.mesh, Rg.targetAverageRadius, Rg.rescaleRate);
 
-    this.damping *= Rg.dampingRate;
+    if (!this.sustain) this.damping *= Rg.dampingRate;
     this.iter++;
-    // Finish only once the shape has settled AND the rescale has reached target.
+    // Finish once the shape has settled (and the rescale reached target). While
+    // held we never quit on the iteration cap — only on genuine settling, judged
+    // by a slightly looser epsilon so a converged shape stops even as you hold.
     const sizeSettled = Math.abs(avg - Rg.targetAverageRadius) < 0.005;
-    if ((move < Rg.convergeTolerance && sizeSettled) || this.iter >= Rg.iterations) {
+    const tol = this.sustain ? Rg.holdConvergeTolerance : Rg.convergeTolerance;
+    const cappedOut = !this.sustain && this.iter >= Rg.iterations;
+    if ((move < tol && sizeSettled) || cappedOut) {
       this.phase = "done";
-    }
-  }
-
-  /**
-   * Escalate the strategy based on how close to coplanar we are.
-   *
-   *   faces ──(ang < safe)──▶ canonical ──(ang < danger)──▶ spherize
-   *                                ▲                            │
-   *                                └────────(ang > danger·m)────┘
-   *
-   * Note `canonical` is STICKY: it never falls back to `faces`. If a shape shows
-   * any flattening tendency under face-regularization (true for Catalan-like
-   * solids, whose triangular faces can stay regular while their apex swings flat),
-   * then faces is the wrong objective and we keep the canonical/dual objective.
-   * Shapes that never flatten (Platonic, Archimedean) simply stay in `faces`.
-   */
-  private chooseStrategy(Rg: typeof config.solver.regularity): void {
-    if (this.forced) {
-      this.strategy = this.forced; // locked by the manual relax keys
-      return;
-    }
-    const ang = minAdjacentFaceAngle(this.mesh, this.topo.edgeFaces);
-    const safe = deg(Rg.coplanar.safeAngleDeg);
-    const danger = deg(Rg.coplanar.dangerAngleDeg);
-    const margin = Rg.coplanar.recoverMargin;
-
-    if (this.strategy === "faces") {
-      if (ang < safe) this.strategy = "canonical";
-    } else if (this.strategy === "canonical") {
-      if (ang < danger) this.strategy = "spherize";
-    } else {
-      if (ang > danger * margin) this.strategy = "canonical";
     }
   }
 }
