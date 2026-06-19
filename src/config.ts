@@ -93,15 +93,22 @@ export const config = {
     displaySmoothing: 0.25,
 
     planarity: {
-      // Max solver iterations spent trying to flatten faces before giving up.
+      // Max iterations the dedicated planarize phase spends before it hands off
+      // to the canonical step (which keeps trying to flatten faces — it never
+      // gives up / marks the shape invalid).
       maxIterations: 256,
-      // Wall-clock budget (ms). Exceeding it (without converging) => invalid.
+      // Wall-clock budget (ms) for that planarize phase before the same hand-off.
       timeBudgetMs: 4000,
       // A face counts as planar when its max out-of-plane distance (relative to
       // the shape's size) is below this.
       tolerance: 1e-3,
       // How aggressively vertices are pulled onto their face plane each step (0..1).
       stepFactor: 1.5,
+      // If faces still haven't planarized after this long, the SHAPE panel shows
+      // `warnText` (cleared the moment they do). The canonical step keeps running
+      // at full strength meanwhile.
+      warnAfterMs: 3000,
+      warnText: "faces won't planarize",
     },
 
     regularity: {
@@ -420,6 +427,9 @@ export const config = {
     // opens. Larger than the main view's `camera.startDistance` so you can see a
     // solid and its neighbours at once (the main view's orientation is kept).
     startDistance: 12,
+    // After a pan, the focus eases to the nearest solid: the fraction of the
+    // remaining distance covered each frame (0..1; higher = snappier).
+    snapSmoothing: 0.18,
     // The on-screen display radius each little solid is scaled to (world units, <1)
     shapeRadius: 0.62,
     // Arrows start / end this many `shapeRadius` out from a solid's center, so
@@ -448,8 +458,8 @@ export const config = {
       [ -2,  2,  0, "Triakis Octahedron", ["d2l2^"] ],
       [  2,  2,  0, "Truncated Octahedron", ["d2r2^"] ],
       [ -6,  0,  0, "Pentagonal Icositetrahedron", [] ],
-      [ -4,  0,  0, "Rhombic Dodecahedron", ["f4r4, b2r2", "l2:^"] ],
-      [  4,  0,  0, "Cuboctahedron", ["b4l4, f2l2", "r2:^"] ],
+      [ -4,  0,  0, "Rhombic Dodecahedron", ["f4r4^, b2r2", "l2:^"] ],
+      [  4,  0,  0, "Cuboctahedron", ["b4l4^, f2l2", "r2:^"] ],
       [  6,  0,  0, "Snub Cuboctahedron", [] ],
       [ -2, -2,  0, "Tetrakis Hexahedron", ["u2l2^"] ],
       [  2, -2,  0, "Truncated Cube", ["u2r2^"] ],
@@ -457,8 +467,8 @@ export const config = {
       [ -4,  3,  0, "Triakis Icosahedron", ["d3l4^"] ],
       [  4,  3,  0, "Truncated Icosahedron", ["d3r4^"] ],
       [-10,  0,  0, "Pentagonal Hexecontahedron", [] ],
-      [ -8,  0,  0, "Rhombic Triacontahedron", ["f8r8, b4r4", "l2:^"] ],
-      [  8,  0,  0, "Icosidodecahedron", ["b8l8, f4l4", "r2:^"] ],
+      [ -8,  0,  0, "Rhombic Triacontahedron", ["f8r8^, b4r4", "l2:^"] ],
+      [  8,  0,  0, "Icosidodecahedron", ["b8l8^, f4l4", "r2:^"] ],
       [ 10,  0,  0, "Snub Icosidodecahedron", [] ],
       [ -4, -3,  0, "Pentakis Dodecahedron", ["u3l4^"] ],
       [  4, -3,  0, "Truncated Dodecahedron", ["u3r4^"] ],

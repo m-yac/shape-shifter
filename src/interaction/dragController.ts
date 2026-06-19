@@ -105,6 +105,7 @@ export class DragController {
   private manualHold = false;
   private holdDown = false;
   private holdMinUntil = 0;
+  private solveStartMs = 0; // when the current relaxation began (for the planarity warning)
   // Rendered vertices, eased toward the solver's live vertices so the morph reads
   // smoothly. `solveStopping` = stepping is done; we're only letting the display
   // catch up before finalizing.
@@ -358,7 +359,21 @@ export class DragController {
     this.manualHold = hold;
     this.holdDown = hold;
     this.holdMinUntil = performance.now() + config.solver.holdMinMs;
-    this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
+    this.solveStartMs = performance.now();
+    this.readout.setHint(this.solveHint());
+  }
+
+  /** The SHAPE-panel hint while relaxing: the usual status, or — once the faces
+   *  have stayed non-planar past the warn delay — a note that they won't flatten
+   *  (which clears itself the moment they do, since the solver keeps trying). */
+  private solveHint(): string {
+    const s = this.solver;
+    if (!s) return "";
+    const P = config.solver.planarity;
+    if (!s.planar && performance.now() - this.solveStartMs > P.warnAfterMs) {
+      return `⚠ ${P.warnText}`;
+    }
+    return `● relaxing: ${s.statusLabel}`;
   }
 
   /** Ease the display buffer toward the solver's live vertices; returns true once
@@ -401,7 +416,7 @@ export class DragController {
       faces: this.solver.mesh.faces,
     });
     if (!this.solveStopping && working) {
-      this.readout.setHint(`● relaxing: ${this.solver.statusLabel}`);
+      this.readout.setHint(this.solveHint());
     }
 
     // Decide when to STOP stepping: a held button keeps going until released AND
@@ -905,18 +920,21 @@ export class DragController {
     }
     this.history.push(poly, label, this.currentOptions(), op);
     this.renderHistory();
+    // Identify (and name) right away — identification is purely combinatorial, so
+    // it works even before the faces have planarized. The relaxation may later
+    // re-identify the settled shape, but the name + history entry are set now even
+    // if the faces turn out never to flatten.
+    this.runIdentify(poly, true);
     if (config.solver.enabled) {
       this.startSolve(poly); // mutates poly's vertices in place across frames
     } else {
       // Keep the release color-fade running over the (un-relaxed) committed shape.
       this.view.setPolyhedron(poly, false, true);
-      this.runIdentify(poly, true);
     }
   }
 
   private finishSolve(): void {
     if (!this.solver) return;
-    this.invalid = this.solver.invalid;
     this.solver = null;
     this.shapes.setSolving(false);
     // Keep any in-progress release color-fade running on the now-relaxed shape.

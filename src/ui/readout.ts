@@ -252,9 +252,7 @@ export class Readout {
       this.hide();
       return;
     }
-    const title = this.invalid
-      ? "X invalid (faces won't planarize)"
-      : (this.name ?? "Unnamed non-uniform polyhedron");
+    const title = this.name ?? "Unnamed non-uniform polyhedron";
     const status = this.solving ? "  …relaxing" : "";
     this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}\nSHIFT: `
 

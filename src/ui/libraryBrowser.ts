@@ -36,67 +36,18 @@ import { libraryShapeFor } from "../data/libraryShapes";
 import { faceColorsRGB, getColorScheme, setColorScheme } from "../geometry/colors";
 import { Polyhedron } from "../geometry/polyhedron";
 import { faceGeometryArrays, edgeGeometryArrays } from "../render/sceneView";
+import {
+  buildDiagramGraph,
+  computeVisible,
+  drawableEdges,
+  type DiagramGraph,
+} from "../data/libraryDiagram";
 
-// Direction letters → unit grid step (y up, x right, z toward the viewer).
-const DIRV: Record<string, [number, number, number]> = {
-  u: [0, 1, 0],
-  d: [0, -1, 0],
-  r: [1, 0, 0],
-  l: [-1, 0, 0],
-  f: [0, 0, 1],
-  b: [0, 0, -1],
-};
-
-/** A single parsed arrow: where it points (in grid steps) and how it's drawn.
- *  Grammar: a run of (direction letter + per-axis span) pairs, then optional
- *  ":" (dashed) and "^" (arrowhead). Each letter carries its OWN span, so
- *  "d3r2" steps (+2 x, -3 y) — allowing non-45° lines — and a missing number
- *  means 1 ("u^" = up one with an arrowhead). */
-interface ParsedArrow {
-  step: Vector3;
-  dashed: boolean;
-  arrowhead: boolean;
-}
-
-function parseArrow(tokenGroup: string): ParsedArrow[] {
-  const out: ParsedArrow[] = [];
-  // One config string may bundle several tokens, e.g. "f4r4, b2r2".
-  for (const tok of tokenGroup.split(/[\s,]+/).filter(Boolean)) {
-    const dashed = tok.includes(":");
-    const arrowhead = tok.includes("^");
-    const step = new Vector3();
-    let matched = false;
-    // Each (letter, optional digits) pair contributes its own span on its axis.
-    for (const m of tok.matchAll(/([udlrfb])(\d*)/gi)) {
-      const v = DIRV[m[1].toLowerCase()];
-      if (!v) continue;
-      const span = m[2] ? parseInt(m[2], 10) : 1;
-      step.add(new Vector3(v[0] * span, v[1] * span, v[2] * span));
-      matched = true;
-    }
-    if (matched) out.push({ step, dashed, arrowhead });
-  }
-  return out;
-}
-
-const coordKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
-
-type RawEntry = readonly [number, number, number, string, readonly string[]];
-
-/** An edge of the diagram between two existing nodes (with its drawn style). */
-interface DiagramEdge {
-  from: number;
-  to: number;
-  dashed: boolean;
-  arrowhead: boolean;
-}
-
-/** A placed solid: its grid coordinate, its render group, and the materials we
- *  re-tint as its discovered / ghost / hidden state changes. */
-interface DiagramNode {
-  coord: Vector3; // grid coordinate (integer-ish)
-  pos: Vector3; // world position
-  name: string;
+/** The render side of a diagram node: its world position, group, and the
+ *  materials we re-tint as its discovered / ghost / hidden state changes.
+ *  `faceMat`/`edgeMat` are null for a node whose solid couldn't be built. */
+interface RenderNode {
+  pos: Vector3; // world position (the diagram coordinate)
   discoverable: boolean; // true once the user has actually made this shape
   group: Group;
   faceMat: MeshStandardMaterial | null;
@@ -104,12 +55,11 @@ interface DiagramNode {
 }
 
 /**
- * The full-screen LIBRARY browse diagram. A black panel (with the box-drawing
- * frame + title kept) holding an OrbitControls-driven 3D map of every named
- * solid, laid out on the grid from `config.library.diagram`. Discovered solids
- * render in their default colors; their still-undiscovered neighbours appear as
- * white 25%-opacity ghosts; everything further out is hidden. Panning snaps the
- * view to the nearest solid.
+ * The full-screen LIBRARY browse diagram. A backlight-colored full-screen 3D map
+ * of every named solid (laid out by `data/libraryDiagram`), with the box-drawing
+ * frame + title drawn as a transparent overlay on top. Discovered solids render
+ * in their default colors; their still-undiscovered neighbours appear as faint
+ * ghosts; everything further out is hidden. Panning snaps to the nearest solid.
  */
 export class LibraryBrowser {
   private readonly popup: Popup;
@@ -122,9 +72,8 @@ export class LibraryBrowser {
   private readonly composer: EffectComposer;
   private readonly bloomPass: UnrealBloomPass;
 
-  private readonly nodes: DiagramNode[] = [];
-  private readonly edges: DiagramEdge[] = [];
-  private readonly incident: number[][] = []; // node index → edge indices
+  private graph: DiagramGraph = { nodes: [], edges: [], outgoing: [] };
+  private readonly nodes: RenderNode[] = [];
   private readonly arrowGroup = new Group();
   // Flat arrowhead triangles, billboarded toward the camera every frame.
   private readonly arrowheads: { mesh: ThreeMesh; dir: Vector3 }[] = [];
@@ -133,6 +82,8 @@ export class LibraryBrowser {
 
   private open = false;
   private built = false;
+  private cameraInit = false;
+  private snapTarget: Vector3 | null = null; // focus the pan-snap eases toward
   private raf = 0;
 
   constructor(
@@ -150,17 +101,14 @@ export class LibraryBrowser {
     this.popup.el.classList.add("library-popup");
     this.popup.el.style.display = "none";
 
-    // Backlight-colored backdrop that blocks everything behind the panel (the
-    // same color as the main 3D background); the frame text sits above it and
-    // the 3D canvas fills the inset body.
+    // The 3D view is a full-screen canvas (its backlight-colored scene blocks
+    // everything behind it); the box-drawing frame + title ride ON TOP as a
+    // transparent overlay, exactly like the other on-screen dialogs. The canvas
+    // is mounted into the grid (full screen) rather than inside the popup body.
     const backlight = config.theme.backlight;
-    this.popup.el.style.background = backlight;
-    this.popup.body.style.background = backlight;
-    this.popup.body.style.overflow = "hidden";
-
     this.canvas = document.createElement("canvas");
-    this.canvas.style.display = "block";
-    this.popup.body.appendChild(this.canvas);
+    this.canvas.className = "library-canvas";
+    this.canvas.style.display = "none";
 
     // A standard "[X]" action button sitting on the left of the top border.
     this.closeBtn = makeActionButton("X", () => this.close()).el;
@@ -230,28 +178,21 @@ export class LibraryBrowser {
   // --- diagram construction -------------------------------------------------
 
   private buildDiagram(): void {
-    const diagram = config.library.diagram as unknown as RawEntry[];
-    const byCoord = new Map<string, number>();
+    this.graph = buildDiagramGraph();
 
     // Each solid is colored in its own symmetry scheme (the one the live app
     // would auto-switch to), so we briefly drive the shared scheme while baking
     // its colors, then restore whatever the main view was using.
     const savedScheme = getColorScheme();
 
-    for (const [x, y, z, name] of diagram) {
-      const coord = new Vector3(x, y, z);
-      const idx = this.nodes.length;
-      byCoord.set(coordKey(x, y, z), idx);
-
-      const entry = libraryShapeFor(name);
+    for (const info of this.graph.nodes) {
+      const entry = libraryShapeFor(info.name);
       const group = new Group();
-      group.position.copy(coord);
+      group.position.set(info.coord[0], info.coord[1], info.coord[2]);
       this.scene.add(group);
 
-      const node: DiagramNode = {
-        coord,
+      const node: RenderNode = {
         pos: group.position.clone(),
-        name,
         discoverable: entry !== null,
         group,
         faceMat: null,
@@ -265,35 +206,13 @@ export class LibraryBrowser {
         node.faceMat = built.faceMat;
         node.edgeMat = built.edgeMat;
       } else if (config.features.logToConsole) {
-        console.warn(`[library] no shape found for diagram node "${name}"`);
+        console.warn(`[library] no shape found for diagram node "${info.name}"`);
       }
 
       this.nodes.push(node);
-      this.incident.push([]);
     }
 
     setColorScheme(savedScheme);
-
-    // Resolve every arrow to an edge between two existing nodes.
-    diagram.forEach(([x, y, z, , arrows], from) => {
-      for (const tokenGroup of arrows) {
-        for (const a of parseArrow(tokenGroup)) {
-          const tx = x + a.step.x;
-          const ty = y + a.step.y;
-          const tz = z + a.step.z;
-          const to = byCoord.get(coordKey(tx, ty, tz));
-          if (to === undefined) {
-            if (config.features.logToConsole)
-              console.warn(`[library] arrow from "${this.nodes[from].name}" points to empty ${coordKey(tx, ty, tz)}`);
-            continue;
-          }
-          const ei = this.edges.length;
-          this.edges.push({ from, to, dashed: a.dashed, arrowhead: a.arrowhead });
-          this.incident[from].push(ei);
-          this.incident[to].push(ei);
-        }
-      }
-    });
   }
 
   // --- visibility -----------------------------------------------------------
@@ -302,46 +221,16 @@ export class LibraryBrowser {
   private discoveredSet(): Set<number> {
     const known = new Set(this.discoveredNames().map((n) => n.trim().toLowerCase()));
     const out = new Set<number>();
-    this.nodes.forEach((n, i) => {
-      if (n.discoverable && known.has(n.name.trim().toLowerCase())) out.add(i);
+    this.graph.nodes.forEach((info, i) => {
+      if (this.nodes[i].discoverable && known.has(info.name.trim().toLowerCase())) out.add(i);
     });
     return out;
-  }
-
-  private other(e: DiagramEdge, node: number): number {
-    return e.from === node ? e.to : e.from;
-  }
-
-  /**
-   * Visible nodes = discovered solids, their immediate neighbours, and any node
-   * reached from such a neighbour by a SOLID ARROWHEAD edge — but only when that
-   * neighbour was itself reached from a discovered solid by a SOLID line.
-   */
-  private computeVisible(discovered: Set<number>): Set<number> {
-    const visible = new Set<number>(discovered);
-    const solidNeighbors = new Set<number>();
-
-    for (const d of discovered) {
-      for (const ei of this.incident[d]) {
-        const e = this.edges[ei];
-        const n1 = this.other(e, d);
-        visible.add(n1);
-        if (!e.dashed) solidNeighbors.add(n1);
-      }
-    }
-    for (const n1 of solidNeighbors) {
-      for (const ei of this.incident[n1]) {
-        const e = this.edges[ei];
-        if (e.arrowhead && !e.dashed) visible.add(this.other(e, n1));
-      }
-    }
-    return visible;
   }
 
   /** Retint every node (color / ghost / hidden) and rebuild the arrow set. */
   private refresh(): void {
     const discovered = this.discoveredSet();
-    const visible = this.computeVisible(discovered);
+    const visible = computeVisible(this.graph, discovered);
     this.visibleSet = visible;
 
     this.nodes.forEach((node, i) => {
@@ -375,11 +264,13 @@ export class LibraryBrowser {
       }
     });
 
-    this.buildArrows(visible);
+    this.buildArrows(visible, discovered);
   }
 
-  /** (Re)draw the arrows between currently-visible nodes. */
-  private buildArrows(visible: Set<number>): void {
+  /** (Re)draw the diagram's arrows. Which edges to draw — both endpoints visible
+   *  and leaving an expandable (discovered / first-hop) node — is decided by the
+   *  pure `drawableEdges`; this just builds the lines + billboarded heads. */
+  private buildArrows(visible: Set<number>, discovered: Set<number>): void {
     for (const child of this.arrowGroup.children.slice()) {
       this.arrowGroup.remove(child);
       disposeObject(child);
@@ -390,8 +281,8 @@ export class LibraryBrowser {
     const headLen = config.library.arrowheadLength;
     const headW = config.library.arrowheadWidth;
 
-    for (const e of this.edges) {
-      if (!visible.has(e.from) || !visible.has(e.to)) continue;
+    for (const ei of drawableEdges(this.graph, discovered, visible)) {
+      const e = this.graph.edges[ei];
       const a = this.nodes[e.from].pos;
       const b = this.nodes[e.to].pos;
       const dir = b.clone().sub(a).normalize();
@@ -430,25 +321,22 @@ export class LibraryBrowser {
     }
   }
 
-  /** Billboard every arrowhead toward the camera, but YAW ONLY (its facing
-   *  normal is horizontal — the camera direction flattened into the xz plane).
-   *  So it turns to face you as you orbit around, yet seen from straight above or
-   *  below it foreshortens to an edge instead of staying flat-on. */
+  /** Billboard every arrowhead by spinning it about its OWN arrow axis: the tip
+   *  stays exactly along the arrow direction, and the flat triangle rotates around
+   *  that axis to face the camera as much as possible. So it looks flat-on from
+   *  the side but foreshortens to an edge when viewed down the arrow's length. */
   private updateArrowheads(): void {
     const m = new Matrix4();
     for (const { mesh, dir } of this.arrowheads) {
-      // Facing normal: toward the camera but with no vertical component.
+      const f = dir; // tip axis, fixed (the arrow points exactly along it)
+      // Facing normal: the view direction with the arrow-axis component removed,
+      // so it lies in the plane the arrow is perpendicular to.
       const view = this.camera.position.clone().sub(mesh.position);
-      const n = new Vector3(view.x, 0, view.z);
-      if (n.lengthSq() < 1e-8) n.set(0, 0, 1); // camera directly above/below
+      const n = view.addScaledVector(f, -view.dot(f));
+      if (n.lengthSq() < 1e-8) continue; // looking straight down the arrow
       n.normalize();
-      // Tip axis = the arrow direction projected into the (vertical) billboard
-      // plane — the plane perpendicular to the horizontal facing normal.
-      const f = dir.clone().addScaledVector(n, -dir.dot(n));
-      if (f.lengthSq() < 1e-8) continue; // arrow runs along the facing normal
-      f.normalize();
       const right = new Vector3().crossVectors(f, n).normalize();
-      m.makeBasis(right, f, n); // local +Y → tip dir, local +Z (triangle normal) → camera (yaw)
+      m.makeBasis(right, f, n); // local +Y → tip dir, local +Z (triangle normal) → camera
       mesh.quaternion.setFromRotationMatrix(m);
     }
   }
@@ -458,6 +346,7 @@ export class LibraryBrowser {
   /** Decide, at the start of a left-drag, whether it orbits or pans: a drag that
    *  lands on a visible solid (or an arrow) pans the diagram; empty space orbits. */
   private pickPanMode(e: PointerEvent): void {
+    this.snapTarget = null; // a new gesture cancels any in-progress snap
     if (e.button !== 0) return;
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new Vector2(
@@ -479,7 +368,8 @@ export class LibraryBrowser {
     return out;
   }
 
-  /** Snap the orbit focus to the nearest node, keeping zoom and orientation. */
+  /** After a pan, pick the nearest node as the focus to ease toward (the actual
+   *  motion is done smoothly per-frame in `stepSnap`). */
   private snapToNearest(): void {
     const target = this.controls.target;
     let best: Vector3 | null = null;
@@ -492,11 +382,23 @@ export class LibraryBrowser {
         best = n.pos;
       }
     }
-    if (!best) return;
-    const delta = best.clone().sub(target);
-    this.camera.position.add(delta);
-    this.controls.target.copy(best);
-    this.controls.update();
+    this.snapTarget = best ? best.clone() : null;
+  }
+
+  /** Ease the orbit focus toward `snapTarget` (set after a pan), shifting the
+   *  camera by the same step so the zoom + orientation are preserved. */
+  private stepSnap(): void {
+    if (!this.snapTarget) return;
+    const remaining = this.snapTarget.clone().sub(this.controls.target);
+    if (remaining.length() < 1e-3) {
+      this.camera.position.add(remaining);
+      this.controls.target.add(remaining);
+      this.snapTarget = null;
+      return;
+    }
+    const step = remaining.multiplyScalar(config.library.snapSmoothing);
+    this.camera.position.add(step);
+    this.controls.target.add(step);
   }
 
   // --- open / close ---------------------------------------------------------
@@ -508,21 +410,28 @@ export class LibraryBrowser {
       this.built = true;
     }
     this.open = true;
+    this.canvas.style.display = "block";
     this.popup.el.style.display = "";
     this.relayout();
     this.refresh();
 
-    // Start with the main view's ORIENTATION but zoomed further out (so a solid
-    // and its neighbours are visible at once), looking at the origin (Tetrahedron).
-    const dir = this.mainCamera.position.clone();
-    if (dir.lengthSq() < 1e-9) dir.set(1, 0, 1);
-    dir.normalize().multiplyScalar(config.library.startDistance);
-    this.camera.position.copy(dir);
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
+    // On the FIRST open, start from the main view's orientation (zoomed further
+    // out so a solid and its neighbours are visible at once), looking at the
+    // origin. After that the two cameras are independent: the browse view keeps
+    // its own position across opens rather than re-syncing to the main view.
+    if (!this.cameraInit) {
+      const dir = this.mainCamera.position.clone();
+      if (dir.lengthSq() < 1e-9) dir.set(1, 0, 1);
+      dir.normalize().multiplyScalar(config.library.startDistance);
+      this.camera.position.copy(dir);
+      this.controls.target.set(0, 0, 0);
+      this.controls.update();
+      this.cameraInit = true;
+    }
 
     const loop = () => {
       if (!this.open) return;
+      this.stepSnap();
       this.controls.update();
       this.updateArrowheads();
       this.composer.render();
@@ -535,18 +444,20 @@ export class LibraryBrowser {
     if (!this.open) return;
     this.open = false;
     cancelAnimationFrame(this.raf);
+    this.canvas.style.display = "none";
     this.popup.el.style.display = "none";
   }
 
-  /** Resize the panel + renderer to the current grid. */
+  /** Resize the full-screen canvas + the frame overlay to the current grid. */
   private relayout(): void {
     this.popup.resize(this.screen.cols, this.screen.rows);
     this.popup.placeAt(0, 0);
-    // The "X" masks three border cells at the left of the top line.
+    // The "[X]" masks border cells at the left of the top line.
     this.screen.place(this.closeBtn, 1, 0);
     if (!this.open) return;
-    const w = Math.max(1, (this.screen.cols - 2) * this.screen.colW);
-    const h = Math.max(1, (this.screen.rows - 2) * this.screen.rowH);
+    // The 3D fills the WHOLE glass; the frame overlays its outermost cells.
+    const w = Math.max(1, this.screen.width);
+    const h = Math.max(1, this.screen.height);
     this.renderer.setSize(w, h, true);
     this.composer.setSize(w, h);
     this.bloomPass.setSize(w, h);
@@ -557,6 +468,8 @@ export class LibraryBrowser {
   mount(): void {
     this.popup.mount();
     this.popup.el.style.display = "none";
+    // The full-screen 3D canvas sits in the grid, behind the frame overlay.
+    this.screen.el.appendChild(this.canvas);
   }
 }
 

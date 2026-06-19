@@ -116,23 +116,30 @@ canvas {
   text-shadow: var(--glow-bright, var(--glow));
 }
 /* --------------------------------------------------------------------
-   LIBRARY browse diagram: a full-screen black panel (the box-drawing frame +
-   title stay visible) holding an OrbitControls 3D map of the named solids. It
-   blocks everything behind it; the "X" on the top-left of the frame closes it. */
+   LIBRARY browse diagram: a full-screen 3D canvas (its backlight-colored scene
+   blocks everything behind it) with the box-drawing frame + title drawn as a
+   transparent overlay on top, like the other dialogs. The "[X]" on the top-left
+   of the frame closes it. */
+.library-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 7; /* above the main 3D view + panels, below the frame overlay */
+}
 .library-popup {
   z-index: 8;
-  pointer-events: auto;
+  pointer-events: none; /* transparent overlay — pointer events reach the canvas */
 }
 .library-popup .popup-frame {
   color: var(--text, #ffffff);
   text-shadow: var(--glow, none);
 }
 /* The close button is a standard action button (ui/controls.ts) positioned to
-   sit on the left of the top border, with a black backing to mask those cells. */
+   sit on the left of the top border, with a backlight backing to mask those
+   cells (it opts back into pointer events via `.ctl`). */
 .library-close {
   position: absolute;
   z-index: 9; /* above the frame, so the "[X]" masks the border cells */
-  background: #000000;
+  background: var(--backlight, #10141c);
 }
 /* --------------------------------------------------------------------
    Popups / panels: a box-drawing frame with a scrollable inner area. */
@@ -230,18 +237,33 @@ canvas {
   height: var(--cell-h, 38px);
   line-height: var(--cell-h, 38px);
   vertical-align: top;
-  color: var(--text, #ffffff);
-  text-shadow: var(--glow, none);
   cursor: pointer;
   pointer-events: auto;
   user-select: none;
   -webkit-user-select: none;
 }
-.ctl:hover {
+/* Action buttons: white by default, the selection accent on hover. (A press is
+   never really seen — a dialog opens or closes immediately — so hover carries
+   the accent instead.) */
+.ctl-btn {
+  color: var(--text, #ffffff);
+  text-shadow: var(--glow, none);
+}
+.ctl-btn:hover {
+  color: var(--select, #5ad7ff);
+  text-shadow: var(--glow-select, var(--glow));
+}
+/* Unselected radios: dim by default, brightening to white on hover. */
+.ctl-radio {
+  color: var(--text-dim, #7c8693);
+  text-shadow: var(--glow-dim, var(--glow));
+}
+.ctl-radio:hover {
   color: var(--text-bright, #ffffff);
   text-shadow: var(--glow-bright, var(--glow));
 }
-/* Held: the selection accent (the same color a selected 3D handle turns). */
+/* Held: the selection accent (the same color a selected 3D handle turns). After
+   the hover rules so a held control keeps the accent even while hovered. */
 .ctl.pressed {
   color: var(--select, #5ad7ff);
   text-shadow: var(--glow-select, var(--glow));
