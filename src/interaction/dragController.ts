@@ -346,6 +346,13 @@ export class DragController {
     // so the rendered geometry can ease from here into the relaxing form.
     this.displayVerts = poly.mesh.vertices.map((v) => v.clone());
     this.solveStopping = false;
+    // Always regularize from the operation's pristine RAW geometry (1:1 with the
+    // live vertices) rather than continuing from the possibly-degenerate current
+    // state — so a wildly-dragged vertex or a strategy switch can't leave the shape
+    // permanently mangled. The display still eases from `displayVerts` (its current
+    // look) into the freshly-relaxed result, so this reset isn't visible as a jump.
+    const live = poly.mesh.vertices;
+    for (let i = 0; i < live.length; i++) live[i].copy(poly.raw.vertices[i]);
     const topo = extractTopology(poly);
     this.solver = new RelaxSolver(poly.mesh.vertices, topo, this.strategy);
     // (The shape relaxes underneath the release color-fade; the active strategy

@@ -34,7 +34,10 @@ import { Screen, Popup } from "./screen";
 import { makeActionButton } from "./controls";
 import { libraryShapeFor } from "../data/libraryShapes";
 import { faceColorsRGB, getColorScheme, setColorScheme } from "../geometry/colors";
-import { Polyhedron } from "../geometry/polyhedron";
+import { Polyhedron, cloneMesh } from "../geometry/polyhedron";
+import { type Mesh } from "../geometry/HalfEdge";
+import { RelaxSolver } from "../solver/solver";
+import { extractTopology } from "../solver/topology";
 import { faceGeometryArrays, edgeGeometryArrays } from "../render/sceneView";
 import {
   buildDiagramGraph,
@@ -517,8 +520,32 @@ interface BuiltShape {
  * "white ghost" by toggling `vertexColors` + `color`. The caller sets the active
  * color scheme before calling, so `faceColorsRGB` resolves the solid's own scheme.
  */
+/** Canonicalized (midsphere) geometry per library solid, cached so the one-time
+ *  relaxation runs only once per solid even across re-opens. */
+const canonicalCache = new WeakMap<Polyhedron, Mesh>();
+
+/** Relax a library solid into its canonical (midsphere) form so the browse
+ *  diagram shows nicely-regular shapes rather than whatever raw geometry the
+ *  database happened to build. Runs the "edges" strategy to convergence; the
+ *  topology (and colors) are unchanged, so the existing per-vertex/edge colors
+ *  still apply 1:1. */
+function canonicalMesh(poly: Polyhedron): Mesh {
+  const cached = canonicalCache.get(poly);
+  if (cached) return cached;
+  const work = cloneMesh(poly.mesh);
+  const topo = extractTopology(poly);
+  const solver = new RelaxSolver(work.vertices, topo, "edges");
+  let guard = 0;
+  while (solver.advance() && guard++ < 5000) {
+    /* iterate to convergence */
+  }
+  const result: Mesh = { vertices: solver.mesh.vertices, faces: work.faces };
+  canonicalCache.set(poly, result);
+  return result;
+}
+
 function buildShapeGroup(poly: Polyhedron): BuiltShape {
-  const src = poly.mesh;
+  const src = canonicalMesh(poly);
 
   // Center + scale to config.library.shapeRadius, then reuse the shared geometry builders.
   const center = new Vector3();

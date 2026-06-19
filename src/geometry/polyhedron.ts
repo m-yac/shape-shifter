@@ -71,11 +71,18 @@ export class Polyhedron {
   /** Per-vertex/edge/face palette colors (see geometry/colors.ts). Defaults to
    *  the generic seed coloring (faces 0, vertices 1, edges 2) when not supplied. */
   readonly colors: ColorSet;
+  /** The operation's direct, never-regularized output — a pristine copy of the
+   *  geometry as committed, with a 1:1 vertex-index correspondence to `mesh`.
+   *  `mesh.vertices` get mutated in place by the relaxation solver, but `raw` is
+   *  left untouched so a re-solve (strategy switch, big drift) can always rebuild
+   *  the solver's base from a clean, well-defined starting form. */
+  readonly raw: Mesh;
   private _dcel: DCEL | null = null;
 
-  constructor(mesh: Mesh, colors?: ColorSet) {
+  constructor(mesh: Mesh, colors?: ColorSet, raw?: Mesh) {
     this.mesh = mesh;
     this.colors = colors ?? uniformColors(mesh, 1, 2, 0);
+    this.raw = raw ?? cloneMesh(mesh);
   }
 
   get dcel(): DCEL {
@@ -92,10 +99,14 @@ export class Polyhedron {
   }
 
   clone(): Polyhedron {
-    return new Polyhedron(cloneMesh(this.mesh), {
-      vertex: this.colors.vertex.slice(),
-      face: this.colors.face.slice(),
-      edge: new Map(this.colors.edge),
-    });
+    return new Polyhedron(
+      cloneMesh(this.mesh),
+      {
+        vertex: this.colors.vertex.slice(),
+        face: this.colors.face.slice(),
+        edge: new Map(this.colors.edge),
+      },
+      cloneMesh(this.raw),
+    );
   }
 }
