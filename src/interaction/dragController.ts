@@ -29,6 +29,7 @@ import { type Screen } from "../ui/screen";
 import { type GlitchOverlay } from "../ui/glitch";
 import { ShapesPanel } from "../ui/shapesPanel";
 import { DiscoveryPopup } from "../ui/discoveryPopup";
+import { LibraryBrowser } from "../ui/libraryBrowser";
 import { Discoveries } from "../discoveries";
 import { solidTypeFor } from "../data/namedPolyhedra";
 import { config } from "../config";
@@ -145,6 +146,7 @@ export class DragController {
   // First-time-made-shape tracking + its celebration (glow + glitch + popup).
   private readonly discoveries = new Discoveries();
   private readonly discoveryPopup: DiscoveryPopup;
+  private readonly library: LibraryBrowser;
 
   constructor(
     initial: Polyhedron,
@@ -165,6 +167,11 @@ export class DragController {
   ) {
     this.current = initial;
     this.discoveryPopup = new DiscoveryPopup(screen);
+    // The full-screen LIBRARY browse diagram, opened by the OPTIONS "Browse"
+    // button. It re-reads the discovered set (and copies this camera) each open.
+    this.library = new LibraryBrowser(screen, this.camera, () => this.discoveries.snapshot());
+    this.library.mount();
+    this.shapes.bindBrowse(() => this.library.show());
     this.shapes.setCount(this.discoveries.count);
     this.shapes.setActiveStrategy(this.strategy);
     this.shapes.bindStrategy(

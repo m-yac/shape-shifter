@@ -303,24 +303,30 @@ export const config = {
       selection: "SELECTION", //   top-left selection box (ui/readout.ts)
       history: "HISTORY", //       top-right operation list (ui/historyPanel.ts)
       shapes: "OPTIONS", //         top-left options / library panel (ui/shapesPanel.ts)
+      library: "LIBRARY", //       full-screen browse diagram (ui/libraryBrowser.ts)
       discovery: "WOW", //   new-shape popup (ui/discoveryPopup.ts)
     },
 
     // The OPTIONS panel. Line 1 shows the discovered-shape count; line 2 labels the
     // three regularization-strategy buttons. `regularLabel` precedes them; the
     // button captions map to the solver strategies vertices / edges / faces.
+    // Each line is "Label: <content>". `buttons` are momentary action buttons
+    // (fire on click); `radios` are a mutually-exclusive selector group (one
+    // stays chosen). Captions are bare — the "[" and "]" frame is added
+    // automatically by the control widgets (see ui/controls.ts).
     optionsPanel: {
       libraryLine: {
         label: "Library",
         text: "{count}/{total} shapes",
+        buttons: { browse: "Browse" },
       },
       regularLine: {
         label: "Regular",
-        buttons: { edges: "Canonical", faces: "Faces", vertices: "Vertices" },
+        radios: { edges: "Canonical", faces: "Faces", vertices: "Vertices" },
       },
       colorsLine: {
         label: "Colors",
-        buttons: { tetrahedral: "Tetra", octahedral: "Octa", icosahedral: "Icosa" },
+        radios: { tetrahedral: "Tetra", octahedral: "Octa", icosahedral: "Icosa" },
       },
     },
 
@@ -404,6 +410,69 @@ export const config = {
         },
       },
     },
+  },
+
+  // ---------------------------------------------------------------------------
+  // LIBRARY BROWSE SCREEN
+  // ---------------------------------------------------------------------------
+  library: {
+    // Distance the browse camera sits from the focused solid when the diagram
+    // opens. Larger than the main view's `camera.startDistance` so you can see a
+    // solid and its neighbours at once (the main view's orientation is kept).
+    startDistance: 12,
+    // The on-screen display radius each little solid is scaled to (world units, <1)
+    shapeRadius: 0.62,
+    // Arrows start / end this many `shapeRadius` out from a solid's center, so
+    // they run between the solids rather than through them.
+    arrowGapFactor: 1,
+    // The connecting arrows' color (dim grey, like the panel frame).
+    arrowColor: 0x8b94a3,
+    // Arrowhead (a flat, camera-facing triangle): its length along the line and
+    // its base width, in world units. The tip sits exactly at the line's end.
+    arrowheadLength: 0.34,
+    arrowheadWidth: 0.26,
+    // Undiscovered-but-visible solids render in this color at this opacity
+    // ("all white at 25%"); discovered ones use their full default colors.
+    ghostColor: 0x8b94a3,
+    ghostOpacity: 0.125,
+    diagram: [
+      // Tetrahedron family
+      [  0,  6,  0, "Icosahedron", ["d3l4", "d3r4"] ],
+      [  0,  4,  0, "Octahedron", ["d2l2", "d2r2", "u2:^"] ],
+      [  0,  2,  0, "Truncated Tetrahedron", ["u2^"] ],
+      [  0,  0,  0, "Tetrahedron", ["u2", "d2"] ],
+      [  0, -2,  0, "Triakis Tetrahedron", ["d2^"] ],
+      [  0, -4,  0, "Cube", ["u2l2", "u2r2", "d2:^"] ],
+      [  0, -6,  0, "Dodecahedron", ["u3l4", "u3r4"] ],
+      // Octahedron / Cube family
+      [ -2,  2,  0, "Triakis Octahedron", ["d2l2^"] ],
+      [  2,  2,  0, "Truncated Octahedron", ["d2r2^"] ],
+      [ -6,  0,  0, "Pentagonal Icositetrahedron", [] ],
+      [ -4,  0,  0, "Rhombic Dodecahedron", ["f4r4, b2r2", "l2:^"] ],
+      [  4,  0,  0, "Cuboctahedron", ["b4l4, f2l2", "r2:^"] ],
+      [  6,  0,  0, "Snub Cuboctahedron", [] ],
+      [ -2, -2,  0, "Tetrakis Hexahedron", ["u2l2^"] ],
+      [  2, -2,  0, "Truncated Cube", ["u2r2^"] ],
+      // Icosahedron / Dodecahedron family
+      [ -4,  3,  0, "Triakis Icosahedron", ["d3l4^"] ],
+      [  4,  3,  0, "Truncated Icosahedron", ["d3r4^"] ],
+      [-10,  0,  0, "Pentagonal Hexecontahedron", [] ],
+      [ -8,  0,  0, "Rhombic Triacontahedron", ["f8r8, b4r4", "l2:^"] ],
+      [  8,  0,  0, "Icosidodecahedron", ["b8l8, f4l4", "r2:^"] ],
+      [ 10,  0,  0, "Snub Icosidodecahedron", [] ],
+      [ -4, -3,  0, "Pentakis Dodecahedron", ["u3l4^"] ],
+      [  4, -3,  0, "Truncated Dodecahedron", ["u3r4^"] ],
+      // Cuboctahedron / Rhombic Dodecahedron family
+      [  2,  0,  2, "Truncated Cuboctahedron", ["f2l2^"] ],
+      [  0,  0, -4, "Deltoidal Icositetrahedron", ["l2:^"] ],
+      [  0,  0,  4, "Rhombicuboctahedron", ["r2:^"] ],
+      [ -2,  0, -2, "Disdyakis Dodecahedron", ["b2r2^"] ],
+      // Icosidodecahedron / Rhombic Triacontahedron family
+      [  4,  0,  4, "Truncated Icosidodecahedron", ["f4l4^"] ],
+      [  0,  0, -8, "Deltoidal Hexecontahedron", ["l2:^"] ],
+      [  0,  0,  8, "Rhombicosidodecahedron", ["r2:^"] ],
+      [ -4,  0, -4, "Disdyakis Triacontahedron", ["b4r4^"] ],
+    ]
   },
 
   // ---------------------------------------------------------------------------

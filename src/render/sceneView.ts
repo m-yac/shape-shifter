@@ -77,7 +77,7 @@ function faceVertexCount(n: number): number {
  * crease along the triangulation diagonal even if it is very slightly non-planar.
  * Each triangle vertex also receives its face's RGB color (per-face coloring).
  */
-function faceGeometryArrays(
+export function faceGeometryArrays(
   mesh: Mesh,
   faceColors: Color[],
 ): { positions: number[]; normals: number[]; colors: number[] } {
@@ -113,7 +113,7 @@ function faceGeometryArrays(
 /** Wireframe positions + per-edge color (from `edgeColors` palette indices). The
  *  resolver maps an index to RGB; defaults to the dark palette (the screen look),
  *  but the _light.png export passes `darkRGBLight`. */
-function edgeGeometryArrays(
+export function edgeGeometryArrays(
   mesh: Mesh,
   edgeColors: Map<string, number>,
   hidden?: Set<string>,

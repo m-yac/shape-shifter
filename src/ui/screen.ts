@@ -245,7 +245,15 @@ export class Screen {
     root.setProperty("--glow-bright", textGlow(i, hexToRgb(t.textBright)));
     root.setProperty("--glow-dim", textGlow(i, hexToRgb(t.textDim)));
     root.setProperty("--glow-warn", textGlow(i, hexToRgb(t.textWarn)));
+    // The interactive-control accent: the same color the 3D selection turns
+    // (config.render.selectedColor), used for pressed buttons / held radios.
+    const selectHex = "#" + config.render.selectedColor.toString(16).padStart(6, "0");
+    root.setProperty("--select", selectHex);
+    root.setProperty("--glow-select", textGlow(i, hexToRgb(selectHex)));
     root.setProperty("--glow-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.text)));
+    // The select-colored variant of --glow-inv, for a held radio's inverted
+    // "lit block" rendered in the selection accent (same shift trick, vs --select).
+    root.setProperty("--glow-select-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, selectHex)));
     root.setProperty("--glow-dim-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.textDim)));
     root.setProperty("--glitch-color", config.glitch.color);
     root.setProperty("--backlight", t.backlight);

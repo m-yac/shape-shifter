@@ -30,7 +30,7 @@ interface DBEntry {
 
 // Precompute signatures + graphs for the named database once.
 const DB: DBEntry[] = NAMED.map((np) => {
-  const poly = new Polyhedron(np.mesh);
+  const poly = np.poly;
   return {
     name: np.name,
     signature: computeSignature(poly.dcel),

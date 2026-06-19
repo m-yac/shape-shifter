@@ -7,6 +7,7 @@ import { BootSequence } from "./bootSequence";
 import { Screen, fadeOut } from "../ui/screen";
 import { GlitchOverlay } from "../ui/glitch";
 import { led } from "../ui/led";
+import { CAMERA_XY, CAMERA_Z } from "./camera";
 
 /** Parse a "#rrggbb" hex color into an [r, g, b] triple of 0..255 ints. */
 function hexRgb(hex: string): [number, number, number] {
@@ -59,7 +60,8 @@ export class IntroCutscene {
     this.distance = config.intro.cameraDistance;
 
     this.controls.enabled = false;
-    this.camera.position.set(0, 0, this.distance);
+    const d = this.distance;
+    this.camera.position.set(d*CAMERA_XY, d*CAMERA_XY, d*CAMERA_Z);
     this.view.scene.fog = this.fog;
     this.view.setPolyhedron(this.poly, false);
 
@@ -87,7 +89,8 @@ export class IntroCutscene {
   }
 
   updateFadeIn(t: number): void {
-    this.camera.position.set(0, 0, this.distance);
+    const d = this.distance;
+    this.camera.position.set(d*CAMERA_XY, d*CAMERA_XY, d*CAMERA_Z);
     const t2 = t * t;
     const t4 = t2 * t2;
     const t8 = t4 * t4;

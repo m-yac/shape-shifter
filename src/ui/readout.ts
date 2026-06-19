@@ -274,10 +274,16 @@ export class Readout {
       // The affected set is summarized by arity group ("all 3-gon faces, and 2
       // faces" / "all degree-4 vertices" / "all faces"). During a live operation
       // drag the operation verb leads; otherwise it's a static "Selected …".
+      // The set whose capability we report must match its kind: gyro reads face ids,
+      // snub reads vertex ids. During a drag, use the drag's set/kind so a stale
+      // persistent selection of the other kind can't be fed to the wrong predicate
+      // (which would index out of range and throw).
       let onFaces = this.selectionKind === "face";
+      let effSel = this.selection;
       let line: string;
       if (this.drag) {
         onFaces = this.drag.selKind === "face";
+        effSel = this.drag.selIds ?? new Set();
         const verb =
           this.drag.t > config.interaction.minCommitT
             ? DRAG_VERB[this.drag.kind][this.drag.weld ? 1 : 0]
@@ -288,16 +294,19 @@ export class Readout {
       }
       this.selEl.textContent = `${line}\nSHIFT: `;
 
-      let snub = document.createElement("span");
-      let gyro = document.createElement("span");
-      let canDoSnub = canSnub(this.poly, this.selection);
-      let canDoGyro = canGyro(this.poly, this.selection);
-      snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
-      gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
-      if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
-      if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
-      if (!onFaces) { this.selEl.append(snub); }
-      if ( onFaces) { this.selEl.append(gyro); }
+      if (onFaces) {
+        const gyro = document.createElement("span");
+        const canDoGyro = canGyro(this.poly, effSel);
+        gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
+        if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
+        this.selEl.append(gyro);
+      } else {
+        const snub = document.createElement("span");
+        const canDoSnub = canSnub(this.poly, effSel);
+        snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
+        if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
+        this.selEl.append(snub);
+      }
       this.selBox.el.style.display = "";
     }
     else {

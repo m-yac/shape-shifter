@@ -39,6 +39,12 @@ export class Discoveries {
     return this.set.size;
   }
 
+  /** Snapshot of every known shape name (pre-discovered + made), for the LIBRARY
+   *  browse diagram, which decides which nodes render in color. */
+  snapshot(): string[] {
+    return [...this.set];
+  }
+
   /**
    * Record a (possibly new) discovery. Returns `isNew` (false if already known
    * or pre-discovered) and `first` (true only for the first real discovery).
