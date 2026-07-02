@@ -6,28 +6,32 @@ import {
   type HalfEdge,
   outgoingHalfEdges,
 } from "../geometry/HalfEdge";
-import {
-  type Polyhedron,
-  faceCentroidHE,
-  faceNormalHE,
-} from "../geometry/polyhedron";
+import { type Polyhedron, faceNormalHE, faceCentroidHE } from "../geometry/polyhedron";
 import { type ColorSet, edgeKey } from "../geometry/colors";
-import { type MorphPlan } from "./types";
+import { type MorphPlan, type TwistArc } from "./types";
 import { type InViewTest } from "./truncate";
-import { joinHeight } from "./kis";
 import { faceMax, faceMaxPlus1, lerpFaceColors } from "./colorUtil";
-import { closestLineParam, distancePointToRay } from "../util/lines";
 import { config } from "../config";
 
-// How far (as a fraction of the centre → edge-midpoint line) the peripheral
-// vertices slide at full skew. Kept well short of the midpoint so they stay lifted
-// above the face (the centre sits at the raised kis-join apex), giving the relaxer a
-// good, non-degenerate starting cap. The exact merged-face planarity is left to the
-// post-release solver — the regular target (e.g. the dodecahedron's vertices) does
-// not lie on these lines, so there is no closed-form "coplanar" distance to hit.
-const GYRO_SLIDE = config.operations.gyroSlide;
+// At the full gyro each new edge-midpoint vertex slides `gyroFaceSlide` of the way
+// along the line joining the midpoints of its quad's two opposite edges, and lifts
+// outward off the face. The lift is NOT a fixed fraction of the edge: it scales with
+// cot(dihedral/2) of the join edge the vertex sits over, so a sharp join folds up much
+// more than a nearly-flat one — see config.operations.gyroLiftFactor.
+const FACE_SLIDE = config.operations.gyroFaceSlide;
 
-/** Half-edges around a face, in order. */
+/** cot(dihedral/2) of the (convex) join edge `he`, given its face's outward normal.
+ *  Falls back to 1 (a right-angle valley) if the edge has no neighbour or is flat. */
+function cotHalfDihedral(he: HalfEdge, outwardNormal: Vector3): number {
+  if (!he.twin) return 1;
+  const nt = faceNormalHE(he.twin.face);
+  if (nt.dot(faceCentroidHE(he.twin.face)) < 0) nt.negate();
+  const dihedral = Math.PI - Math.acos(Math.max(-1, Math.min(1, outwardNormal.dot(nt))));
+  const half = dihedral / 2;
+  const s = Math.sin(half);
+  return s > 1e-6 ? Math.cos(half) / s : 0;
+}
+
 function faceHalfEdges(f: HEFace): HalfEdge[] {
   const out: HalfEdge[] = [];
   let h = f.halfedge;
@@ -39,276 +43,136 @@ function faceHalfEdges(f: HEFace): HalfEdge[] {
   return out;
 }
 
-function faceLoop(f: HEFace): number[] {
-  return faceHalfEdges(f).map((h) => h.origin.id);
-}
-
-/** Outward unit normals of the two faces sharing half-edge `h` (centroid-oriented). */
-function edgeFaceNormals(h: HalfEdge): Vector3[] {
-  const faces = h.twin ? [h.face, h.twin.face] : [h.face];
-  return faces.map((f) => {
-    const n = faceNormalHE(f);
-    if (n.dot(faceCentroidHE(f)) < 0) n.negate();
-    return n;
-  });
-}
-
-/** Are the gyred faces edge-connected to one another? Required so the chirality has
- *  a single coherent twist (one connected patch, no arbitrary per-component choice). */
-function selectionConnected(dcel: DCEL, gyred: Set<number>): boolean {
-  if (gyred.size <= 1) return true;
-  const start = gyred.values().next().value as number;
-  const seen = new Set<number>([start]);
-  const queue = [start];
-  while (queue.length) {
-    const f = dcel.faces[queue.shift()!];
-    for (const h of faceHalfEdges(f)) {
-      const g = h.twin?.face.id;
-      if (g !== undefined && gyred.has(g) && !seen.has(g)) {
-        seen.add(g);
-        queue.push(g);
-      }
-    }
-  }
-  return seen.size === gyred.size;
-}
-
-/**
- * Proper 2-coloring of the VERTICES (adjacent vertices get opposite colors),
- * restricted to the vertices of the gyred faces and seeded at the dragged face. Only
- * edges that border a gyred face carry the constraint, so the coloring is decided
- * entirely WITHIN the (connected) selection and twists coherently no matter the
- * parity of the rest of the solid. `bipartite` is false exactly when the region has
- * an odd cycle (no 2-coloring exists), in which case the caller refuses the operation
- * — there is no consistent chirality to choose.
- */
-function twoColorVerticesInRegion(
-  dcel: DCEL,
-  gyred: Set<number>,
-  seedVid: number,
-): { color: Map<number, 0 | 1>; bipartite: boolean } {
+/** Proper 2-coloring of the vertices of a join (adjacent vertices differ). A join's
+ *  graph is bipartite (original vertices vs face-centre apexes), so no conflict. */
+function twoColorVertices(dcel: DCEL): Map<number, 0 | 1> {
   const color = new Map<number, 0 | 1>();
-  let bipartite = true;
-  const constrains = (h: HalfEdge): boolean =>
-    gyred.has(h.face.id) || (h.twin !== null && gyred.has(h.twin.face.id));
-  color.set(seedVid, 0);
-  const queue = [seedVid];
+  color.set(0, 0);
+  const queue = [0];
   while (queue.length) {
     const vid = queue.shift()!;
     const c = color.get(vid)!;
     for (const h of outgoingHalfEdges(dcel.vertices[vid])) {
-      if (!constrains(h)) continue;
-      const n = h.next.origin.id; // neighbour across this gyred-face edge
-      const nc = color.get(n);
-      if (nc === undefined) {
+      const n = h.next.origin.id;
+      if (!color.has(n)) {
         color.set(n, (c ^ 1) as 0 | 1);
         queue.push(n);
-      } else if (nc === c) {
-        bipartite = false;
       }
     }
   }
-  return { color, bipartite };
+  return color;
 }
 
-/** Per-face data for one chiral variant. */
-interface GFace {
-  faceId: number;
-  center: number; // apex vertex index, or -1 when n=2 (collapsed to an edge)
-  apex: Vector3; // the raised centre = centroid + (baseT·kis-join-height)·normal
-  qIdx: number[]; // peripheral vertex indices q_0..q_{n-1}
-  qTarget: Vector3[]; // edge midpoints each q heads toward (the snap-line far ends)
-  qHe: HalfEdge[]; // the boundary half-edge each q sits over (for in-view tests)
+/** One peripheral (q) vertex of a gyred face: its new index, the boundary edge it
+ *  sits over (two original vertex ids), and the pivot it swings around. */
+interface QVert {
+  index: number;
+  start: Vector3; // the edge midpoint (t=0)
+  target: Vector3; // where it slides to at the full gyro (t=1), along the opposite-edge line
 }
 
 /**
- * Gyro, driven by holding Shift WHILE dragging a 2n-gon face (i.e. mid-kis). The
- * dual of Snub. The single kis apex per face is split into a central degree-n vertex
- * C surrounded by n degree-3 peripheral vertices q; with Shift held, each q is
- * dragged out along the invisible line from C to the midpoint of one of the 2n
- * boundary edges, and connects to C and that edge's two endpoints. When n=2 the
- * centre degenerates to "just an edge" (no C vertex).
+ * Gyro as a twist extension of a JOIN. Given the join `poly` (all quad faces), each
+ * original vertex — together with the inner halves of its edges — rotates about its
+ * radial axis; a new vertex appears at every edge midpoint and each quad splits into
+ * two, producing the gyro (the dual of snub). The topology (tiling + weld across
+ * every join edge) is exactly the classic gyro, so it is independent of the
+ * intermediate rotation, which the post-release relaxer regularizes.
  *
- * `baseT` is the frozen kis level at the moment Shift was pressed: C sits at the kis
- * apex for that level (centroid + baseT·joinHeight·normal), so at skew=0 (all q's at
- * C) the cap reproduces the current kis exactly — pressing Shift changes nothing
- * until the mouse moves. The skew (the plan's `t`) then slides the q's outward.
- * Whether the result is a "partial gyro" or a full gyro is decided by the caller via
- * the `weld` flag at commit (inherited from whether the base kis reached a full join)
- * — the topology is otherwise independent of how far the q's are dragged.
- *
- * Model: like Kis, BY DEFAULT every face participates (the dragged face is the
- * handle); a multi-select restricts the set, which must be edge-connected (so the
- * chirality has one coherent twist with no arbitrary per-component choice). Each face
- * must have an EVEN number of sides — otherwise it can't be tiled into the
- * alternating pattern — so we throw (the controller makes that a no-op).
- *
- * A 2n-gon becomes n pentagons (meeting at C) + n triangles, alternating so every
- * original edge stays a shared edge; at the welded max each original edge dissolves,
- * merging a pentagon (one face) with a triangle (its neighbour) into a larger face.
- *
- * Chirality is LIVE: both mirror forms are precomputed (the two vertex 2-colorings
- * pick which alternating edges receive a q); `snap` chooses whichever puts a q on the
- * line nearest the cursor, so aiming at an adjacent edge flips the whole twist.
+ * `apexPos` (the join apex the base drag ended on, passed by the controller) selects
+ * the local neighbourhood the arc is drawn in.
  */
 export function buildGyro(
   poly: Polyhedron,
-  draggedFid: number,
-  selected: Set<number> | null,
-  inView: InViewTest | null = null,
-  baseT = 1,
+  _draggedFid: number,
+  apexPos: Vector3,
+  cameraPos: Vector3 | null = null,
+  _inView: InViewTest | null = null,
 ): MorphPlan {
   const dcel = poly.dcel;
   const V = dcel.vertices.length;
   const old = poly.colors;
+  const color = twoColorVertices(dcel);
 
-  const gyred = new Set<number>(
-    selected && selected.size > 0 ? selected : dcel.faces.map((f) => f.id),
-  );
-  gyred.add(draggedFid); // the handle always participates
-
-  // Preconditions (mirrored by `canGyro` for the UI): the selection must be edge-
-  // connected, and its vertex region must be 2-colorable. A 2-coloring fails exactly
-  // when that region has an ODD CYCLE — which also covers any odd-sided face (its
-  // boundary IS an odd cycle), so no separate parity check is needed. Without a
-  // coherent coloring there's no consistent chirality, so we refuse outright.
-  if (!selectionConnected(dcel, gyred)) {
-    throw new Error("Gyro needs the selected faces to be connected.");
-  }
-  // Chirality is decided within the selected patch, seeded at the dragged face.
-  const { color, bipartite } = twoColorVerticesInRegion(
-    dcel,
-    gyred,
-    dcel.faces[draggedFid].halfedge.origin.id,
-  );
-  if (!bipartite) {
-    throw new Error("Gyro needs a 2-colorable selection (the patch has an odd cycle).");
-  }
-
-  // ---- The raised centre of each face = the kis apex at the frozen level ----------
-  // Height = baseT × the kis-join height (max over gyred neighbours of the
-  // coplanarity height, with kis's same fallback), so at baseT=1 the centre is the
-  // full join apex and at baseT<1 it tracks a partial kis.
-  const apexHeight = new Map<number, number>();
-  for (const f of dcel.faces) {
-    if (!gyred.has(f.id)) continue;
-    const cf = faceCentroidHE(f);
-    const nf = faceNormalHE(f);
-    let h = 0;
-    for (const he of faceHalfEdges(f)) {
-      const g = he.twin!.face;
-      if (!gyred.has(g.id)) continue;
-      const solved = joinHeight(
-        he.origin.position,
-        he.next.origin.position,
-        cf,
-        nf,
-        faceCentroidHE(g),
-        faceNormalHE(g),
-      );
-      if (solved && solved > 1e-6) h = Math.max(h, solved);
-    }
-    if (h <= 1e-6) h = 0.5 * cf.distanceTo(f.halfedge.origin.position);
-    apexHeight.set(f.id, h);
-  }
-  const apexOf = (f: HEFace): Vector3 =>
-    faceCentroidHE(f)
-      .add(faceNormalHE(f).multiplyScalar(baseT * apexHeight.get(f.id)!));
-
-  // ---- Build one chiral variant ---------------------------------------------------
-  // `startColor` picks which boundary vertex the alternation starts on (the two
-  // colors give the two mirror twists). Vertex indexing (apex + q's, from V upward)
-  // is identical across variants — only the q targets and the tiling differ.
   function buildVariant(startColor: 0 | 1): {
-    gfaces: GFace[];
     previewFaces: number[][];
     vertexCount: number;
     vertexColor: number[];
-    vertexColorWelded: number[];
     faceColor: number[];
     faceStart: number[];
     edgeColor: Map<string, number>;
+    qverts: QVert[];
   } {
-    const gfaces: GFace[] = [];
     const previewFaces: number[][] = [];
     const faceColor: number[] = [];
     const faceStart: number[] = [];
-    const vertexColor: number[] = []; // partial (un-welded) commit
-    const vertexColorWelded: number[] = []; // full-gyro (welded) commit
-    for (let i = 0; i < V; i++) {
-      vertexColor[i] = old.vertex[i];
-      vertexColorWelded[i] = old.vertex[i];
-    }
-    const ownerFace = new Map<number, number>(); // new vertex idx → its gyred face id
-    const centerEdges = new Map<string, number>(); // centre spokes / centre line
+    const vertexColor: number[] = [];
+    for (let i = 0; i < V; i++) vertexColor[i] = old.vertex[i];
+    const ownerFace = new Map<number, number>();
+    const centerEdges = new Map<string, number>();
+    const qverts: QVert[] = [];
     let idx = V;
 
     for (const f of dcel.faces) {
-      if (!gyred.has(f.id)) {
-        previewFaces.push(faceLoop(f)); // untouched face
-        faceColor.push(old.face[f.id]);
-        faceStart.push(old.face[f.id]);
-        continue;
-      }
       const bh = faceHalfEdges(f);
-      const m = bh.length; // = 2n
+      const m = bh.length; // = 4 for a join
       const n = m / 2;
 
-      // Start the boundary order at a `startColor` vertex so the pentagon/triangle
-      // assignment stays consistent across shared edges (coherent chirality). The
-      // coloring is coherent (guaranteed above), so such a vertex always exists.
       let s = 0;
-      for (let i = 0; i < m; i++) {
-        if (color.get(bh[i].origin.id) === startColor) {
-          s = i;
-          break;
-        }
-      }
-      const P: number[] = []; // boundary vertex ids p_0..p_{2n-1}
+      for (let i = 0; i < m; i++) if (color.get(bh[i].origin.id) === startColor) { s = i; break; }
+      const P: number[] = [];
       for (let i = 0; i < m; i++) P.push(bh[(s + i) % m].origin.id);
 
-      const cf = faceMax(f, old); // `c` for this face
-      const apex = apexOf(f);
+      const cf = faceMax(f, old);
       const hasCenter = n >= 3;
       const center = hasCenter ? idx++ : -1;
       if (hasCenter) {
-        // The inner centre vertex replaces the original face → keeps the face color.
         vertexColor[center] = old.face[f.id];
-        vertexColorWelded[center] = old.face[f.id];
         ownerFace.set(center, f.id);
       }
+      // Outward normal of this quad — the lift direction, shared by both its q's so
+      // the raise has NO in-plane component (a per-vertex radial axis would tilt the
+      // two q's toward opposite corners, which reads as an unwanted twist).
+      const faceNormal = faceNormalHE(f);
+      if (faceNormal.dot(faceCentroidHE(f)) < 0) faceNormal.negate();
       const qIdx: number[] = [];
-      // Centre spokes (C↔q) are the "surrounding edges" → c+3 (n>2 always holds
-      // here, since spokes only exist when there is a centre, i.e. n≥3).
       const spokeColor = cf + 3;
-      const qTarget: Vector3[] = [];
-      const qHe: HalfEdge[] = [];
       for (let j = 0; j < n; j++) {
         const q = idx++;
         qIdx.push(q);
-        // q_j sits over the boundary edge (p_{2j-1}, p_{2j}); head toward its midpoint.
-        const he = bh[(s + 2 * j - 1 + m) % m];
-        qHe.push(he);
+        // q_j sits at the midpoint of boundary edge (P[2j-1], P[2j]). Projected onto
+        // the quad it slides straight along the line joining that midpoint to the
+        // midpoint of the OPPOSITE edge (P[2j+1], P[2j+2]), and lifts outward along the
+        // face normal. The chirality lives entirely in the topology (which opposite-
+        // edge pair each variant's 2-colouring picks), so this motion is a clean
+        // straight slide with no in-plane rotation; the relaxer then settles the
+        // pentagons into the true gyro.
         const a = dcel.vertices[P[(2 * j - 1 + m) % m]].position;
-        const b = dcel.vertices[P[2 * j]].position;
-        qTarget.push(a.clone().add(b).multiplyScalar(0.5));
-        // q is a NEW surrounding vertex: full gyro → c+2; partial gyro shows the
-        // original edge it would weld across.
-        vertexColor[q] = old.edge.get(edgeKey(he.origin.id, he.next.origin.id)) ?? 0;
-        vertexColorWelded[q] = cf + 2;
+        const pivot = dcel.vertices[P[2 * j]].position;
+        const oppA = dcel.vertices[P[(2 * j + 1) % m]].position;
+        const oppB = dcel.vertices[P[(2 * j + 2) % m]].position;
+        const mid = a.clone().add(pivot).multiplyScalar(0.5);
+        const oppMid = oppA.clone().add(oppB).multiplyScalar(0.5);
+        const v0 = mid.clone().sub(pivot);
+        // Lift height: cot(dihedral/2)·|v0| of the join edge (a,pivot) this q sits over,
+        // scaled by gyroLiftFactor. The dihedral comes from the two join faces meeting
+        // along that edge — the sharper the valley, the more the q rises to fold the
+        // quads into a flat pentagon. (cot = cos/sin; near-flat edges → tiny lift.)
+        const boundary = bh[(s + ((2 * j - 1 + m) % m)) % m];
+        const cotHalf = cotHalfDihedral(boundary, faceNormal);
+        const target = mid.clone()
+          .addScaledVector(oppMid.clone().sub(mid), FACE_SLIDE)
+          .addScaledVector(faceNormal, config.operations.gyroLiftFactor * cotHalf * v0.length());
+        qverts.push({ index: q, start: mid.clone(), target });
+        vertexColor[q] = cf + 2;
         ownerFace.set(q, f.id);
       }
       if (hasCenter) {
         for (const q of qIdx) centerEdges.set(edgeKey(center, q), spokeColor);
       } else {
-        // n=2: no centre face, just the lone centre line between the two q's,
-        // which (like the snub n=2 case) takes the original face color.
         centerEdges.set(edgeKey(qIdx[0], qIdx[1]), old.face[f.id]);
       }
 
-      // Tiling: per j, a pentagon (or quad when n=2) meeting at C and a triangle.
-      // Each tiling face ← the original edge it dissolves across at full gyro,
-      // emerging from the flat face color.
       for (let j = 0; j < n; j++) {
         const pent = hasCenter
           ? [center, qIdx[j], P[2 * j], P[2 * j + 1], qIdx[(j + 1) % n]]
@@ -320,13 +184,8 @@ export function buildGyro(
         faceColor.push(old.edge.get(edgeKey(P[2 * j + 1], P[(2 * j + 2) % m])) ?? 0);
         faceStart.push(old.face[f.id]);
       }
-
-      gfaces.push({ faceId: f.id, center, apex, qIdx, qTarget, qHe });
     }
 
-    // Original edges keep their color; the centre spokes / centre line take the
-    // colors set above (c+3, or the face color when n=2); every other new edge
-    // (q↔boundary, internal — the kis-corresponding edges) ← c+1.
     const edgeColor = new Map(old.edge);
     for (const [k, c] of centerEdges) edgeColor.set(k, c);
     for (const loop of previewFaces) {
@@ -340,59 +199,21 @@ export function buildGyro(
       }
     }
 
-    return { gfaces, previewFaces, vertexCount: idx, vertexColor, vertexColorWelded, faceColor, faceStart, edgeColor };
+    return { previewFaces, vertexCount: idx, vertexColor, faceColor, faceStart, edgeColor, qverts };
   }
 
-  const variants = ([0, 1] as const).map((startColor) => {
-    const built = buildVariant(startColor);
-    const dragged = built.gfaces.find((g) => g.faceId === draggedFid)!;
-    return { ...built, dragged };
-  });
-  let currentVariant = 0;
+  const variants = ([0, 1] as const).map((startColor) => buildVariant(startColor));
 
-  function previewFaceColors(_t: number): Color[] {
-    const va = variants[currentVariant];
-    // A gyro freezes a kis at level `baseT`, whose faces were already interpolated
-    // face→edge by that much. The skew only changes geometry/chirality, NOT the kis
-    // level, so the colors stay put at `baseT` (no change while gyro-ing); the
-    // release fade then carries them the rest of the way to the committed colors.
-    return lerpFaceColors(va.faceStart, va.faceColor, baseT);
-  }
-
-  function positions(skew: number): Vector3[] {
-    const variant = variants[currentVariant];
-    const out: Vector3[] = new Array(variant.vertexCount);
-    for (let i = 0; i < V; i++) out[i] = dcel.vertices[i].position.clone();
-    for (const g of variant.gfaces) {
-      if (g.center >= 0) out[g.center] = g.apex.clone(); // centre stays at the apex
-      for (let j = 0; j < g.qIdx.length; j++) {
-        // q slides from the apex toward its edge midpoint; reaches GYRO_SLIDE at skew=1.
-        out[g.qIdx[j]] = g.apex.clone().lerp(g.qTarget[j], skew * GYRO_SLIDE);
-      }
-    }
-    return out;
-  }
-
-  // ---- Welded max: dissolve every original edge shared by two gyred faces ---------
-  // Each tiling face owns exactly one such boundary edge; across it sit a
-  // pentagon/quad and a triangle, which merge into one larger face.
+  // Welded max: dissolve every original edge (shared by two faces of the join).
   const dissolve = new Set<string>();
   const dissolveList: Array<[number, number]> = [];
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue;
-    if (gyred.has(he.face.id) && gyred.has(he.twin.face.id)) {
-      dissolve.add(edgeKey(he.origin.id, he.next.origin.id));
-      dissolveList.push([he.origin.id, he.next.origin.id]);
-    }
+    dissolve.add(edgeKey(he.origin.id, he.next.origin.id));
+    dissolveList.push([he.origin.id, he.next.origin.id]);
   }
 
-  // Merge the tiling faces across each dissolved edge; the merged face ← that
-  // original edge's color, untouched faces keep theirs.
-  function weldedFaces(
-    faces: number[][],
-    faceColorsIn: number[],
-  ): { faces: number[][]; faceColors: number[] } {
-    // Where does each dissolved edge appear (as a consecutive original-vertex pair)?
+  function weldedFaces(faces: number[][], faceColorsIn: number[]): { faces: number[][]; faceColors: number[] } {
     const occ = new Map<string, Array<{ fi: number; i: number }>>();
     for (let fi = 0; fi < faces.length; fi++) {
       const loop = faces[fi];
@@ -408,13 +229,13 @@ export function buildGyro(
     const out: number[][] = [];
     const outColors: number[] = [];
     for (const [key, list] of occ) {
-      if (list.length !== 2) continue; // boundary of a partial selection: leave intact
+      if (list.length !== 2) continue;
       const [F, G] = list;
       consumed.add(F.fi);
       consumed.add(G.fi);
       const lf = faces[F.fi];
       const lg = faces[G.fi];
-      const a = lf[F.i]; // F: [a, b, ...fRest];  G traverses b->a: [b, a, ...gRest]
+      const a = lf[F.i];
       const b = lf[(F.i + 1) % lf.length];
       const fRest: number[] = [];
       for (let k = 2; k < lf.length; k++) fRest.push(lf[(F.i + k) % lf.length]);
@@ -433,111 +254,134 @@ export function buildGyro(
     return { faces: out, faceColors: outColors };
   }
 
-  // ---- Snapping: the dragged q rides the line from the apex to a boundary-edge
-  // midpoint. Both variants' q-lines together cover all 2n boundary edges; the
-  // nearest one picks the chiral form, the handle q, and how far out it has slid.
-  // The mouse begins at the apex (= the kis handle), so skew starts at ~0.
-  function snap(ray: Ray): {
-    t: number;
-    point: Vector3;
-    highlight?: { a: Vector3; b: Vector3 };
-  } {
-    type Cand = { variant: number; point: Vector3; max: Vector3; t: number; dist: number };
-    let best: Cand | null = null;
-    let visibleBest: Cand | null = null;
-    for (let v = 0; v < 2; v++) {
-      const dg = variants[v].dragged;
-      for (let j = 0; j < dg.qTarget.length; j++) {
-        const dir = dg.qTarget[j].clone().sub(dg.apex);
-        if (dir.lengthSq() < 1e-12) continue;
-        let slide = closestLineParam(dg.apex, dir, ray.origin, ray.direction);
-        slide = Math.max(0, Math.min(GYRO_SLIDE, slide));
-        const point = dg.apex.clone().addScaledVector(dir, slide);
-        const dist = distancePointToRay(point, ray);
-        const cand: Cand = {
-          variant: v,
-          point,
-          max: dg.apex.clone().addScaledVector(dir, GYRO_SLIDE),
-          t: slide / GYRO_SLIDE,
-          dist,
-        };
-        if (!best || dist < best.dist) best = cand;
-        if (!inView || inView(dg.qTarget[j], edgeFaceNormals(dg.qHe[j]))) {
-          if (!visibleBest || dist < visibleBest.dist) visibleBest = cand;
-        }
+  // ---- Handle: a single ROTATION arc in the tangent plane of the join apex the drag
+  // ended on. The apex vertex itself stays put, but its edges to the new midpoint
+  // vertices (the q's — the only real edges of the gyro) rotate about it as the gyro
+  // forms, and THAT rotation is the gyro's twist. The handle is a circular arc swept
+  // about the apex through the same angle (see `arcSpan`), so riding it out to its limit
+  // carries those edges to the finished gyro. The arc sits on the side of the apex
+  // facing AWAY from the camera (rather than on a particular spoke, whose post-join
+  // angle is often shallow and reads as a foreshortened sliver that the cursor jumps
+  // across), so it always presents its full width. It extends ±arcSpan about its
+  // midpoint; dragging across the middle chooses the chirality, so either gyro is
+  // reachable, and the midpoint (zero twist) is the join rest point the cursor snaps
+  // back onto.
+  let apexVid = 0;
+  let bestD = Infinity;
+  for (const v of dcel.vertices) {
+    const d = v.position.distanceTo(apexPos);
+    if (d < bestD) { bestD = d; apexVid = v.id; }
+  }
+  const apex = dcel.vertices[apexVid].position.clone();
+  const apexNormal = apex.clone().normalize(); // outward (solid centred at the origin)
+  // Component of `v` in the apex tangent plane (the plane the arc lives in).
+  const tangent = (v: Vector3) => v.clone().addScaledVector(apexNormal, -v.dot(apexNormal));
+  // Signed angle (about `axis`) rotating `from` onto `to`.
+  const signedAngle = (from: Vector3, to: Vector3, axis: Vector3) =>
+    Math.atan2(axis.dot(new Vector3().crossVectors(from, to)), from.dot(to));
+
+  // The apex's spokes in its tangent plane — used only to size the arc (its radius is a
+  // fraction of the mean spoke length) and as a fallback reference direction.
+  const spokes = outgoingHalfEdges(dcel.vertices[apexVid])
+    .map((h) => tangent(h.next.origin.position.clone().sub(apex)))
+    .filter((r) => r.lengthSq() > 1e-10);
+  const n = Math.max(1, spokes.length); // = sides of the original face
+  const arcRadius =
+    (spokes.reduce((s, r) => s + r.length(), 0) / n) * config.operations.gyroArcRadiusFraction;
+
+  // The arc's midpoint direction: straight away from the camera in the tangent plane
+  // (apex − cameraPos, projected), so the arc never foreshortens. Falls back to a spoke
+  // when the camera looks down the apex normal or isn't supplied (e.g. in tests).
+  let refDir = cameraPos ? tangent(apex.clone().sub(cameraPos)) : new Vector3();
+  if (refDir.lengthSq() < 1e-10) refDir = (spokes[0] ?? new Vector3(1, 0, 0)).clone();
+  const radius = refDir.normalize().multiplyScalar(arcRadius); // midpoint offset from apex
+
+  // Each direction reaches this far: 360/(divisor·n) degrees (short of 360/(2n), a 2nd
+  // join). The two directions are the two chiralities.
+  const arcSpan = (2 * Math.PI) / (config.operations.twistArcDivisor * n);
+  // A small dead-zone at the midpoint: within it the cursor snaps to the plain join
+  // (zero twist), so the handle "rests" at the join the way snub rests at the rectify.
+  const REST_T = 0.06;
+
+  // Live twist state. `sign` is which way along the arc (chirality); `curT` is the
+  // fraction of arcSpan reached.
+  let curT = 0;
+  let sign = 1;
+  const variantIndex = () => (sign >= 0 ? 0 : 1);
+
+  // Each new vertex slides in a straight line from its edge midpoint to its target,
+  // so the split faces open the way the gyro tiling expects.
+  function positions(t: number): Vector3[] {
+    const va = variants[variantIndex()];
+    const out: Vector3[] = new Array(va.vertexCount);
+    for (let i = 0; i < V; i++) out[i] = dcel.vertices[i].position.clone();
+    for (const q of va.qverts) out[q.index] = q.start.clone().lerp(q.target, t);
+    return out;
+  }
+
+  function previewFaceColors(t: number): Color[] {
+    const va = variants[variantIndex()];
+    return lerpFaceColors(va.faceStart, va.faceColor, t);
+  }
+
+  // Where the arc's swept tip sits at signed twist `sg·t` (t=0 at the midpoint).
+  function ridePoint(sg: number, t: number): Vector3 {
+    return radius.clone().applyAxisAngle(apexNormal, sg * arcSpan * t).add(apex);
+  }
+
+  // Intersect the cursor ray with the apex tangent plane. The twist is the hit's angle
+  // relative to the arc midpoint (clamped to ±arcSpan; its sign is the chirality) —
+  // but SCALED by how far OUT the cursor is (its radial distance vs the arc radius), so
+  // the effective snap interpolates from the arc's midpoint (the join rest point, when
+  // the cursor is at the apex centre) out to the true angular position as the cursor
+  // reaches the arc. This keeps the marker from leaping to an arc end while the cursor
+  // is still climbing from the join up to the arc. A small dead-zone snaps it to the
+  // plain join (zero twist) near the midpoint.
+  function snap(ray: Ray): { t: number; point: Vector3 } {
+    const denom = ray.direction.dot(apexNormal);
+    if (Math.abs(denom) >= 1e-6) {
+      const s = apex.clone().sub(ray.origin).dot(apexNormal) / denom;
+      const hit = tangent(ray.origin.clone().addScaledVector(ray.direction, s));
+      const d = hit.length();
+      if (d > 1e-9) {
+        const ang = signedAngle(radius, hit, apexNormal);
+        sign = ang >= 0 ? 1 : -1;
+        const reach = Math.min(1, d / arcRadius); // 0 at the apex centre, 1 at the arc
+        const t = reach * Math.min(1, Math.abs(ang) / arcSpan);
+        curT = t < REST_T ? 0 : t;
       }
     }
-    const chosen = visibleBest ?? best;
-    if (!chosen) {
-      const p = variants[0].dragged.apex.clone();
-      return { t: 0, point: p, highlight: { a: p, b: p.clone() } };
-    }
-    currentVariant = chosen.variant;
+    return { t: curT, point: ridePoint(sign, curT) };
+  }
+
+  function arc(): TwistArc {
     return {
-      t: Math.max(0, Math.min(1, chosen.t)),
-      point: chosen.point,
-      highlight: { a: chosen.point.clone(), b: chosen.max },
+      center: apex.clone(),
+      ref: radius.clone().add(apex),
+      ride: ridePoint(sign, curT),
+      axis: apexNormal.clone(),
+      halfSweepRad: arcSpan,
     };
   }
 
-  function commit(skew: number, weld: boolean): { mesh: Mesh; colors: ColorSet } {
-    const va = variants[currentVariant];
-    if (weld) {
-      const { faces, faceColors } = weldedFaces(va.previewFaces, va.faceColor);
-      const edge = new Map(va.edgeColor);
-      for (const [a, b] of dissolveList) edge.delete(edgeKey(a, b));
-      // Full gyro: the new surrounding q vertices take c+2 (vs. the weld-across
-      // edge color used during a partial gyro).
-      return {
-        mesh: { vertices: positions(skew), faces },
-        colors: { vertex: va.vertexColorWelded.slice(), face: faceColors, edge },
-      };
-    }
-    return {
-      mesh: { vertices: positions(skew), faces: va.previewFaces.map((f) => f.slice()) },
-      colors: {
-        vertex: va.vertexColor.slice(),
-        face: va.faceColor.slice(),
-        edge: new Map(va.edgeColor),
-      },
-    };
+  function commit(t: number, _weld: boolean): { mesh: Mesh; colors: ColorSet } {
+    const va = variants[variantIndex()];
+    const { faces, faceColors } = weldedFaces(va.previewFaces, va.faceColor);
+    const edge = new Map(va.edgeColor);
+    for (const [a, b] of dissolveList) edge.delete(edgeKey(a, b));
+    return { mesh: { vertices: positions(t), faces }, colors: { vertex: va.vertexColor.slice(), face: faceColors, edge } };
   }
 
   return {
     kind: "gyro",
-    get previewFaces() {
-      return variants[currentVariant].previewFaces;
-    },
-    get previewEdgeColors() {
-      return variants[currentVariant].edgeColor;
-    },
-    get vanishingEdges() {
-      return dissolveList;
-    },
+    get previewFaces() { return variants[variantIndex()].previewFaces; },
+    get previewEdgeColors() { return variants[variantIndex()].edgeColor; },
+    get vanishingEdges() { return dissolveList; },
     positions,
     previewFaceColors,
     snap,
     commit,
-    // The two precomputed variants are mirror twists; label them R / L so the two
-    // committed enantiomorphs get distinct names (the choice of which is which is
-    // arbitrary but stable — all that matters is that they differ).
-    chirality: () => (currentVariant === 0 ? "R" : "L"),
+    arc,
+    chirality: () => (variantIndex() === 0 ? "R" : "L"),
   };
-}
-
-/**
- * Whether gyro can be applied COHERENTLY to `selected` faces (or all when null).
- * Mirrors buildGyro's preconditions exactly: the participating faces must be edge-
- * connected and their vertex region must be 2-colorable (no odd cycle — which also
- * rules out odd-sided faces). Cheap; intended for the UI availability hint.
- */
-export function canGyro(poly: Polyhedron, selected: Set<number> | null): boolean {
-  const dcel = poly.dcel;
-  const gyred = new Set<number>(
-    selected && selected.size > 0 ? selected : dcel.faces.map((f) => f.id),
-  );
-  if (gyred.size === 0 || !selectionConnected(dcel, gyred)) return false;
-  const seed = gyred.values().next().value as number;
-  return twoColorVerticesInRegion(dcel, gyred, dcel.faces[seed].halfedge.origin.id)
-    .bipartite;
 }

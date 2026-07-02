@@ -24,10 +24,10 @@ export const config = {
       rectify: true, // the welded "max" end of the truncate drag (drag fully in)
       kis: true, // drag a face center outward (no modifier)
       join: true, // the welded "max" end of the kis drag (drag fully out)
-      snub: true, // Shift + drag a degree-2n vertex
-      gyro: true, // Shift + drag a 2n-gon face
-      chamfer: true, // drag an edge midpoint sideways along a bordering face
-      subdivide: true, // drag an edge midpoint outward along the edge normal
+      snub: true, // continue a full-rectify vertex drag onto the twist arc
+      gyro: true, // continue a full-join face drag onto the twist arc
+      chamfer: false, // drag an edge midpoint sideways along a bordering face
+      subdivide: false, // drag an edge midpoint outward along the edge normal
     },
 
     multiSelect: true, // Cmd (macOS) / Ctrl: select several elements before dragging
@@ -167,20 +167,50 @@ export const config = {
   },
 
   // ---------------------------------------------------------------------------
-  // OPERATIONS — geometric constants for the snub / gyro drags.
+  // OPERATIONS — geometric constants for the snub / gyro twist arc.
   // ---------------------------------------------------------------------------
   operations: {
-    // Snub: the cut fraction along an edge that an "outer" (triangle-only) cut
-    // vertex reaches at full skew, and the smaller fraction the "inner" (n-gon)
-    // cut vertices reach. They sum to 1 so that at the welded max the outer cut
-    // vertex from one end of an edge exactly meets the inner cut vertex from the
-    // other end (e.g. snub of the octahedron → icosahedron).
-    snubOuterFraction: 0.65,
-    snubInnerFraction: 0.35,
+    // Snub/gyro are reached by continuing a full rectify/join drag onto a twist
+    // ARC handle. For a dragged element of arity n (vertex degree for snub, face
+    // sides for gyro) the arc reaches `360 / (twistArcDivisor · n)` degrees in
+    // EACH direction (CW/CCW → the two chiralities). The theoretical limit is
+    // `360/(2n)` — a *second* rectify/join — so the divisor must be > 2 to stop
+    // short of it; 3 keeps the twist comfortably before that.
+    twistArcDivisor: 2.5,
 
-    // Gyro: how far a peripheral vertex slides from the face apex toward its edge
-    // midpoint at full skew (fraction of that center→edge line).
-    gyroSlide: 0.5,
+    // The gyro rotation arc's radius, as a fraction of the swept spoke's length in
+    // the apex tangent plane — how far out from the apex the arc sits.
+    gyroArcRadiusFraction: 0.35,
+
+    // The base drag's `t` at which the twist arc begins to fade in (a hint that a
+    // snub/gyro is available once the drag welds at t=1).
+    arcFadeStartT: 0.5,
+
+    // Snub: the full-twist length of each chiral drag line, set so the two vertices a
+    // rectify vertex splits into end up this fraction of a rectification edge apart —
+    // i.e. the new snub edge is this fraction of the old edge. The regular snubs all
+    // want ≈0.744 (snub cube, icosahedron, …), so this both sizes the handle and lands
+    // the preview on the true snub before the relaxer refines it.
+    snubEdgeFraction: 0.75,
+
+    // Gyro: how far each new edge-midpoint vertex lifts OUTWARD (off the join face) at
+    // the full gyro. Unlike snub, the lift can't be a fixed fraction of the edge — a
+    // sharp join (cube, 90° dihedral) must lift a lot to fold its quads into pentagons,
+    // while a nearly-flat join (rhombic triacontahedron, 144°) barely lifts at all.
+    // Empirically the lift is
+    //     gyroLiftFactor · cot(dihedral/2) · (½ · joinEdge)
+    // so this one coefficient lands every regular gyro (≈0.62·|v0| for the cube up to
+    // ≈0.69·|v0| for the round ones) close to its canonical form before the relaxer
+    // refines it. Derived across the Platonic joins & rectifications.
+    gyroLiftFactor: 0.6,
+
+    // Gyro: the IN-PLANE part of that same slide — how far the new vertex slides along
+    // the line from its edge midpoint toward the opposite edge's midpoint at full gyro.
+    gyroFaceSlide: 0.2,
+
+    // While twisting, the dragged face/vertex-star also shrinks toward the axis so
+    // the split gaps have room; this is the scale it reaches at the full twist.
+    twistShrink: 0.72,
   },
 
   // ---------------------------------------------------------------------------
@@ -428,8 +458,8 @@ export const config = {
     dragVerbs: {
       truncate: ["Truncating", "Rectifying"],
       kis: ["Kis-ing", "Joining"],
-      snub: ["Incompletely Snubbing", "Snubbing"],
-      gyro: ["Incompletely Gyro-ing", "Gyro-ing"],
+      snub: ["Snubbing", "Snubbing"],
+      gyro: ["Gyro-ing", "Gyro-ing"],
       chamfer: ["Chamfering", "Joining"],
       subdivide: ["Subdividing", "Rectifying"],
     } as Record<string, [unwelded: string, welded: string]>,
@@ -495,8 +525,8 @@ export const config = {
     operationLabels: {
       truncate: { unwelded: ["Truncate", "Truncated"], welded: ["Rectify", "Rectified"] },
       kis:      { unwelded: ["Kis", "Kis"], welded: ["Join", "Joined"] },
-      snub:     { unwelded: ["Incompletely Snub", "Incomplete Snub"], welded: ["Snub", "Snub"] },
-      gyro:     { unwelded: ["Incompletely Gyro", "Incomplete Gyro"], welded: ["Gyro", "Gyro"] },
+      snub:     { unwelded: ["Snub", "Snub"], welded: ["Snub", "Snub"] },
+      gyro:     { unwelded: ["Gyro", "Gyro"], welded: ["Gyro", "Gyro"] },
       chamfer:  { unwelded: ["Chamfer", "Chamfered"], welded: ["Join", "Joined"] },
       subdivide: { unwelded: ["Subdivide", "Subdivided"], welded: ["Rectify", "Rectified"] },
     },
@@ -861,6 +891,14 @@ export const config = {
     // camera distance and auto-rescales with zoom.
     dragMarkerColor: 0xffffff,
     dragMarkerRadius: 0.025,
+
+    // The gyro rotation-ARC handle. It reuses the drag range line's colour + tube
+    // radius (dragLineColor / dragLineRadius) so it matches every other drag line. The
+    // full-extent arc is drawn at this opacity (a faint guide showing the available
+    // sweep); the solid progress sub-arc drawn while twisting is fully opaque. Also the
+    // number of tube segments along the arc.
+    twistArcHintOpacity: 0.5,
+    twistArcSegments: 40, // tube segments across the full arc span
 
     // Hover highlight of a whole face (translucent overlay over the hovered face).
     faceHighlightColor: 0xffffff,

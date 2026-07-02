@@ -12,10 +12,35 @@ export type OperationKind =
   | "subdivide";
 
 /**
+ * The rotation-arc handle a gyro plan exposes. After a face drag welds into the
+ * join the cursor sits on a face-centre apex; that apex doesn't move during the
+ * gyro, so it can't be dragged directly. Instead the handle is a circular arc in
+ * the apex's tangent plane that sweeps one of the join edges (spokes) about the
+ * apex: rotating the spoke drives the gyro. `ref` is the spoke at zero twist (the
+ * arc's MIDPOINT); the arc extends ±`halfSweepRad` about `axis` through `center`
+ * (the apex), so both chiralities are always shown and the cursor drags across the
+ * middle to pick a direction. `ride` is where the handle marker sits at the current
+ * twist. (Snub uses straight drag-line handles instead and has no arc.)
+ */
+export interface TwistArc {
+  center: Vector3;
+  /** The ride position at zero twist — the arc's midpoint (the swept spoke's tip). */
+  ref: Vector3;
+  /** The ride position at the CURRENT twist (where the handle marker sits). */
+  ride: Vector3;
+  axis: Vector3;
+  /** The arc extends ±this about `axis` from `ref` (the two chiralities). */
+  halfSweepRad: number;
+}
+
+/**
  * A live, in-progress operation. Built when a drag starts; the topology is fixed
  * for the duration of the drag and only the parameter `t` (in [0, 1]) changes.
- *   t = 0  → geometrically identical to the original (no-op end)
- *   t = 1  → the "max" form: Rectify / Join (welded)
+ *
+ * Base ops (truncate / kis): t = 0 is a no-op end, t = 1 is the welded Rectify /
+ * Join. Twist ops (snub / gyro): t is the normalized position along the twist arc
+ * (0 = the plain rectify/join, 1 = the full snub/gyro at the arc's end), and the
+ * chosen chirality is reported by `chirality()`.
  */
 export interface MorphPlan {
   kind: OperationKind;
@@ -75,4 +100,11 @@ export interface MorphPlan {
    * the live `snap` choice; absent on achiral operations (truncate / kis).
    */
   chirality?(): "R" | "L";
+
+  /**
+   * For twist ops (snub / gyro): the arc handle geometry at the current parameter,
+   * so the view can draw it. Absent on base ops (truncate / kis). Reflects the live
+   * `snap` choice (parameter + chirality).
+   */
+  arc?(): TwistArc;
 }

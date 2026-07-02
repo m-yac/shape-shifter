@@ -10,6 +10,8 @@ import {
   MeshBasicMaterial,
   SphereGeometry,
   CylinderGeometry,
+  TubeGeometry,
+  CatmullRomCurve3,
   Color,
   Vector3,
 } from "three";
@@ -17,6 +19,7 @@ import {
 const TUBE_UP = new Vector3(0, 1, 0);
 import { type Camera } from "three";
 import { type Mesh } from "../geometry/HalfEdge";
+import { type TwistArc } from "../operations/types";
 import { Polyhedron } from "../geometry/polyhedron";
 import { faceCentroidOf, newellNormal } from "../geometry/polyhedron";
 import {
@@ -173,6 +176,12 @@ export class SceneView {
   private dragB = new Vector3();
   private dragMarker: ThreeMesh;
   private faceHighlight: ThreeMesh;
+  // The gyro rotation-arc handle: a white tube (matching the drag range line) bent
+  // along the arc the swept spoke rides. `twistArc` is the full-extent arc drawn at a
+  // reduced opacity; `twistArcProgress` is the solid sub-arc (midpoint → cursor) shown
+  // while actively twisting, indicating how far the gyro has been rotated.
+  private twistArc: ThreeMesh;
+  private twistArcProgress: ThreeMesh;
 
   vertexMarkers: Marker[] = [];
   faceMarkers: Marker[] = [];
@@ -269,6 +278,31 @@ export class SceneView {
     this.faceHighlight.visible = false;
     this.faceHighlight.renderOrder = 1;
 
+    // Twist arc: a white tube drawn on top, styled exactly like the drag range line.
+    this.twistArc = new ThreeMesh(
+      new BufferGeometry(),
+      new MeshBasicMaterial({
+        color: config.render.dragLineColor,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    this.twistArc.visible = false;
+    this.twistArc.renderOrder = 10;
+    // The solid progress sub-arc, drawn on top of the full-extent arc.
+    this.twistArcProgress = new ThreeMesh(
+      new BufferGeometry(),
+      new MeshBasicMaterial({
+        color: config.render.dragLineColor,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    this.twistArcProgress.visible = false;
+    this.twistArcProgress.renderOrder = 11;
+
     this.group.add(
       this.faceMesh,
       this.edges,
@@ -276,6 +310,8 @@ export class SceneView {
       this.dragTube,
       this.dragMarker,
       this.faceHighlight,
+      this.twistArc,
+      this.twistArcProgress,
     );
     scene.add(this.group);
   }
@@ -300,6 +336,7 @@ export class SceneView {
     this.clearEdgeHighlight();
     this.clearFaceHighlight();
     this.hideDragMarker();
+    this.clearTwistArc();
   }
 
   /**
@@ -639,5 +676,49 @@ export class SceneView {
 
   clearEdgeHighlight(): void {
     this.dragTube.visible = false;
+  }
+
+  /**
+   * Draw the gyro rotation arc: a tube (radius `tubeRadius`, matching the drag range
+   * line) bent along the arc `a.ref` sweeps ±`a.halfSweepRad` around `a.center`/
+   * `a.axis` (the apex + its tangent-plane normal), so both chiralities are shown at
+   * `opacity`. When `showProgress` is set, a solid (full-opacity) sub-arc is overlaid
+   * from the midpoint (zero twist) out to `a.ride` — how far the gyro has been rotated.
+   */
+  setTwistArc(a: TwistArc, opacity: number, tubeRadius: number, showProgress: boolean): void {
+    const segs = Math.max(2, config.render.twistArcSegments);
+    const r = a.ref.clone().sub(a.center);
+    const axis = a.axis.clone().normalize();
+    const tubeFor = (from: number, to: number, count: number): TubeGeometry => {
+      const steps = Math.max(2, count);
+      const pts: Vector3[] = [];
+      for (let i = 0; i <= steps; i++) {
+        const ang = from + ((to - from) * i) / steps;
+        pts.push(r.clone().applyAxisAngle(axis, ang).add(a.center));
+      }
+      return new TubeGeometry(new CatmullRomCurve3(pts), steps, tubeRadius, 8, false);
+    };
+    // Full extent (both chiralities) at reduced opacity.
+    this.twistArc.geometry.dispose();
+    this.twistArc.geometry = tubeFor(-a.halfSweepRad, a.halfSweepRad, segs);
+    (this.twistArc.material as MeshBasicMaterial).opacity = opacity;
+    this.twistArc.visible = true;
+    // Solid progress sub-arc from the midpoint to the current ride.
+    if (showProgress) {
+      const ride = a.ride.clone().sub(a.center);
+      const swept = Math.atan2(axis.dot(new Vector3().crossVectors(r, ride)), r.dot(ride));
+      const count = Math.round((segs * Math.abs(swept)) / (2 * a.halfSweepRad || 1));
+      this.twistArcProgress.geometry.dispose();
+      this.twistArcProgress.geometry = tubeFor(0, swept, count);
+      (this.twistArcProgress.material as MeshBasicMaterial).opacity = 1;
+      this.twistArcProgress.visible = true;
+    } else {
+      this.twistArcProgress.visible = false;
+    }
+  }
+
+  clearTwistArc(): void {
+    this.twistArc.visible = false;
+    this.twistArcProgress.visible = false;
   }
 }

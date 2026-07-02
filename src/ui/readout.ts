@@ -3,8 +3,6 @@ import { type MarkerKind } from "../render/sceneView";
 import { type OperationKind } from "../operations/types";
 import { config } from "../config";
 import { Polyhedron } from "../geometry/polyhedron";
-import { canSnub } from "../operations/snub";
-import { canGyro } from "../operations/gyro";
 import { Screen, Popup, fadeIn } from "./screen";
 
 // Columns by which the wrapped (continuation) lines of a readout box hang-indent.
@@ -49,13 +47,14 @@ function describeSet(
   poly: Polyhedron,
   ids: Set<number> | null,
   kind: MarkerKind,
+  t: number,
 ): string {
   // Edge operations (chamfer / subdivide) are always global — every edge.
   if (kind === "edge") return "all edges";
   const onFaces = kind === "face";
   const elemCount = onFaces ? poly.faces.length : poly.vertices.length;
   // The whole solid → just "all faces" / "all vertices".
-  if (ids === null || ids.size === elemCount) {
+  if (ids === null || ids.size === elemCount || t > 0.5) {
     return `all ${plural(onFaces ? "face" : "vertex", 2)}`;
   }
 
@@ -252,63 +251,24 @@ export class Readout {
     }
     const title = this.name ?? "Unnamed non-uniform polyhedron";
     const status = this.solving ? "  …relaxing" : "";
-    this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}\nSHIFT: `
-
-    let snub = document.createElement("span");
-    let gyro = document.createElement("span");
-    let canDoSnub = canSnub(this.poly, new Set());
-    let canDoGyro = canGyro(this.poly, new Set());
-    snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
-    gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
-    if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
-    if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
-    this.polyEl.append(snub);
-    this.polyEl.append(gyro);
+    this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}`;
     this.polyBox.el.style.display = "";
 
     if (this.selectionEnabled && (this.drag || this.selection.size > 0)) {
       // The affected set is summarized by arity group ("all 3-gon faces, and 2
       // faces" / "all degree-4 vertices" / "all faces"). During a live operation
       // drag the operation verb leads; otherwise it's a static "Selected …".
-      // The set whose capability we report must match its kind: gyro reads face ids,
-      // snub reads vertex ids. During a drag, use the drag's set/kind so a stale
-      // persistent selection of the other kind can't be fed to the wrong predicate
-      // (which would index out of range and throw).
-      let onFaces = this.selectionKind === "face";
-      let effSel = this.selection;
       let line: string;
       if (this.drag) {
-        onFaces = this.drag.selKind === "face";
-        effSel = this.drag.selIds ?? new Set();
         const verb =
           this.drag.t > config.interaction.minCommitT
             ? DRAG_VERB[this.drag.kind][this.drag.weld ? 1 : 0]
             : "Selected";
-        line = `${verb} ${describeSet(this.poly, this.drag.selIds, this.drag.selKind)}`;
+        line = `${verb} ${describeSet(this.poly, this.drag.selIds, this.drag.selKind, this.drag.t)}`;
       } else {
-        line = `Selected ${describeSet(this.poly, this.selection, this.selectionKind ?? "face")}`;
+        line = `Selected ${describeSet(this.poly, this.selection, this.selectionKind ?? "face", 0)}`;
       }
-      // Edge operations (chamfer / subdivide) have no Shift (snub/gyro) form, so
-      // they show just the operation line; vertex/face drags add the capability line.
-      const isEdge = (this.drag?.selKind ?? this.selectionKind) === "edge";
-      if (isEdge) {
-        this.selEl.textContent = line;
-      } else {
-        this.selEl.textContent = `${line}\nSHIFT: `;
-        if (onFaces) {
-          const gyro = document.createElement("span");
-          const canDoGyro = canGyro(this.poly, effSel);
-          gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
-          if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
-          this.selEl.append(gyro);
-        } else {
-          const snub = document.createElement("span");
-          const canDoSnub = canSnub(this.poly, effSel);
-          snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
-          if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
-          this.selEl.append(snub);
-        }
-      }
+      this.selEl.textContent = line;
       this.selBox.el.style.display = "";
     }
     else {

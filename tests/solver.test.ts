@@ -57,14 +57,16 @@ describe("relaxation solver", () => {
   it("relaxes the welded gyro of the cube to a valid, planar solid (dodecahedron)", () => {
     // The gyro starting geometry is rough (no closed-form coplanar distance); this is
     // the real check that the relaxer can finish it into a valid, planar solid.
-    const gyro = new Polyhedron(buildGyro(new Polyhedron(getSeed("cube")), 0, null).commit(1, true).mesh);
+    const cube = new Polyhedron(getSeed("cube"));
+    const gyro = new Polyhedron(buildGyro(cube, 0, cube.vertices[0].clone()).commit(1, true).mesh);
     const { planar, mesh } = runToCompletion(gyro);
     expect(planar).toBe(true);
     expect(planarityError(mesh)).toBeLessThan(5e-3);
   });
 
   it("relaxes the welded snub of the octahedron to a valid, planar solid (icosahedron)", () => {
-    const snub = new Polyhedron(buildSnub(new Polyhedron(getSeed("octahedron")), 0, null).commit(1, true).mesh);
+    const octa = new Polyhedron(getSeed("octahedron"));
+    const snub = new Polyhedron(buildSnub(octa, 0, octa.vertices[0].clone()).commit(1, true).mesh);
     const { planar, mesh } = runToCompletion(snub);
     expect(planar).toBe(true);
     expect(planarityError(mesh)).toBeLessThan(5e-3);

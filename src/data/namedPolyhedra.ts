@@ -82,12 +82,13 @@ const kis = (p: Polyhedron): Polyhedron =>
 /** Join (the welded "max" of the kis drag). */
 const join = (p: Polyhedron): Polyhedron =>
   wrap(buildKis(p, 0, null).commit(1, true));
-/** Snub (the welded "max" of the snub drag). */
+/** Snub — the twist extension of a rectification `p` (any vertex / anchor works,
+ *  since the committed topology is the whole-solid snub). */
 const snub = (p: Polyhedron): Polyhedron =>
-  wrap(buildSnub(p, 0, null).commit(1, true));
-/** Gyro (the welded "max" of the gyro drag). */
+  wrap(buildSnub(p, 0, p.vertices[0].clone()).commit(1, true));
+/** Gyro — the twist extension of a join `p`. */
 const gyro = (p: Polyhedron): Polyhedron =>
-  wrap(buildGyro(p, 0, null).commit(1, true));
+  wrap(buildGyro(p, 0, p.vertices[0].clone()).commit(1, true));
 
 // --- chamfer / subdivide ----------------------------------------------------
 // These are built with the actual interactive operations (the same `buildChamfer`

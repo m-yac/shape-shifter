@@ -5,492 +5,306 @@ import {
   type HalfEdge,
   outgoingHalfEdges,
 } from "../geometry/HalfEdge";
-import {
-  type Polyhedron,
-  faceNormalHE,
-  faceCentroidHE,
-} from "../geometry/polyhedron";
-import { type ColorSet, edgeKey } from "../geometry/colors";
+import { type Polyhedron, faceCentroidHE } from "../geometry/polyhedron";
+import { type ColorSet, edgeKey, paletteRGB } from "../geometry/colors";
+import { vertexMax, vertexMaxPlus1 } from "./colorUtil";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
-import { weldVertexPairs } from "./weld";
-import { lerpFaceColors, vertexMax, vertexMaxPlus1 } from "./colorUtil";
 import { closestLineParam, distancePointToRay } from "../util/lines";
 import { config } from "../config";
 
-// Cut fraction along an edge that an "outer" (triangle-only) cut vertex reaches at
-// t=1, and the smaller fraction the "inner" (n-gon) cut vertices reach. The gap is
-// what skews the truncated 2n-gon into the snub form. They sum to 1 so that at t=1
-// the outer cut vertex from one end of an edge exactly meets the inner cut vertex
-// from the other end — the welded max (e.g. snub of the octahedron → icosahedron).
-const F_OUT = config.operations.snubOuterFraction;
-const F_IN = config.operations.snubInnerFraction;
+// A nominal per-split-vertex slide magnitude. Only the slide DIRECTIONS (and their
+// relative sizes) matter: the handle step below rescales every slide uniformly so the
+// dragged vertex's split reaches `snubEdgeFraction` of an edge, so this cancels out.
+const SEP = 0.42;
 
-/** Are the snubbed vertices connected through edges that join two snubbed vertices?
- *  Required so the chirality below has a single coherent twist (one connected patch,
- *  hence no arbitrary per-component mirror choice). */
-function verticesConnected(dcel: DCEL, snubbed: Set<number>): boolean {
-  if (snubbed.size <= 1) return true;
-  const start = snubbed.values().next().value as number;
-  const seen = new Set<number>([start]);
-  const queue = [start];
-  while (queue.length) {
-    const v = dcel.vertices[queue.shift()!];
-    for (const h of outgoingHalfEdges(v)) {
-      const n = h.next.origin.id;
-      if (snubbed.has(n) && !seen.has(n)) {
-        seen.add(n);
-        queue.push(n);
-      }
-    }
-  }
-  return seen.size === snubbed.size;
-}
-
-/**
- * Proper 2-coloring of the faces (adjacent faces get opposite colors), restricted to
- * the faces touched by the snubbed region and seeded at the dragged vertex. Only
- * edges incident to a snubbed vertex carry the "must differ" constraint — those are
- * the only edges whose two cut vertices must split into an outer/inner pair — so the
- * coloring is decided entirely WITHIN the (connected) selection and twists coherently
- * no matter what parity the rest of the solid has. `coherent` is false exactly when
- * the region has an odd cycle (no 2-coloring exists), in which case the caller refuses
- * the operation — there is no consistent chirality to choose.
- */
-function twoColorFacesInRegion(
-  dcel: DCEL,
-  snubbed: Set<number>,
-  seedFaceId: number,
-): { color: Map<number, 0 | 1>; coherent: boolean } {
+/** Proper 2-coloring of the faces of a rectification (adjacent faces differ). A
+ *  rectification's dual graph is bipartite, so this never conflicts. */
+function twoColorFaces(dcel: DCEL): Map<number, 0 | 1> {
   const color = new Map<number, 0 | 1>();
-  let coherent = true;
-  const constrains = (h: HalfEdge): boolean =>
-    snubbed.has(h.origin.id) || snubbed.has(h.next.origin.id);
-  color.set(seedFaceId, 0);
-  const queue = [dcel.faces[seedFaceId]];
+  color.set(dcel.faces[0].id, 0);
+  const queue = [dcel.faces[0]];
   while (queue.length) {
     const f = queue.shift()!;
     const c = color.get(f.id)!;
     let h = f.halfedge;
     const start = h;
     do {
-      if (h.twin && constrains(h)) {
+      if (h.twin) {
         const g = h.twin.face;
-        const gc = color.get(g.id);
-        if (gc === undefined) {
+        if (!color.has(g.id)) {
           color.set(g.id, (c ^ 1) as 0 | 1);
           queue.push(g);
-        } else if (gc === c) {
-          coherent = false;
         }
       }
       h = h.next;
     } while (h !== start);
   }
-  return { color, coherent };
-}
-
-/** Outward unit normals of the two faces sharing half-edge `h` (centroid-oriented,
- *  matching truncate's edge-in-view test). */
-function edgeFaceNormals(h: HalfEdge): Vector3[] {
-  const faces = h.twin ? [h.face, h.twin.face] : [h.face];
-  return faces.map((f) => {
-    const n = faceNormalHE(f);
-    if (n.dot(faceCentroidHE(f)) < 0) n.negate();
-    return n;
-  });
+  return color;
 }
 
 /**
- * Snub ↔ (welded max), driven by holding Shift WHILE dragging a degree-2n vertex
- * inward along an edge (i.e. mid-truncation). Same handle as truncate, but instead
- * of cutting symmetrically it skews: the dragged edge's cut vertex slides OUTWARD
- * (so it ends up belonging only to a triangle) while the alternating "inner" cut
- * vertices hang back to form the central n-gon.
+ * Snub as a twist extension of a RECTIFICATION.
  *
- * Model: like Truncate, BY DEFAULT every vertex participates (the dragged vertex is
- * the handle); a multi-select restricts the set, which must be edge-connected (so the
- * chirality has one coherent twist with no arbitrary per-component choice). Each
- * participating vertex must have EVEN degree — otherwise the surrounding cut vertices
- * can't be split into a clean alternation, so we throw (the controller turns that
- * into a no-op).
+ * Model (the Conway snub): each face of the rectification maps to a rotated + shrunk
+ * face of the snub. Every degree-4 vertex SPLITS INTO A PAIR of vertices, each shared
+ * by two of the four surrounding faces; the pairing (which two faces stay joined
+ * across which shared edge) is the chirality. Each split vertex slides along its
+ * pair's shared "kept" edge — the shrink cancels the rotation, so the path is a
+ * straight line and the two split vertices separate along the two opposite kept edges.
+ * The two faces that separate at a vertex leave a gap filled by a triangle.
  *
- * Truncating a degree-2n vertex exposes a 2n-gon of cut vertices. Snub splits that
- * ring into a central n-gon (the "inner" alternating cut vertices) surrounded by n
- * "ear" triangles (around the "outer" cut vertices) — or, when n=2, just the two
- * triangles sharing the diagonal (no central 2-gon). Dragging skews it: outer cut
- * vertices slide outward along their edges, inner ones barely move, puckering the
- * flat truncation into the chiral snub form.
- *
- * `baseT` is the frozen truncation level at the moment Shift was pressed: at skew=0
- * the outer and inner cut vertices both sit at the symmetric cut fraction f0 =
- * baseT·0.5 (i.e. the current truncation), so pressing Shift changes nothing until
- * the mouse moves. Increasing the skew then slides the outer cut vertices out toward
- * F_OUT and the inner ones in toward F_IN. Whether the result welds (partial snub vs
- * snub) is decided purely by how far the skew is taken: only at the very end (t=1),
- * where the outer and inner cut vertices coincide (F_OUT + F_IN = 1), do they weld —
- * so a partial drag commits a partial snub and a full drag commits the full snub,
- * matching what the geometry already shows. (Independent of the base truncation level.)
- *
- * Chirality is LIVE: the two mirror forms are precomputed (the two face 2-colorings);
- * `snap` picks whichever makes the edge nearest the cursor "outer", so aiming at an
- * adjacent edge flips the whole solid's twist. A coherent face 2-coloring always
- * exists (every vertex is even), keeping the two forms globally consistent.
+ * So: `R-face → rotated face`, `R-vertex → 2 vertices + a new edge`, `R-edge → one
+ * gap triangle` at the end where its two faces split. `draggedVid` is the rectify
+ * vertex the base drag ended on; `originVertex` is the ORIGINAL (pre-rectify) vertex
+ * position the drag started from — the direction back toward it is the "un-rectify"
+ * line, which the two chiral drag handles straddle at ±45° (see below).
  */
 export function buildSnub(
   poly: Polyhedron,
   draggedVid: number,
-  selected: Set<number> | null,
-  inView: InViewTest | null = null,
-  baseT = 1,
+  originVertex: Vector3,
+  _inView: InViewTest | null = null,
 ): MorphPlan {
   const dcel = poly.dcel;
-  const f0 = baseT * 0.5; // symmetric cut fraction the skew starts from (the truncation)
-
-  const snubbed = new Set<number>(
-    selected && selected.size > 0 ? selected : dcel.vertices.map((v) => v.id),
-  );
-  snubbed.add(draggedVid); // the handle always participates
-
-  // Preconditions (mirrored by `canSnub` for the UI): the selection must be edge-
-  // connected, and its incident-face region must be 2-colorable. A 2-coloring fails
-  // exactly when that region has an ODD CYCLE — which also covers any odd-degree
-  // vertex (its ring of faces IS an odd cycle), so no separate parity check is needed.
-  // Without a coherent coloring there's no consistent chirality, so we refuse outright.
-  if (!verticesConnected(dcel, snubbed)) {
-    throw new Error("Snub needs the selected vertices to be connected.");
-  }
-  // Chirality is decided within the selected patch, seeded at the dragged vertex.
-  const { color, coherent } = twoColorFacesInRegion(
-    dcel,
-    snubbed,
-    dcel.vertices[draggedVid].halfedge.face.id,
-  );
-  if (!coherent) {
-    throw new Error("Snub needs a 2-colorable selection (the patch has an odd cycle).");
-  }
-
-  // ---- Index new vertices (one cut vertex per snubbed-origin half-edge) -----------
-  const cutIndex = new Map<number, number>(); // halfedge id -> new vertex index
-  const keepIndex = new Map<number, number>(); // old vertex id -> new vertex index
-  let idx = 0;
-  for (const he of dcel.halfedges) {
-    if (snubbed.has(he.origin.id)) cutIndex.set(he.id, idx++);
-  }
-  for (const v of dcel.vertices) {
-    if (!snubbed.has(v.id)) keepIndex.set(v.id, idx++);
-  }
-  const vertexCount = idx;
-
-  const cutEnds: Array<{ index: number; origin: Vector3; dest: Vector3; heId: number }> = [];
-  for (const he of dcel.halfedges) {
-    const i = cutIndex.get(he.id);
-    if (i === undefined) continue;
-    cutEnds.push({
-      index: i,
-      origin: he.origin.position,
-      dest: he.next.origin.position,
-      heId: he.id,
-    });
-  }
-  const keepEnds: Array<{ index: number; pos: Vector3 }> = [];
-  for (const v of dcel.vertices) {
-    const i = keepIndex.get(v.id);
-    if (i !== undefined) keepEnds.push({ index: i, pos: v.position });
-  }
-
-  // ---- Weld pairs for the max end (variant-independent) ---------------------------
-  // On every edge with both ends snubbed, one cut vertex is outer and the other
-  // inner (the coloring guarantees opposite roles); with F_OUT + F_IN = 1 they
-  // coincide at t=1, and welding them collapses the edge — "the long vertices join
-  // with the short vertices" (e.g. snub octahedron → icosahedron).
-  const weldPairs: Array<[number, number]> = [];
-  for (const he of dcel.halfedges) {
-    if (!he.twin || he.id >= he.twin.id) continue; // once per undirected edge
-    const a = cutIndex.get(he.id);
-    const b = cutIndex.get(he.twin.id);
-    if (a !== undefined && b !== undefined) weldPairs.push([a, b]);
-  }
-
-  // ---- Colors (snub is truncate with the exposed face split inner/outer) ----------
-  // Cut vertices ← the original edge they sit on; kept vertices keep their color.
   const old = poly.colors;
-  const vertexColor: number[] = new Array(vertexCount);
-  for (const he of dcel.halfedges) {
-    const i = cutIndex.get(he.id);
-    if (i !== undefined) {
-      vertexColor[i] = old.edge.get(edgeKey(he.origin.id, he.next.origin.id)) ?? 0;
-    }
-  }
-  for (const v of dcel.vertices) {
-    const i = keepIndex.get(v.id);
-    if (i !== undefined) vertexColor[i] = old.vertex[v.id];
-  }
-  // Owner vertex + max+1 for each cut vertex, used to color the new edges.
-  const cutOwner = new Map<number, number>();
-  for (const he of dcel.halfedges) {
-    const i = cutIndex.get(he.id);
-    if (i !== undefined) cutOwner.set(i, he.origin.id);
-  }
-  // Ear-side edges (the truncate-corresponding new edges) → c+1, per snubbed vertex.
-  const mpCache = new Map<number, number>();
-  for (const id of snubbed) mpCache.set(id, vertexMaxPlus1(dcel.vertices[id], old));
+  const faceCol = twoColorFaces(dcel);
 
-  // Surviving original-edge remnants (same as truncate) — keep the original color.
-  function remnantEdges(): Map<string, number> {
-    const edge = new Map<string, number>();
-    for (const he of dcel.halfedges) {
-      if (!he.twin || he.id >= he.twin.id) continue;
-      const u = he.origin.id;
-      const w = he.next.origin.id;
-      const endU = snubbed.has(u) ? cutIndex.get(he.id)! : keepIndex.get(u)!;
-      const endW = snubbed.has(w) ? cutIndex.get(he.twin.id)! : keepIndex.get(w)!;
-      edge.set(edgeKey(endU, endW), old.edge.get(edgeKey(u, w)) ?? 0);
-    }
-    return edge;
-  }
+  const outAt = new Map<number, HalfEdge[]>();
+  for (const v of dcel.vertices) outAt.set(v.id, outgoingHalfEdges(v));
 
-  // ---- The two chiral variants ----------------------------------------------------
-  // Variant v: a cut vertex is "outer" iff its half-edge's face has color v. Around
-  // any snubbed vertex the incident faces alternate color (the coloring is coherent —
-  // guaranteed above), so the outer cut vertices alternate too; flipping v gives the
-  // mirror twist.
-  function outerSet(v: 0 | 1): Set<number> {
-    const outer = new Set<number>();
-    for (const id of snubbed) {
-      const H = outgoingHalfEdges(dcel.vertices[id]);
-      const phase = color.get(H[0].face.id) === v ? 0 : 1;
-      for (let k = 0; k < H.length; k++) {
-        if (k % 2 === phase) outer.add(H[k].id);
+  interface SnubVert { index: number; source: Vector3; slide: Vector3 }
+
+  /** Build one chiral variant (pairing sense `chir`). */
+  function buildVariant(chir: 0 | 1) {
+    // Each corner (half-edge) is assigned to a split vertex keyed by (vertex, the
+    // A-coloured face anchoring its pair). Both faces of a pair map to the same key.
+    const keyOf = (vid: number, aface: number) => vid * 1_000_000 + aface;
+    const indexOf = new Map<number, number>();
+    const heVert = new Map<number, number>(); // half-edge id → snub vertex index
+    const srcVid = new Map<number, number>(); // snub vertex index → source rectification vertex id
+    const snubVerts: SnubVert[] = [];
+
+    for (const v of dcel.vertices) {
+      const H = outAt.get(v.id)!;
+      const m = H.length;
+      for (let k = 0; k < m; k++) {
+        const h = H[k];
+        // The A-face anchoring this corner's pair (itself if A, else the neighbour A).
+        const aIdx = faceCol.get(h.face.id) === 0 ? k : (chir === 0 ? (k - 1 + m) % m : (k + 1) % m);
+        const aface = H[aIdx].face.id;
+        const key = keyOf(v.id, aface);
+        let idx = indexOf.get(key);
+        if (idx === undefined) {
+          idx = snubVerts.length;
+          indexOf.set(key, idx);
+          // The pair's shared "kept" edge: H[aIdx] for chir 0, the previous edge for
+          // chir 1. The split vertex slides along it.
+          const keptIdx = chir === 0 ? aIdx : (aIdx - 1 + m) % m;
+          const kept = H[keptIdx];
+          const slide = kept.next.origin.position.clone().sub(v.position).multiplyScalar(SEP);
+          snubVerts.push({ index: idx, source: v.position.clone(), slide });
+          srcVid.set(idx, v.id);
+          indexOf.set(key, idx);
+        }
+        heVert.set(h.id, idx);
       }
     }
-    return outer;
-  }
 
-  function buildFaces(outerHe: Set<number>): {
-    faces: number[][];
-    faceColor: number[];
-    faceColorWelded: number[];
-    faceStart: number[];
-    centerEdges: Map<string, number>;
-  } {
+    // Faces: each rectification face → the loop of its corners' split vertices.
     const faces: number[][] = [];
-    const faceColor: number[] = []; // partial (un-welded) commit colors
-    const faceColorWelded: number[] = []; // full-snub (welded) commit colors
-    const faceStart: number[] = [];
-    const centerEdges = new Map<string, number>(); // central n-gon perimeter
-
-    // (a) one polygon per original face — identical to truncate's truncated face.
+    const faceColor: number[] = [];
     for (const f of dcel.faces) {
       const loop: number[] = [];
       let h = f.halfedge;
       const start = h;
-      do {
-        const v = h.origin;
-        if (snubbed.has(v.id)) {
-          loop.push(cutIndex.get(h.prev.twin!.id)!); // incoming cut
-          loop.push(cutIndex.get(h.id)!); // outgoing cut
-        } else {
-          loop.push(keepIndex.get(v.id)!);
-        }
-        h = h.next;
-      } while (h !== start);
+      do { loop.push(heVert.get(h.id)!); h = h.next; } while (h !== start);
       faces.push(loop);
       faceColor.push(old.face[f.id]);
-      faceColorWelded.push(old.face[f.id]);
-      faceStart.push(old.face[f.id]);
     }
 
-    // (b) per snubbed vertex: central n-gon (inner cut verts) + n ear triangles.
-    // Central n-gon ← the vertex color (the "inner" element keeps it). Each ear is
-    // a NEW surrounding face: at full snub it takes c+2, but a partial snub shows
-    // the original edge it would weld across (emerging from the vertex color).
+    // Triangles: one per rectification edge, at the end where its two faces split.
+    for (const h of dcel.halfedges) {
+      const ht = h.twin!;
+      if (h.id >= ht.id) continue;
+      const fAtV = heVert.get(h.id)!;
+      const gAtV = heVert.get(ht.next.id)!;
+      const fAtN = heVert.get(h.next.id)!;
+      const gAtN = heVert.get(ht.id)!;
+      // The gap triangle is a brand-NEW face; it opens at whichever end the two faces
+      // split, so it takes a fresh colour keyed off that split vertex (c+2).
+      const splitV = fAtV !== gAtV ? h.origin : h.next.origin;
+      if (fAtV !== gAtV) faces.push([fAtV, gAtV, fAtN]); // split at v (meet at n)
+      else faces.push([fAtN, gAtN, fAtV]); // split at n
+      faceColor.push(vertexMax(splitV, old) + 2);
+    }
+
+    // Colours: split vertex ← its source vertex; preserved-face edges ← the original
+    // rectification edge; the new split edge joining the two vertices a rectification
+    // vertex splits into ← that vertex's colour; any other genuinely-new edge ← c+1.
+    const vertexColor: number[] = new Array(snubVerts.length);
     for (const v of dcel.vertices) {
-      if (!snubbed.has(v.id)) continue;
-      const H = outgoingHalfEdges(v);
-      const m = H.length; // = 2n
-      const n = m / 2;
-      const cv = vertexMax(v, old); // `c` for this vertex
-      const c = H.map((h) => cutIndex.get(h.id)!);
-
-      const ngon: number[] = [];
-      for (let k = 0; k < m; k++) {
-        if (!outerHe.has(H[k].id)) ngon.push(c[k]); // inner ones
-      }
-      if (ngon.length >= 3) {
-        faces.push(ngon); // a 2-gon (n=2) is degenerate as a face, but see below
-        faceColor.push(old.vertex[v.id]);
-        faceColorWelded.push(old.vertex[v.id]);
-        faceStart.push(old.vertex[v.id]);
-      }
-      // The central n-gon's perimeter (the ear bases): for n>2 these "surrounding
-      // edges" take c+3; for n=2 there is no central face, just the lone center
-      // line between the two ears, which takes the vertex color.
-      const perimColor = n > 2 ? cv + 3 : old.vertex[v.id];
-      for (let i = 0; i < ngon.length; i++) {
-        const j = (i + 1) % ngon.length;
-        if (ngon[i] !== ngon[j]) {
-          centerEdges.set(edgeKey(ngon[i], ngon[j]), perimColor);
-        }
-      }
-
-      for (let k = 0; k < m; k++) {
-        if (!outerHe.has(H[k].id)) continue; // ear around each outer cut vert
-        faces.push([c[(k - 1 + m) % m], c[k], c[(k + 1) % m]]);
-        faceColor.push(old.edge.get(edgeKey(H[k].origin.id, H[k].next.origin.id)) ?? 0);
-        faceColorWelded.push(cv + 2);
-        faceStart.push(old.vertex[v.id]);
-      }
+      for (const h of outAt.get(v.id)!) vertexColor[heVert.get(h.id)!] = old.vertex[v.id];
     }
-    return { faces, faceColor, faceColorWelded, faceStart, centerEdges };
-  }
-
-  // Edges: surviving original-edge remnants keep their color; the central n-gon
-  // perimeter takes the vertex color (set in buildFaces); every other new edge
-  // (the ears) ← that vertex's max+1.
-  function buildEdges(faces: number[][], centerEdges: Map<string, number>): Map<string, number> {
-    const edge = remnantEdges();
-    for (const [k, c] of centerEdges) edge.set(k, c);
+    const edgeColor = new Map<string, number>();
+    for (const f of dcel.faces) {
+      let h = f.halfedge;
+      const start = h;
+      do {
+        const c = old.edge.get(edgeKey(h.origin.id, h.next.origin.id));
+        if (c !== undefined) edgeColor.set(edgeKey(heVert.get(h.id)!, heVert.get(h.next.id)!), c);
+        h = h.next;
+      } while (h !== start);
+    }
     for (const loop of faces) {
       for (let i = 0; i < loop.length; i++) {
         const a = loop[i];
         const b = loop[(i + 1) % loop.length];
         const key = edgeKey(a, b);
-        if (edge.has(key)) continue;
-        const owner = cutOwner.get(a) ?? cutOwner.get(b);
-        if (owner !== undefined) edge.set(key, mpCache.get(owner)!);
+        if (edgeColor.has(key)) continue;
+        // A split edge's two ends share a source rectification vertex → that vertex's
+        // colour; anything else left over is a genuinely new edge (c+1).
+        const va = srcVid.get(a);
+        const vb = srcVid.get(b);
+        edgeColor.set(
+          key,
+          va !== undefined && va === vb
+            ? old.vertex[va]
+            : vertexMaxPlus1(dcel.vertices[(va ?? vb)!], old),
+        );
       }
     }
-    return edge;
+
+    return { snubVerts, heVert, faces, faceColor, vertexColor, edgeColor };
   }
 
-  const variants = ([0, 1] as const).map((v) => {
-    const outerHe = outerSet(v);
-    const built = buildFaces(outerHe);
-    return {
-      outerHe,
-      previewFaces: built.faces,
-      faceColor: built.faceColor,
-      faceColorWelded: built.faceColorWelded,
-      faceStart: built.faceStart,
-      edgeColor: buildEdges(built.faces, built.centerEdges),
-    };
-  });
-  let currentVariant = 0;
+  const variants = [buildVariant(0), buildVariant(1)];
 
-  function previewFaceColors(t: number): Color[] {
-    const va = variants[currentVariant];
-    return lerpFaceColors(va.faceStart, va.faceColor, t);
+  // ---- Handle geometry. The dragged vertex is the rectify vertex `P`; the base drag
+  // reached it by collapsing the original edge back toward `originVertex`, so the
+  // direction P→originVertex is the "un-rectify" line. The two chiral drag handles
+  // are that line rotated ±45° in P's tangent plane — 90° apart, bisected by the
+  // un-rectify line — each parallel to the new edge its snub chirality opens.
+  //
+  // The split vertices travel exactly these tangent handles: we drop the inward
+  // (radial) part of each raw kept-edge slide — that inward pull is what made the
+  // whole solid visibly shrink — and rotate every slide by the same tangential twist
+  // `alpha` that carries the DRAGGED vertex's slide onto its 45° handle. So the drag
+  // marker sits precisely on the dragged vertex all the way out to the full snub.
+  const draggedV = dcel.vertices[draggedVid];
+  let anchorFace = draggedV.halfedge.face;
+  let bestD = Infinity;
+  for (const h of outAt.get(draggedVid)!) {
+    const d = faceCentroidHE(h.face).distanceTo(originVertex);
+    if (d < bestD) { bestD = d; anchorFace = h.face; }
   }
+  const anchorHe = outAt.get(draggedVid)!.find((h) => h.face.id === anchorFace.id)!;
 
-  function positions(skew: number): Vector3[] {
-    const out: Vector3[] = new Array(vertexCount);
-    const outer = variants[currentVariant].outerHe;
-    // skew interpolates from the symmetric truncation (both at f0) toward the snub.
-    const fOut = f0 + (F_OUT - f0) * skew;
-    const fIn = f0 + (F_IN - f0) * skew;
-    for (const c of cutEnds) {
-      out[c.index] = c.origin.clone().lerp(c.dest, outer.has(c.heId) ? fOut : fIn);
+  const P = draggedV.position.clone();
+  // Mean rectification-edge length at P — the scale the full snub is sized against.
+  const edgeLen =
+    outAt.get(draggedVid)!.reduce((s, h) => s + h.next.origin.position.distanceTo(P), 0) /
+    outAt.get(draggedVid)!.length;
+  const targetSep = config.operations.snubEdgeFraction * edgeLen;
+  const normal = P.clone().normalize(); // outward (solid is centred at the origin)
+  const tangentTo = (v: Vector3, n: Vector3) => v.clone().addScaledVector(n, -v.dot(n));
+  // Bisector = the un-rectify direction (P→originVertex) in P's tangent plane. If that
+  // is degenerate (originVertex ≈ P, e.g. in tests) fall back to the bisector of the
+  // two chiralities' true split-slide directions, which straddle it.
+  let bisector = tangentTo(originVertex.clone().sub(P), normal);
+  if (bisector.lengthSq() < 1e-10) {
+    bisector = variants.reduce((acc, va) => {
+      const s = tangentTo(va.snubVerts[va.heVert.get(anchorHe.id)!].slide, normal);
+      return acc.add(s.normalize());
+    }, new Vector3());
+  }
+  bisector.normalize();
+
+  // Signed angle (about `axis`) rotating unit `from` onto unit `to`.
+  const signedAngle = (from: Vector3, to: Vector3, axis: Vector3) =>
+    Math.atan2(axis.dot(new Vector3().crossVectors(from, to)), from.dot(to));
+
+  // Per variant: retarget every split vertex's slide onto the tangent plane, twisted
+  // by the anchor's alpha, and expose the anchor's resulting slide as the drag line.
+  const lines = variants.map((va) => {
+    const anchorIdx = va.heVert.get(anchorHe.id)!;
+    const anchor = va.snubVerts[anchorIdx];
+    const anchorTan = tangentTo(anchor.slide, normal);
+    const side = Math.sign(normal.dot(new Vector3().crossVectors(bisector, anchorTan))) || 1;
+    const handleDir = bisector.clone().applyAxisAngle(normal, (side * Math.PI) / 4);
+    const alpha = signedAngle(anchorTan.clone().normalize(), handleDir, normal);
+    for (const sv of va.snubVerts) {
+      const n = sv.source.clone().normalize();
+      sv.slide = tangentTo(sv.slide, n).applyAxisAngle(n, alpha);
     }
-    for (const k of keepEnds) out[k.index] = k.pos.clone();
+    // Rescale every slide uniformly so the two vertices P splits into (`anchorIdx` and
+    // the other split vertex sharing P) end up `targetSep` apart at the full snub —
+    // sizing both the handle and the committed geometry to the true snub edge.
+    const otherIdx = outAt.get(draggedVid)!
+      .map((h) => va.heVert.get(h.id)!)
+      .find((i) => i !== anchorIdx)!;
+    const sep = anchor.slide.distanceTo(va.snubVerts[otherIdx].slide);
+    const k = sep > 1e-9 ? targetSep / sep : 1;
+    for (const sv of va.snubVerts) sv.slide.multiplyScalar(k);
+    return { origin: P.clone(), slide: anchor.slide.clone() };
+  });
+
+  // Live twist state.
+  let curT = 0;
+  let sign = 1; // +1 → variant 0, −1 → variant 1
+  const variantIndex = () => (sign >= 0 ? 0 : 1);
+
+  function positions(t: number): Vector3[] {
+    const va = variants[variantIndex()];
+    const out: Vector3[] = new Array(va.snubVerts.length);
+    for (const sv of va.snubVerts) out[sv.index] = sv.source.clone().addScaledVector(sv.slide, t);
     return out;
   }
 
-  // ---- Snapping: drag along the closest incident edge; it becomes "outer" ---------
-  const draggedV = dcel.vertices[draggedVid];
-
-  function snap(ray: Ray): {
-    t: number;
-    point: Vector3;
-    highlight?: { a: Vector3; b: Vector3 };
-  } {
-    let best:
-      | { heId: number; frac: number; point: Vector3; max: Vector3; dist: number }
-      | null = null;
-    for (const h of outgoingHalfEdges(draggedV)) {
-      const from = h.origin.position;
-      const edge = h.next.origin.position.clone().sub(from);
-      const mid = from.clone().add(edge.clone().multiplyScalar(0.5));
-      if (inView && !inView(mid, edgeFaceNormals(h))) continue;
-      let frac = closestLineParam(from, edge, ray.origin, ray.direction);
-      // The outer vertex can't retreat past the frozen truncation (f0); it slides
-      // out toward F_OUT. The mouse begins at f0 (the truncate handle), so skew ~0.
-      frac = Math.max(f0, Math.min(F_OUT, frac));
-      const point = from.clone().add(edge.clone().multiplyScalar(frac));
-      const dist = distancePointToRay(point, ray);
-      if (!best || dist < best.dist) {
-        best = {
-          heId: h.id,
-          frac,
-          point,
-          max: from.clone().add(edge.clone().multiplyScalar(F_OUT)),
-          dist,
-        };
-      }
-    }
-    if (!best) {
-      const p = draggedV.position.clone();
-      return { t: 0, point: p, highlight: { a: p, b: p.clone() } };
-    }
-    // Pick the chiral form in which the dragged edge is "outer" (only in a triangle).
-    currentVariant = variants[0].outerHe.has(best.heId) ? 0 : 1;
-    const span = F_OUT - f0;
-    const t = span > 1e-9 ? Math.max(0, Math.min(1, (best.frac - f0) / span)) : 0;
-    return { t, point: best.point, highlight: { a: best.point.clone(), b: best.max } };
+  function previewFaceColors(_t: number): Color[] {
+    return variants[variantIndex()].faceColor.map((c) => paletteRGB(c));
   }
 
-  function commit(t: number, weld: boolean): { mesh: Mesh; colors: ColorSet } {
-    const va = variants[currentVariant];
-    const mesh: Mesh = {
-      vertices: positions(t),
-      faces: va.previewFaces.map((f) => f.slice()),
+  function snap(ray: Ray): { t: number; point: Vector3; highlight?: { a: Vector3; b: Vector3 } } {
+    // Project the ray onto each chirality's line; take the nearest.
+    let best = { i: 0, t: 0, point: lines[0].origin.clone(), dist: Infinity };
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i];
+      const s = Math.max(0, Math.min(1, closestLineParam(ln.origin, ln.slide, ray.origin, ray.direction)));
+      const point = ln.origin.clone().addScaledVector(ln.slide, s);
+      const dist = distancePointToRay(point, ray);
+      if (dist < best.dist) best = { i, t: s, point, dist };
+    }
+    sign = best.i === 0 ? 1 : -1;
+    curT = best.t;
+    // Highlight the active handle line so the controller renders it exactly like
+    // every other drag line (the same white tube). Like the truncation line, it spans
+    // only the UN-dragged remainder — from the dragged vertex (best.point) to the end.
+    const ln = lines[best.i];
+    return {
+      t: curT,
+      point: best.point,
+      highlight: { a: best.point.clone(), b: ln.origin.clone().add(ln.slide) },
     };
-    // The full (welded) snub uses the rule colors (ears → c+2); a partial snub
-    // keeps the weld-across edge color on those ears.
-    const colors: ColorSet = {
-      vertex: vertexColor.slice(),
-      face: (weld ? va.faceColorWelded : va.faceColor).slice(),
-      edge: new Map(va.edgeColor),
+  }
+
+  function commit(t: number, _weld: boolean): { mesh: Mesh; colors: ColorSet } {
+    const va = variants[variantIndex()];
+    return {
+      mesh: { vertices: positions(t), faces: va.faces.map((f) => f.slice()) },
+      colors: { vertex: va.vertexColor.slice(), face: va.faceColor.slice(), edge: new Map(va.edgeColor) },
     };
-    return weld ? weldVertexPairs(mesh, weldPairs, colors) : { mesh, colors };
   }
 
   return {
     kind: "snub",
-    get previewFaces() {
-      return variants[currentVariant].previewFaces;
-    },
-    get previewEdgeColors() {
-      return variants[currentVariant].edgeColor;
-    },
-    get vanishingEdges() {
-      // Each weld pair is the two cut verts of an edge that collapse at full snub.
-      return weldPairs;
-    },
+    get previewFaces() { return variants[variantIndex()].faces; },
+    get previewEdgeColors() { return variants[variantIndex()].edgeColor; },
+    vanishingEdges: [],
     positions,
     previewFaceColors,
     snap,
     commit,
-    // The two precomputed variants are mirror twists; label them R / L so the two
-    // committed enantiomorphs get distinct names (the choice of which is which is
-    // arbitrary but stable — all that matters is that they differ).
-    chirality: () => (currentVariant === 0 ? "R" : "L"),
+    chirality: () => (variantIndex() === 0 ? "R" : "L"),
   };
-}
-
-/**
- * Whether snub can be applied COHERENTLY to `selected` vertices (or all when null).
- * Mirrors buildSnub's preconditions exactly: the participating vertices must be edge-
- * connected and their incident-face region must be 2-colorable (no odd cycle — which
- * also rules out odd-degree vertices). Cheap; intended for the UI availability hint.
- */
-export function canSnub(poly: Polyhedron, selected: Set<number> | null): boolean {
-  const dcel = poly.dcel;
-  const snubbed = new Set<number>(
-    selected && selected.size > 0 ? selected : dcel.vertices.map((v) => v.id),
-  );
-  if (snubbed.size === 0 || !verticesConnected(dcel, snubbed)) return false;
-  const seed = snubbed.values().next().value as number;
-  return twoColorFacesInRegion(dcel, snubbed, dcel.vertices[seed].halfedge.face.id)
-    .coherent;
 }
