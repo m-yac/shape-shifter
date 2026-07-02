@@ -2,5 +2,5 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   server: { open: true },
-  base: "/ShapeShifter99/",
+  base: "/shape-shifter/",
 });
