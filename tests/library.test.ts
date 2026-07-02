@@ -22,22 +22,22 @@ const visibleNames = (discovered: string[]): Set<string> => {
 };
 
 describe("parseArrow (per-axis span notation)", () => {
-  it("reads a single axis with a span", () => {
-    expect(parseArrow("d2")).toEqual([{ step: [0, -2, 0], dashed: false, arrowhead: false }]);
+  it("reads a single axis with a span (bare token = middle head)", () => {
+    expect(parseArrow("d2")).toEqual([{ step: [0, -2, 0], head: "middle" }]);
   });
   it("gives each direction letter its own span (non-45° lines)", () => {
-    expect(parseArrow("d3r2")).toEqual([{ step: [2, -3, 0], dashed: false, arrowhead: false }]);
+    expect(parseArrow("d3r2")).toEqual([{ step: [2, -3, 0], head: "middle" }]);
   });
-  it("defaults a missing span to 1 and reads the arrowhead flag", () => {
-    expect(parseArrow("u^")).toEqual([{ step: [0, 1, 0], dashed: false, arrowhead: true }]);
+  it("defaults a missing span to 1 and reads a leading '>' as a start head", () => {
+    expect(parseArrow(">u")).toEqual([{ step: [0, 1, 0], head: "start" }]);
   });
-  it("reads dashed + arrowhead together", () => {
-    expect(parseArrow("u2:^")).toEqual([{ step: [0, 2, 0], dashed: true, arrowhead: true }]);
+  it("reads a trailing '>' as an end head", () => {
+    expect(parseArrow("u2>")).toEqual([{ step: [0, 2, 0], head: "end" }]);
   });
   it("splits a bundled token group into several arrows", () => {
-    expect(parseArrow("f4r4, b2r2")).toEqual([
-      { step: [4, 0, 4], dashed: false, arrowhead: false },
-      { step: [2, 0, -2], dashed: false, arrowhead: false },
+    expect(parseArrow(">f4r4, b2r2")).toEqual([
+      { step: [4, 0, 4], head: "start" },
+      { step: [2, 0, -2], head: "middle" },
     ]);
   });
 });

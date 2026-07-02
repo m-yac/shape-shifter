@@ -17,24 +17,27 @@ const DIRV: Record<string, [number, number, number]> = {
   b: [0, 0, -1],
 };
 
+/** Where the (always-forward-pointing) arrowhead sits along the line. */
+export type ArrowHead = "start" | "middle" | "end";
+
 export interface ParsedArrow {
   step: [number, number, number];
-  dashed: boolean;
-  arrowhead: boolean;
+  head: ArrowHead;
 }
 
 /**
  * Parse one arrow token group into its arrows. Grammar: a run of (direction
- * letter + per-axis span) pairs, then optional ":" (dashed) and "^" (arrowhead).
- * Each letter carries its OWN span — so "d3r2" steps (+2 x, −3 y), allowing
- * non-45° lines — and a missing number means 1 ("u^" = up one with an
- * arrowhead). One config string may bundle several arrows, e.g. "f4r4, b2r2".
+ * letter + per-axis span) pairs, optionally wrapped in ">". Every line is solid
+ * and carries one arrowhead pointing in its forward direction; the ">" says
+ * WHERE that head sits — ">u2" at the START, "u2" (bare) in the MIDDLE, "u2>" at
+ * the END. Each letter carries its OWN span — so "d3r2" steps (+2 x, −3 y),
+ * allowing non-45° lines — and a missing number means 1 (">u" = up one, head at
+ * the start). One config string may bundle several arrows, e.g. "f4r4, b2r2".
  */
 export function parseArrow(tokenGroup: string): ParsedArrow[] {
   const out: ParsedArrow[] = [];
   for (const tok of tokenGroup.split(/[\s,]+/).filter(Boolean)) {
-    const dashed = tok.includes(":");
-    const arrowhead = tok.includes("^");
+    const head: ArrowHead = tok.startsWith(">") ? "start" : tok.endsWith(">") ? "end" : "middle";
     const step: [number, number, number] = [0, 0, 0];
     let matched = false;
     for (const m of tok.matchAll(/([udlrfb])(\d*)/gi)) {
@@ -46,7 +49,7 @@ export function parseArrow(tokenGroup: string): ParsedArrow[] {
       step[2] += v[2] * span;
       matched = true;
     }
-    if (matched) out.push({ step, dashed, arrowhead });
+    if (matched) out.push({ step, head });
   }
   return out;
 }
@@ -59,8 +62,7 @@ export interface DiagramNodeInfo {
 export interface DiagramEdgeInfo {
   from: number;
   to: number;
-  dashed: boolean;
-  arrowhead: boolean;
+  head: ArrowHead;
 }
 
 export interface DiagramGraph {
@@ -97,7 +99,7 @@ export function buildDiagramGraph(): DiagramGraph {
         const to = byCoord.get(coordKey(x + a.step[0], y + a.step[1], z + a.step[2]));
         if (to === undefined) continue; // dangling arrow (no solid at the target)
         const ei = edges.length;
-        edges.push({ from, to, dashed: a.dashed, arrowhead: a.arrowhead });
+        edges.push({ from, to, head: a.head });
         outgoing[from].push(ei);
       }
     }
@@ -112,26 +114,27 @@ export function buildDiagramGraph(): DiagramGraph {
  * only ever follow edges in their arrow direction. The rule:
  *   • discovered solids;
  *   • their direct descendants (one arrow hop, any style);
- *   • any node reached from such a descendant by a SOLID ARROWHEAD edge — but
- *     only when that descendant was reached by a SOLID line.
+ *   • any node reached from such a descendant by a MIDDLE-headed edge — but only
+ *     when that descendant was itself reached by a start- or middle-headed edge
+ *     (an end-headed edge is a leaf and does not expand further).
  * (So with only the Tetrahedron made, you see it, its truncation + kis, and — one
- * solid-arrowhead hop further — its rectification and join.)
+ * middle-headed hop further — its rectification and join.)
  */
 export function computeVisible(graph: DiagramGraph, discovered: Set<number>): Set<number> {
   const visible = new Set<number>(discovered);
-  const solidDescendants = new Set<number>();
+  const expandableDescendants = new Set<number>();
 
   for (const d of discovered) {
     for (const ei of graph.outgoing[d]) {
       const e = graph.edges[ei];
       visible.add(e.to);
-      if (!e.dashed) solidDescendants.add(e.to);
+      if (e.head !== "end") expandableDescendants.add(e.to);
     }
   }
-  for (const n1 of solidDescendants) {
+  for (const n1 of expandableDescendants) {
     for (const ei of graph.outgoing[n1]) {
       const e = graph.edges[ei];
-      if (e.arrowhead && !e.dashed) visible.add(e.to);
+      if (e.head === "middle") visible.add(e.to);
     }
   }
   return visible;

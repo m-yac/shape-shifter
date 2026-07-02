@@ -13,7 +13,6 @@ import {
   MeshStandardMaterial,
   MeshBasicMaterial,
   LineBasicMaterial,
-  LineDashedMaterial,
   Color,
   Vector2,
   Vector3,
@@ -359,36 +358,47 @@ export class LibraryBrowser {
       const dir = b.clone().sub(a).normalize();
       // Inset both ends so the line runs between the solids, not through them.
       const start = a.clone().addScaledVector(dir, gap);
-      const tip = b.clone().addScaledVector(dir, -gap); // where the arrow points
-      // The line stops at the BASE of the arrowhead (or at `tip` when there is
-      // none), so the head's tip lands exactly on `tip` with no overlap.
-      const lineEnd = e.arrowhead ? tip.clone().addScaledVector(dir, -headLen) : tip;
+      const tip = b.clone().addScaledVector(dir, -gap); // the line's forward end
 
-      const geo = new BufferGeometry().setFromPoints([start, lineEnd]);
-      const mat = e.dashed
-        ? new LineDashedMaterial({ color: config.library.arrowColor, dashSize: 0.12, gapSize: 0.1, transparent: true, opacity: 0.85 })
-        : new LineBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.85 });
-      const line = new Line(geo, mat);
-      if (e.dashed) line.computeLineDistances();
-      this.arrowGroup.add(line);
-
-      if (e.arrowhead) {
-        // A flat triangle with its tip at the local origin and its base behind
-        // along -Y; positioned at `tip` and billboarded each frame (see
-        // updateArrowheads), so its tip stays on `tip` regardless of orientation.
-        const tg = new BufferGeometry().setFromPoints([
-          new Vector3(0, 0, 0),
-          new Vector3(-headW / 2, -headLen, 0),
-          new Vector3(headW / 2, -headLen, 0),
-        ]);
-        const head = new ThreeMesh(
-          tg,
-          new MeshBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.9, side: 2 }),
-        );
-        head.position.copy(tip);
-        this.arrowGroup.add(head);
-        this.arrowheads.push({ mesh: head, dir });
+      // Every edge carries one forward-pointing arrowhead; `e.head` says where it
+      // sits. The head's TIP goes at `headPos`; the drawn line is trimmed so it
+      // butts against the head's base rather than overlapping it. A "middle" head
+      // just rides on top of the full-length line.
+      let headPos = tip;
+      let lineStart = start;
+      let lineEnd = tip;
+      if (e.head === "end") {
+        headPos = tip;
+        lineEnd = tip.clone().addScaledVector(dir, -headLen); // stop at the head's base
+      } else if (e.head === "start") {
+        headPos = start.clone().addScaledVector(dir, headLen); // base sits at `start`
+        lineStart = headPos;
+      } else {
+        // Center the head's BODY on the line's midpoint (its tip sits half a head
+        // length past it), so it reads as centered even on short lines where the
+        // head length is a big fraction of the line.
+        headPos = start.clone().add(tip).multiplyScalar(0.5).addScaledVector(dir, headLen / 2);
       }
+
+      const geo = new BufferGeometry().setFromPoints([lineStart, lineEnd]);
+      const mat = new LineBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.85 });
+      this.arrowGroup.add(new Line(geo, mat));
+
+      // A flat triangle with its tip at the local origin and its base behind
+      // along -Y; positioned at `headPos` and billboarded each frame (see
+      // updateArrowheads), so its tip stays on `headPos` pointing along `dir`.
+      const tg = new BufferGeometry().setFromPoints([
+        new Vector3(0, 0, 0),
+        new Vector3(-headW / 2, -headLen, 0),
+        new Vector3(headW / 2, -headLen, 0),
+      ]);
+      const head = new ThreeMesh(
+        tg,
+        new MeshBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.9, side: 2 }),
+      );
+      head.position.copy(headPos);
+      this.arrowGroup.add(head);
+      this.arrowheads.push({ mesh: head, dir });
     }
   }
 

@@ -36,7 +36,7 @@ const FACE_SLIDE = config.operations.gyroFaceSlide;
  * and investigations/gyro_lift_exponent.investigate.ts for how the fit was found.
  */
 export function liftExponent(dihedral: number): number {
-  return Math.max(0.3, Math.min(1.6, 0.79 * dihedral - 0.85));
+  return Math.max(0.3, Math.min(1.6, 0.30 * dihedral + 0.05));
 }
 
 /** cot(dihedral/2) of the (convex) join edge `he`, given its face's outward normal.
