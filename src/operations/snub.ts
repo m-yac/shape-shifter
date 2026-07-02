@@ -83,6 +83,7 @@ export function buildSnub(
     const indexOf = new Map<number, number>();
     const heVert = new Map<number, number>(); // half-edge id → snub vertex index
     const srcVid = new Map<number, number>(); // snub vertex index → source rectification vertex id
+    const keptEdgeCol = new Map<number, number>(); // snub vertex index → its kept edge's colour
     const snubVerts: SnubVert[] = [];
 
     for (const v of dcel.vertices) {
@@ -105,6 +106,7 @@ export function buildSnub(
           const slide = kept.next.origin.position.clone().sub(v.position).multiplyScalar(SEP);
           snubVerts.push({ index: idx, source: v.position.clone(), slide });
           srcVid.set(idx, v.id);
+          keptEdgeCol.set(idx, old.edge.get(edgeKey(v.id, kept.next.origin.id)) ?? 0);
           indexOf.set(key, idx);
         }
         heVert.set(h.id, idx);
@@ -139,23 +141,14 @@ export function buildSnub(
       faceColor.push(vertexMax(splitV, old) + 2);
     }
 
-    // Colours: split vertex ← its source vertex; preserved-face edges ← the original
-    // rectification edge; the new split edge joining the two vertices a rectification
-    // vertex splits into ← that vertex's colour; any other genuinely-new edge ← c+1.
+    // Colours (the exact dual of the gyro's rules): a split vertex ← the rectification
+    // EDGE it slid off (dual of the gyro pentagon-face ← its join edge); the new split
+    // edge joining the two vertices a rectification vertex splits into ← that vertex's
+    // colour (dual of the gyro split edge ← its face); every other new edge ← c+1 (dual
+    // of the gyro's new edges ← faceMaxPlus1).
     const vertexColor: number[] = new Array(snubVerts.length);
-    for (const v of dcel.vertices) {
-      for (const h of outAt.get(v.id)!) vertexColor[heVert.get(h.id)!] = old.vertex[v.id];
-    }
+    for (const sv of snubVerts) vertexColor[sv.index] = keptEdgeCol.get(sv.index)!;
     const edgeColor = new Map<string, number>();
-    for (const f of dcel.faces) {
-      let h = f.halfedge;
-      const start = h;
-      do {
-        const c = old.edge.get(edgeKey(h.origin.id, h.next.origin.id));
-        if (c !== undefined) edgeColor.set(edgeKey(heVert.get(h.id)!, heVert.get(h.next.id)!), c);
-        h = h.next;
-      } while (h !== start);
-    }
     for (const loop of faces) {
       for (let i = 0; i < loop.length; i++) {
         const a = loop[i];
@@ -163,15 +156,10 @@ export function buildSnub(
         const key = edgeKey(a, b);
         if (edgeColor.has(key)) continue;
         // A split edge's two ends share a source rectification vertex → that vertex's
-        // colour; anything else left over is a genuinely new edge (c+1).
-        const va = srcVid.get(a);
-        const vb = srcVid.get(b);
-        edgeColor.set(
-          key,
-          va !== undefined && va === vb
-            ? old.vertex[va]
-            : vertexMaxPlus1(dcel.vertices[(va ?? vb)!], old),
-        );
+        // colour; every other edge is new → c+1 around its (either) source vertex.
+        const va = srcVid.get(a)!;
+        const vb = srcVid.get(b)!;
+        edgeColor.set(key, va === vb ? old.vertex[va] : vertexMaxPlus1(dcel.vertices[va], old));
       }
     }
 

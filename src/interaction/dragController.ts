@@ -7,6 +7,8 @@ import {
   setColorScheme,
   getColorScheme,
   schemeForMesh,
+  paletteRGB,
+  darkRGB,
   type SchemeName,
 } from "../geometry/colors";
 import { type MorphPlan } from "../operations/types";
@@ -358,6 +360,25 @@ export class DragController {
     if (entry) this.restore(entry);
   }
 
+  /** DEBUG: dump a poly's per-class geometric colors + how the active scheme paints
+   *  them, so a live click-load / snub can be compared. Paste the console output. */
+  private logColors(label: string, poly: Polyhedron): void {
+    const tally = (nums: number[], resolve: (g: number) => { getHexString(): string }) => {
+      const out: Record<string, number> = {};
+      for (const n of nums) {
+        const k = `geom${n}=#${resolve(n).getHexString()}`;
+        out[k] = (out[k] ?? 0) + 1;
+      }
+      return out;
+    };
+    /* eslint-disable no-console */
+    console.log(`[colors] ${label} — scheme=${getColorScheme()}`);
+    console.log("  face:", tally(poly.colors.face, paletteRGB));
+    console.log("  vert:", tally(poly.colors.vertex, paletteRGB));
+    console.log("  edge:", tally([...poly.colors.edge.values()], darkRGB));
+    /* eslint-enable no-console */
+  }
+
   /** Show a previously-committed state without re-solving (it's already relaxed). */
   private restore(entry: HistoryEntry): void {
     this.solver = null; // abandon any in-progress relaxation
@@ -379,6 +400,7 @@ export class DragController {
     this.strategy = entry.options.strategy;
     this.shapes.setActiveStrategy(entry.options.strategy);
     this.view.setPolyhedron(entry.poly, entry.invalid);
+    this.logColors(`restore "${entry.displayName ?? entry.label}"`, entry.poly);
     this.refreshHighlights();
     this.runIdentify(entry.poly);
   }
@@ -1316,6 +1338,7 @@ export class DragController {
         this.selection.clear();
         this.hover = null; // any hovered marker now points at the old mesh
         const poly = new Polyhedron(mesh, finalColors);
+        this.logColors(`commit "${label}" (weld=${this.drag.weld})`, poly);
         // Render the committed geometry with the "from" colors, then start the fade.
         this.view.showPreview(
           { vertices: mesh.vertices, faces: mesh.faces },
