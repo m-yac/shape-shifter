@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { Vector3 } from "three";
 import { getSeed } from "../src/geometry/seeds";
 import { Polyhedron } from "../src/geometry/polyhedron";
 import { buildDCEL, counts } from "../src/geometry/HalfEdge";
@@ -52,4 +53,51 @@ describe("gyro twist (extends a join)", () => {
     const c = counts(buildDCEL(buildGyro(J, 0, J.vertices[0].clone()).commit(1, true).mesh));
     expect(c).toEqual({ V: 38, E: 60, F: 24 });
   });
+});
+
+// Max distance (in units of the face's mean edge length) of a face's vertices from
+// their best-fit plane — 0 for a planar face. Newell normal + centroid.
+function nonPlanarity(verts: Vector3[], face: number[]): number {
+  const c = new Vector3();
+  for (const i of face) c.add(verts[i]);
+  c.multiplyScalar(1 / face.length);
+  const nrm = new Vector3();
+  for (let i = 0; i < face.length; i++) {
+    const a = verts[face[i]], b = verts[face[(i + 1) % face.length]];
+    nrm.x += (a.y - b.y) * (a.z + b.z);
+    nrm.y += (a.z - b.z) * (a.x + b.x);
+    nrm.z += (a.x - b.x) * (a.y + b.y);
+  }
+  if (nrm.lengthSq() < 1e-20) return 0;
+  nrm.normalize();
+  let maxd = 0, edge = 0;
+  for (let i = 0; i < face.length; i++) {
+    maxd = Math.max(maxd, Math.abs(verts[face[i]].clone().sub(c).dot(nrm)));
+    edge += verts[face[i]].distanceTo(verts[face[(i + 1) % face.length]]);
+  }
+  edge /= face.length;
+  return edge > 1e-9 ? maxd / edge : 0;
+}
+
+// The gyro splits each join quad into pentagons; only the t=1 end is truly planar, but
+// the drag schedule (gyro.ts `liftExponent`) advances the lift ahead of the slide so
+// the INTERMEDIATE faces stay approximately planar too (rather than creasing along the
+// old join edges). Assert the worst crease over the whole drag is small.
+describe("gyro faces stay ~planar through the drag", () => {
+  const join = (s: string) => new Polyhedron(buildKis(seed(s), 0, null).commit(1, true).mesh);
+  for (const s of ["tetrahedron", "cube", "octahedron", "dodecahedron", "icosahedron"]) {
+    it(`join(${s})`, () => {
+      const J = join(s);
+      const plan = buildGyro(J, 0, J.vertices[0].clone());
+      const faces = plan.commit(1, true).mesh.faces;
+      let worst = 0;
+      for (let t = 0.05; t < 1; t += 0.05) {
+        const P = plan.positions(t);
+        for (const f of faces) if (f.length > 3) worst = Math.max(worst, nonPlanarity(P, f));
+      }
+      // < 2% of edge length everywhere; a naive linear (lift ∝ t) drag creases the
+      // sharp cube join at ~4.4%.
+      expect(worst).toBeLessThan(0.02);
+    });
+  }
 });

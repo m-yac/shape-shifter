@@ -189,6 +189,12 @@ export class DragController {
   // Per-shape construction histories (persisted), so the LIBRARY can reopen a shape
   // in the main view with the exact timeline that first produced it.
   private readonly historyStore = new HistoryStore();
+  // A just-discovered shape whose timeline still needs persisting. The save is held
+  // until its relaxation finishes (finishSolve) so the stored final entry is the
+  // settled/canonical geometry — the exact form the LIBRARY reopens. Saving at commit
+  // time instead would freeze the raw, un-relaxed commit (visible on reload, worst for
+  // the twists whose raw form is farthest from canonical).
+  private pendingSave: string | null = null;
   private readonly discoveryPopup: DiscoveryPopup;
   private readonly library: LibraryBrowser;
 
@@ -381,6 +387,10 @@ export class DragController {
 
   /** Show a previously-committed state without re-solving (it's already relaxed). */
   private restore(entry: HistoryEntry): void {
+    // Note: navigating away (undo/redo/jump/library-open) abandons an in-progress
+    // relaxation and drops its pending save — harmless, since reopening that shape then
+    // just takes the database path, which relaxes it into the same canonical form.
+    this.pendingSave = null;
     this.solver = null; // abandon any in-progress relaxation
     this.shapes.setSolving(false);
     this.mode = "idle";
@@ -1380,6 +1390,10 @@ export class DragController {
   }
 
   private commitPoly(poly: Polyhedron, label: string, op: OpDescriptor): void {
+    // A prior discovery may still be waiting on its relaxation; persist it now (with
+    // however-far-it-settled geometry) before this new commit grows the timeline and
+    // would otherwise attach the pending name to the wrong slice.
+    this.flushPendingSave();
     this.current = poly;
     this.invalid = false;
     if (this.firstEdit) {
@@ -1408,6 +1422,28 @@ export class DragController {
     // Keep any in-progress release color-fade running on the now-relaxed shape.
     this.view.setPolyhedron(this.current, this.invalid, true);
     this.runIdentify(this.current, true);
+    // The shape is now settled into its canonical form — persist any timeline that was
+    // waiting on this relaxation (either flagged at commit, or first recognized only
+    // now that the faces have flattened).
+    this.flushPendingSave();
+  }
+
+  /** Persist the timeline that first produced `name` (the slice up to the current
+   *  entry). No-op on re-saves, so the original construction path is kept. */
+  private saveTimeline(name: string): void {
+    this.historyStore.save(
+      name,
+      this.history.list.slice(0, this.history.current + 1),
+      this.history.list[0]?.label ?? "",
+    );
+  }
+
+  /** Save a discovery that was held pending its relaxation, if any. Entries hold live
+   *  Polyhedron references, so this reads whatever geometry they have settled into. */
+  private flushPendingSave(): void {
+    if (!this.pendingSave) return;
+    this.saveTimeline(this.pendingSave);
+    this.pendingSave = null;
   }
 
   // ---- identification ------------------------------------------------------
@@ -1431,15 +1467,14 @@ export class DragController {
     // name). This also runs for the seed root and on restore — both harmless.
     this.history.annotate(this.history.current, this.invalid ? null : name, this.invalid);
     this.renderHistory();
-    // Save the timeline that just produced a brand-new shape (so the LIBRARY can
-    // reopen it here with its history). Done after annotate, so the current entry
-    // already carries its name/displayName.
+    // Persist the timeline that just produced a brand-new shape (so the LIBRARY can
+    // reopen it here with its history). When the solver will relax the fresh commit,
+    // defer the save until it settles (finishSolve) so the stored final entry is the
+    // canonical form the library shows — not the raw commit. With the solver off there
+    // is no relaxation to wait for, so the commit geometry is already final.
     if (justDiscovered) {
-      this.historyStore.save(
-        justDiscovered,
-        this.history.list.slice(0, this.history.current + 1),
-        this.history.list[0]?.label ?? "",
-      );
+      if (config.solver.enabled) this.pendingSave = justDiscovered;
+      else this.saveTimeline(justDiscovered);
     }
     // Show the derived history name (modifier + nearest known ancestor) when the
     // shape isn't a known polyhedron; fall back to the raw identify result.

@@ -20,6 +20,25 @@ import { config } from "../config";
 // more than a nearly-flat one — see config.operations.gyroLiftFactor.
 const FACE_SLIDE = config.operations.gyroFaceSlide;
 
+/**
+ * The exponent `p` in a q vertex's lift schedule `lift(t) = t^p`. The in-plane slide
+ * runs linearly (0→1); if the lift ran linearly too (`p = 1`) the two split half-quads
+ * would fold along the old join edge and crease at every intermediate step, flattening
+ * only at the t=1 end. Advancing the lift AHEAD of the slide (`p < 1`) keeps each split
+ * face approximately planar throughout the drag — the sharper the join edge the q sits
+ * over, the more the lift must lead, so `p` grows with the join `dihedral`:
+ *
+ *     p ≈ 0.79·dihedral − 0.85   (dihedral in radians)
+ *
+ * a line fit to the per-shape optimum across the Platonic joins & rectifications
+ * (90° cube → p≈0.39, 120° → 0.81, 144° → 1.14). Clamped to a sane band. See
+ * tests/twist_validate.test.ts ("gyro faces stay ~planar") for the resulting planarity
+ * and investigations/gyro_lift_exponent.investigate.ts for how the fit was found.
+ */
+export function liftExponent(dihedral: number): number {
+  return Math.max(0.3, Math.min(1.6, 0.79 * dihedral - 0.85));
+}
+
 /** cot(dihedral/2) of the (convex) join edge `he`, given its face's outward normal.
  *  Falls back to 1 (a right-angle valley) if the edge has no neighbour or is flat. */
 function cotHalfDihedral(he: HalfEdge, outwardNormal: Vector3): number {
@@ -63,12 +82,17 @@ function twoColorVertices(dcel: DCEL): Map<number, 0 | 1> {
   return color;
 }
 
-/** One peripheral (q) vertex of a gyred face: its new index, the boundary edge it
- *  sits over (two original vertex ids), and the pivot it swings around. */
+/** One peripheral (q) vertex of a gyred face: its new index and the two orthogonal
+ *  displacements that carry it from its edge midpoint to the full gyro. Splitting the
+ *  motion this way lets `positions` schedule the in-plane slide and the out-of-plane
+ *  lift on separate curves, so the split faces stay (near-)planar all through the drag
+ *  rather than only at the t=1 end (see `liftSchedule`). */
 interface QVert {
   index: number;
   start: Vector3; // the edge midpoint (t=0)
-  target: Vector3; // where it slides to at the full gyro (t=1), along the opposite-edge line
+  slideFull: Vector3; // full in-plane slide toward the opposite edge (t=1)
+  liftFull: Vector3; // full outward lift off the join face (t=1)
+  liftExp: number; // exponent p in this q's lift schedule lift(t) = t^p (see liftExponent)
 }
 
 /**
@@ -160,10 +184,13 @@ export function buildGyro(
         // quads into a flat pentagon. (cot = cos/sin; near-flat edges → tiny lift.)
         const boundary = bh[(s + ((2 * j - 1 + m) % m)) % m];
         const cotHalf = cotHalfDihedral(boundary, faceNormal);
-        const target = mid.clone()
-          .addScaledVector(oppMid.clone().sub(mid), FACE_SLIDE)
-          .addScaledVector(faceNormal, config.operations.gyroLiftFactor * cotHalf * v0.length());
-        qverts.push({ index: q, start: mid.clone(), target });
+        const slideFull = oppMid.clone().sub(mid).multiplyScalar(FACE_SLIDE);
+        const liftFull = faceNormal.clone()
+          .multiplyScalar(config.operations.gyroLiftFactor * cotHalf * v0.length());
+        // Lift schedule exponent from THIS q's join-edge dihedral (recovered from
+        // cot(dihedral/2)): sharper edges lift earlier so the split face stays flat.
+        const liftExp = liftExponent(2 * Math.atan2(1, cotHalf));
+        qverts.push({ index: q, start: mid.clone(), slideFull, liftFull, liftExp });
         vertexColor[q] = cf + 2;
         ownerFace.set(q, f.id);
       }
@@ -309,13 +336,22 @@ export function buildGyro(
   let sign = 1;
   const variantIndex = () => (sign >= 0 ? 0 : 1);
 
-  // Each new vertex slides in a straight line from its edge midpoint to its target,
-  // so the split faces open the way the gyro tiling expects.
+  // Each new vertex moves from its edge midpoint by an in-plane slide toward the
+  // opposite edge and an outward lift off the join face. Driving both on the SAME
+  // fraction `t` (a straight line to the target) is planar only at the t=1 end; in
+  // between, the two half-quads of each split face fold along the old edge and crease.
+  // Advancing the lift ahead of the slide (`t^liftExp`, exponent < 1 for sharp joins)
+  // flattens the fold continuously, so the faces stay approximately planar all through
+  // the drag (see liftExponent).
   function positions(t: number): Vector3[] {
     const va = variants[variantIndex()];
     const out: Vector3[] = new Array(va.vertexCount);
     for (let i = 0; i < V; i++) out[i] = dcel.vertices[i].position.clone();
-    for (const q of va.qverts) out[q.index] = q.start.clone().lerp(q.target, t);
+    for (const q of va.qverts) {
+      out[q.index] = q.start.clone()
+        .addScaledVector(q.slideFull, t)
+        .addScaledVector(q.liftFull, t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(t, q.liftExp));
+    }
     return out;
   }
 
@@ -383,5 +419,13 @@ export function buildGyro(
     commit,
     arc,
     chirality: () => (variantIndex() === 0 ? "R" : "L"),
-  };
+    // Test-only: the current variant's q-vertex motion decomposition, so a test can
+    // rebuild positions for an arbitrary (slide, lift) pair and probe face planarity.
+    _qData: () => variants[variantIndex()].qverts.map((q) => ({
+      index: q.index,
+      start: q.start.clone(),
+      slideFull: q.slideFull.clone(),
+      liftFull: q.liftFull.clone(),
+    })),
+  } as MorphPlan & { _qData(): Array<{ index: number; start: Vector3; slideFull: Vector3; liftFull: Vector3 }> };
 }
