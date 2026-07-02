@@ -25,8 +25,86 @@ function edgeFaceNormals(h: HalfEdge): Vector3[] {
   });
 }
 
+/**
+ * Per-half-edge collapse fraction for an "equal radial depth" truncation.
+ *
+ * Each undirected edge collapses at a single point `v + s·(w−v)`; during a
+ * Truncate→Rectify drag the two cut ends ride at `s·t` (from v) and `(1−s)·t`
+ * (from w) and weld at t=1. A uniform s=½ leaves the exposed vertex n-gons badly
+ * non-planar on solids with non-coplanar vertex stars (e.g. Catalan solids like
+ * the triakis tetrahedron). Choosing s per edge so a vertex's cut points share a
+ * radial depth (|v| + s·(w−v)·v̂ constant across its edges) flattens them — for
+ * the triakis tetra this is exact.
+ *
+ * The collapse point on edge v→w has radial depth |v| + s·(w−v)·v̂; equalizing to
+ * a per-vertex target |v|+δ_v gives s = δ_v / ((w−v)·v̂). We solve the δ (one per
+ * vertex) by least squares so the two endpoints of every edge agree on the single
+ * collapse point, then read the reconciled s. Returns a directed fraction for
+ * every half-edge id, measured from that half-edge's own origin; a half-edge and
+ * its twin sum to 1, so their cut ends meet exactly at t=1.
+ */
+export function computeCollapseFractions(poly: Polyhedron): Map<number, number> {
+  const dcel = poly.dcel;
+  // radial depth drop of `to` relative to `from`, along from's outward radial.
+  const depthDrop = (from: Vector3, to: Vector3) =>
+    to.clone().sub(from).dot(from.clone().normalize());
+
+  // from v: s = δ_v/a_v; from w: s = 1 − δ_w/a_w (a = (other−this)·thiŝ). Skip
+  // edges tangent to the sphere (a≈0: no radial depth to equalize) in the solve.
+  type Inc = { a: number; other: number; ao: number };
+  const incident = new Map<number, Inc[]>();
+  for (const v of dcel.vertices) incident.set(v.id, []);
+  const edges: Array<{ he: number; twin: number; va: number; wb: number; a_v: number; a_w: number }> = [];
+  for (const he of dcel.halfedges) {
+    if (!he.twin || he.id >= he.twin.id) continue;
+    const v = he.origin.position, w = he.next.origin.position;
+    const a_v = depthDrop(v, w), a_w = depthDrop(w, v);
+    edges.push({ he: he.id, twin: he.twin.id, va: he.origin.id, wb: he.next.origin.id, a_v, a_w });
+    if (Math.abs(a_v) > 1e-9 && Math.abs(a_w) > 1e-9) {
+      incident.get(he.origin.id)!.push({ a: a_v, other: he.next.origin.id, ao: a_w });
+      incident.get(he.next.origin.id)!.push({ a: a_w, other: he.origin.id, ao: a_v });
+    }
+  }
+
+  // Coordinate descent on δ, seeded so s≈0.5.
+  const delta = new Map<number, number>();
+  for (const v of dcel.vertices) {
+    const inc = incident.get(v.id)!;
+    const meanA = inc.length ? inc.reduce((sum, i) => sum + i.a, 0) / inc.length : 0;
+    delta.set(v.id, 0.5 * meanA);
+  }
+  for (let round = 0; round < 400; round++) {
+    for (const v of dcel.vertices) {
+      // solve δ_v minimizing Σ_edges(δ_v/a − sTarget)², sTarget = 1 − δ_other/a_other
+      let num = 0, den = 0;
+      for (const i of incident.get(v.id)!) {
+        num += (1 - delta.get(i.other)! / i.ao) / i.a;
+        den += 1 / (i.a * i.a);
+      }
+      if (den > 1e-12) delta.set(v.id, num / den);
+    }
+  }
+
+  // Reconcile the two endpoints' opinion into one s per edge; twin gets 1−s.
+  const out = new Map<number, number>();
+  for (const e of edges) {
+    let s: number;
+    if (Math.abs(e.a_v) < 1e-9 || Math.abs(e.a_w) < 1e-9) {
+      s = 0.5;
+    } else {
+      const sFromV = delta.get(e.va)! / e.a_v;
+      const sFromW = 1 - delta.get(e.wb)! / e.a_w;
+      s = 0.5 * (sFromV + sFromW);
+    }
+    s = Math.max(0.02, Math.min(0.98, s));
+    out.set(e.he, s);
+    out.set(e.twin, 1 - s);
+  }
+  return out;
+}
+
 /** The reusable truncation topology + colors for a given set of truncated vertices,
- *  independent of the cut depth (which `positions` applies per vertex). */
+ *  independent of the cut depth (which `positions` applies per edge). */
 interface TruncationData {
   vertexCount: number;
   previewFaces: number[][];
@@ -34,8 +112,8 @@ interface TruncationData {
   vertexColor: number[];
   faceColor: number[];
   edgeColor: Map<string, number>;
-  /** Cut vertices: index + the edge they slide along + their origin vertex id. */
-  cutEnds: Array<{ index: number; origin: Vector3; dest: Vector3; originVid: number }>;
+  /** Cut vertices: index + the half-edge they slide along + origin vertex id. */
+  cutEnds: Array<{ index: number; heId: number; origin: Vector3; dest: Vector3; originVid: number }>;
   /** Untruncated (kept) vertices, carried through unchanged. */
   keepEnds: Array<{ index: number; pos: Vector3 }>;
 }
@@ -61,7 +139,7 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
   for (const he of dcel.halfedges) {
     const i = cutIndex.get(he.id);
     if (i === undefined) continue;
-    cutEnds.push({ index: i, origin: he.origin.position, dest: he.next.origin.position, originVid: he.origin.id });
+    cutEnds.push({ index: i, heId: he.id, origin: he.origin.position, dest: he.next.origin.position, originVid: he.origin.id });
   }
   const keepEnds: TruncationData["keepEnds"] = [];
   for (const v of dcel.vertices) {
@@ -139,10 +217,13 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
   return { vertexCount, previewFaces, weldPairs, vertexColor, faceColor, edgeColor, cutEnds, keepEnds };
 }
 
-/** Positions for a truncation, given a per-origin-vertex cut fraction (0..0.5). */
-function truncationPositions(data: TruncationData, cutFrac: (vid: number) => number): Vector3[] {
+/** Positions for a truncation, given a per-cut-end fraction along its half-edge. */
+function truncationPositions(
+  data: TruncationData,
+  cutFrac: (c: TruncationData["cutEnds"][number]) => number,
+): Vector3[] {
   const out: Vector3[] = new Array(data.vertexCount);
-  for (const c of data.cutEnds) out[c.index] = c.origin.clone().lerp(c.dest, cutFrac(c.originVid));
+  for (const c of data.cutEnds) out[c.index] = c.origin.clone().lerp(c.dest, cutFrac(c));
   for (const k of data.keepEnds) out[k.index] = k.pos.clone();
   return out;
 }
@@ -150,12 +231,16 @@ function truncationPositions(data: TruncationData, cutFrac: (vid: number) => num
 /**
  * Truncate → Rectify, driven by dragging a vertex inward along a connected edge.
  *
+ * Each edge collapses at a per-edge point `s` (see `computeCollapseFractions`)
+ * rather than its midpoint, keeping the exposed vertex n-gons planar. `s` is a
+ * directed fraction per half-edge (a half-edge and its twin sum to 1).
+ *
  * Staging: the preview always shows the FULL truncation (every vertex). The
- * SELECTED arity group cuts from t=0 (`cutFrac = 0.5·t`); every OTHER vertex stays
- * at zero depth (visually sharp) until t=0.5, then cuts too (`0.5·clamp(2t−1)`),
+ * SELECTED arity group cuts from t=0 (`cutFrac = s·t`); every OTHER vertex stays
+ * at zero depth (visually sharp) until t=0.5, then cuts too (`s·clamp(2t−1)`),
  * so the drag reads as an n-truncate, transitions to a full truncation at t=0.5,
- * and reaches a full Rectify at t=1 (every cut fraction hits 0.5 and welds). A
- * release with t<0.5 commits the clean n-truncation of just the selected set.
+ * and reaches a full Rectify at t=1 (every edge's two ends meet at its `s` and
+ * weld). A release with t<0.5 commits the clean n-truncation of just the set.
  *
  * @param poly       current polyhedron
  * @param draggedVid the vertex grabbed (the drag handle, always in the selection)
@@ -176,9 +261,13 @@ export function buildTruncate(
   // The preview / weld topology is the full truncation of every vertex.
   const full = buildTruncationData(poly, new Set(allIds));
 
-  const selCut = (t: number) => 0.5 * t;
-  const nonCut = (t: number) => 0.5 * Math.max(0, Math.min(1, 2 * t - 1));
-  const fracFor = (t: number) => (vid: number) => (selectedSet.has(vid) ? selCut(t) : nonCut(t));
+  // Per-half-edge collapse fraction (equal radial depth → planar vertex n-gons).
+  const collapse = computeCollapseFractions(poly);
+  type CutEnd = TruncationData["cutEnds"][number];
+  const sOf = (c: CutEnd) => collapse.get(c.heId) ?? 0.5;
+  const selCut = (c: CutEnd, t: number) => sOf(c) * t;
+  const nonCut = (c: CutEnd, t: number) => sOf(c) * Math.max(0, Math.min(1, 2 * t - 1));
+  const fracFor = (t: number) => (c: CutEnd) => (selectedSet.has(c.originVid) ? selCut(c, t) : nonCut(c, t));
 
   function positions(t: number): Vector3[] {
     return truncationPositions(full, fracFor(t));
@@ -189,8 +278,8 @@ export function buildTruncate(
   }
 
   function snap(ray: Ray): { t: number; point: Vector3; highlight?: { a: Vector3; b: Vector3 } } {
-    const e = closestIncidentEdge(poly, draggedVid, ray, inView);
-    const t = Math.max(0, Math.min(1, e.frac / 0.5));
+    const e = closestIncidentEdge(poly, draggedVid, ray, inView, collapse);
+    const t = e.max > 1e-9 ? Math.max(0, Math.min(1, e.frac / e.max)) : 0;
     return { t, point: e.point, highlight: { a: e.point.clone(), b: e.mid.clone() } };
   }
 
@@ -204,7 +293,7 @@ export function buildTruncate(
     if (isPartial && t < 0.5) {
       const sub = buildTruncationData(poly, selectedSet);
       return {
-        mesh: { vertices: truncationPositions(sub, () => selCut(t)), faces: sub.previewFaces.map((f) => f.slice()) },
+        mesh: { vertices: truncationPositions(sub, (c) => selCut(c, t)), faces: sub.previewFaces.map((f) => f.slice()) },
         colors: { vertex: sub.vertexColor.slice(), face: sub.faceColor.slice(), edge: new Map(sub.edgeColor) },
       };
     }
@@ -229,35 +318,40 @@ export function buildTruncate(
 
 /**
  * The incident edge of `vid` closest to the pick ray, with the edge endpoints
- * (`from`/`to`), the rectify max (`mid`), the snapped point, and the cut fraction
- * (0..0.5). When `inView` is given, only edges whose midpoint is in view count.
+ * (`from`/`to`), the rectify max (`mid`, at the edge's collapse point `s·edge`),
+ * the snapped point, the cut fraction (0..`max`), and that edge's collapse `max`.
+ * When `inView` is given, only edges whose collapse point is in view count.
+ * `collapse` (per-half-edge fractions) is computed if not supplied.
  */
 export function closestIncidentEdge(
   poly: Polyhedron,
   vid: number,
   ray: Ray,
   inView: InViewTest | null = null,
-): { from: Vector3; to: Vector3; mid: Vector3; point: Vector3; frac: number } {
+  collapse?: Map<number, number>,
+): { from: Vector3; to: Vector3; mid: Vector3; point: Vector3; frac: number; max: number } {
   const v = poly.dcel.vertices[vid];
+  const coll = collapse ?? computeCollapseFractions(poly);
   let best:
-    | { from: Vector3; to: Vector3; mid: Vector3; point: Vector3; frac: number; dist: number }
+    | { from: Vector3; to: Vector3; mid: Vector3; point: Vector3; frac: number; max: number; dist: number }
     | null = null;
   for (const h of outgoingHalfEdges(v)) {
     const from = h.origin.position;
     const edge = h.next.origin.position.clone().sub(from);
-    const mid = from.clone().add(edge.clone().multiplyScalar(0.5));
+    const sMax = coll.get(h.id) ?? 0.5;
+    const mid = from.clone().add(edge.clone().multiplyScalar(sMax));
     if (inView && !inView(mid, edgeFaceNormals(h))) continue;
     let frac = closestLineParam(from, edge, ray.origin, ray.direction);
-    frac = Math.max(0, Math.min(0.5, frac));
+    frac = Math.max(0, Math.min(sMax, frac));
     const point = from.clone().add(edge.clone().multiplyScalar(frac));
     const dist = distancePointToRay(point, ray);
     if (!best || dist < best.dist) {
-      best = { from: from.clone(), to: from.clone().add(edge), mid, point, frac, dist };
+      best = { from: from.clone(), to: from.clone().add(edge), mid, point, frac, max: sMax, dist };
     }
   }
   if (!best) {
     const p = v.position.clone();
-    return { from: p, to: p.clone(), mid: p.clone(), point: p.clone(), frac: 0 };
+    return { from: p, to: p.clone(), mid: p.clone(), point: p.clone(), frac: 0, max: 0 };
   }
   return best;
 }

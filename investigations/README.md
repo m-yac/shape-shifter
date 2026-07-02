@@ -28,3 +28,6 @@ up; they run only under `vitest.investigations.config.ts`.
 - **`gyro_lift_magnitude.investigate.ts`** — the companion study of the lift
   *magnitude* (the FACE_LIFT constant): how high a q vertex sits above its home
   join face, vs. the join's dihedral / angle deficit.
+- **`truncate_planarity.investigate.ts`** — non-planarity of the faces created
+  by truncating / rectifying a non-canonical solid (e.g. the triakis
+  tetrahedron), and a per-edge cut-speed adjustment that flattens them.

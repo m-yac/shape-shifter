@@ -54,6 +54,91 @@ function faceLoop(f: HEFace): number[] {
   return loop;
 }
 
+/**
+ * Per-face apex height for a planar-faced Join (the dual of truncate's
+ * `computeCollapseFractions`).
+ *
+ * Kis raises a pyramid of height h_f (along the face normal) on every face; at
+ * Join two pyramid triangles straddling a shared edge merge into one quad. That
+ * quad `[P1, apex_f, P2, apex_g]` is planar iff P1, P2, apex_f, apex_g are
+ * coplanar, i.e. the scalar triple product
+ *   R(h_f,h_g) = (apex_f−P1)·((P2−P1)×(apex_g−P1)) = A·h_f·h_g + β·h_f + α·h_g + C
+ * vanishes (apex_f = c_f + h_f·n_f). A single per-face height that hits R=0 on
+ * *every* incident edge does not exist for a non-canonical solid (each face has
+ * one apex but several edges), so — exactly as truncate solves one radial-depth
+ * δ per vertex by least squares over the edges — we solve one height h_f per face
+ * by least squares over the join quads. For the triakis tetra this is exact.
+ *
+ * The residual is bilinear in (h_f,h_g), so a per-face update is linear once the
+ * neighbours are fixed: with p = A·h_g+β and q = α·h_g+C over f's edges,
+ *   h_f = −Σ p·q / Σ p²   (coordinate descent, seeded at the symmetric height).
+ */
+export function computeJoinHeights(poly: Polyhedron): Map<number, number> {
+  const dcel = poly.dcel;
+  const cen = new Map<number, Vector3>();
+  const nrm = new Map<number, Vector3>();
+  for (const f of dcel.faces) {
+    cen.set(f.id, faceCentroidHE(f));
+    nrm.set(f.id, faceNormalHE(f));
+  }
+
+  // Symmetric (h_f = h_g) seed: current behaviour — max join height over edges,
+  // fallback to half the centroid→vertex distance for a face with no neighbours.
+  const seed = new Map<number, number>();
+  for (const f of dcel.faces) {
+    let h = 0;
+    let he = f.halfedge;
+    const start = he;
+    do {
+      const g = he.twin!.face;
+      const solved = joinHeight(
+        he.origin.position, he.next.origin.position,
+        cen.get(f.id)!, nrm.get(f.id)!, cen.get(g.id)!, nrm.get(g.id)!,
+      );
+      if (solved && solved > 1e-6) h = Math.max(h, solved);
+      he = he.next;
+    } while (he !== start);
+    if (h <= 1e-6) h = 0.5 * cen.get(f.id)!.distanceTo(f.halfedge.origin.position);
+    seed.set(f.id, h);
+  }
+
+  // Per-face bilinear coefficients of the join-quad residual, variable = h_f.
+  type Inc = { A: number; b: number; a: number; C: number; other: number };
+  const incident = new Map<number, Inc[]>();
+  for (const f of dcel.faces) incident.set(f.id, []);
+  for (const he of dcel.halfedges) {
+    const f = he.face, g = he.twin!.face;
+    const P1 = he.origin.position, w = he.next.origin.position.clone().sub(P1);
+    const nf = nrm.get(f.id)!, ng = nrm.get(g.id)!;
+    const uf = cen.get(f.id)!.clone().sub(P1), ug = cen.get(g.id)!.clone().sub(P1);
+    const wxng = new Vector3().crossVectors(w, ng);
+    const wxug = new Vector3().crossVectors(w, ug);
+    incident.get(f.id)!.push({
+      A: nf.dot(wxng),   // h_f·h_g
+      b: nf.dot(wxug),   // h_f
+      a: uf.dot(wxng),   // h_g
+      C: uf.dot(wxug),   // const
+      other: g.id,
+    });
+  }
+
+  const h = new Map(seed);
+  const bound = 4 * Math.max(...seed.values());
+  for (let round = 0; round < 400; round++) {
+    for (const f of dcel.faces) {
+      let num = 0, den = 0;
+      for (const e of incident.get(f.id)!) {
+        const hg = h.get(e.other)!;
+        const p = e.A * hg + e.b, q = e.a * hg + e.C;
+        num += p * q;
+        den += p * p;
+      }
+      if (den > 1e-12) h.set(f.id, Math.max(1e-4, Math.min(bound, -num / den)));
+    }
+  }
+  return h;
+}
+
 interface KFace {
   id: number;
   centroid: Vector3;
@@ -77,7 +162,7 @@ interface KisData {
   joinDissolve: Array<[number, number]>;
 }
 
-function buildKisData(poly: Polyhedron, kissed: Set<number>): KisData {
+function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number, number>): KisData {
   const dcel = poly.dcel;
   const old = poly.colors;
   const V = dcel.vertices.length;
@@ -88,25 +173,9 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>): KisData {
     if (!kissed.has(f.id)) continue;
     const centroid = faceCentroidHE(f);
     const normal = faceNormalHE(f);
-    let hJoin = 0;
-    let he = f.halfedge;
-    const start = he;
-    do {
-      const g = he.twin!.face;
-      if (kissed.has(g.id)) {
-        const solved = joinHeight(
-          he.origin.position,
-          he.next.origin.position,
-          centroid,
-          normal,
-          faceCentroidHE(g),
-          faceNormalHE(g),
-        );
-        if (solved && solved > 1e-6) hJoin = Math.max(hJoin, solved);
-      }
-      he = he.next;
-    } while (he !== start);
-    if (hJoin <= 1e-6) hJoin = 0.5 * centroid.distanceTo(f.halfedge.origin.position);
+    // Solved per-face height that keeps the Join quads planar (see
+    // computeJoinHeights); fall back to half the centroid→vertex distance.
+    const hJoin = heights.get(f.id) ?? 0.5 * centroid.distanceTo(f.halfedge.origin.position);
     kfaces.set(f.id, { id: f.id, centroid, normal, hJoin, apex: apexIdx++ });
   }
   const vertexCount = apexIdx;
@@ -214,6 +283,9 @@ function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; fac
 /**
  * Kis → Join, driven by dragging a face center outward along its normal.
  *
+ * Each face rises to a per-face apex height (see `computeJoinHeights`) chosen so
+ * the merged Join quads stay planar, rather than a single symmetric join height.
+ *
  * Staging (dual of truncate): the preview always raises a pyramid on EVERY face.
  * The SELECTED arity group rises from t=0 (`frac = t`); every OTHER face stays flat
  * (`frac = clamp(2t−1)`) until t=0.5, then rises too, so the drag reads as an n-kis,
@@ -231,7 +303,10 @@ export function buildKis(
   selectedSet.add(draggedFid);
   const isPartial = selectedSet.size < allIds.length;
 
-  const full = buildKisData(poly, new Set(allIds));
+  // Per-face apex heights that keep the Join quads planar (dual of truncate's
+  // per-edge collapse fractions). Computed once on the full solid.
+  const heights = computeJoinHeights(poly);
+  const full = buildKisData(poly, new Set(allIds), heights);
 
   const selFrac = (t: number) => t;
   const nonFrac = (t: number) => Math.max(0, Math.min(1, 2 * t - 1));
@@ -276,7 +351,7 @@ export function buildKis(
       return { mesh: { vertices: positions(t), faces }, colors: { vertex: full.vertexColor.slice(), face: faceColors, edge } };
     }
     if (isPartial && t < 0.5) {
-      const sub = buildKisData(poly, selectedSet);
+      const sub = buildKisData(poly, selectedSet, heights);
       return {
         mesh: { vertices: kisPositions(poly, sub, () => selFrac(t)), faces: sub.previewFaces.map((f) => f.slice()) },
         colors: { vertex: sub.vertexColor.slice(), face: sub.faceColor.slice(), edge: new Map(sub.edgeColor) },
