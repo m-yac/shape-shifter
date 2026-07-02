@@ -1,4 +1,4 @@
-import { Vector3, Ray, Color } from "three";
+import { Vector3, Matrix3, Ray, Color } from "three";
 import {
   type Mesh,
   type DCEL,
@@ -93,6 +93,7 @@ interface QVert {
   slideFull: Vector3; // full in-plane slide toward the opposite edge (t=1)
   liftFull: Vector3; // full outward lift off the join face (t=1)
   liftExp: number; // exponent p in this q's lift schedule lift(t) = t^p (see liftExponent)
+  dihedral: number; // interior dihedral (rad) of the join edge this q sits over
 }
 
 /**
@@ -118,6 +119,17 @@ export function buildGyro(
   const old = poly.colors;
   const color = twoColorVertices(dcel);
 
+  // Welded max: dissolve every original edge (shared by two faces of the join). Built up
+  // front (independent of chirality) so the per-variant target solver below can weld the
+  // preview into the true gyro faces it needs to flatten.
+  const dissolve = new Set<string>();
+  const dissolveList: Array<[number, number]> = [];
+  for (const he of dcel.halfedges) {
+    if (!he.twin || he.id >= he.twin.id) continue;
+    dissolve.add(edgeKey(he.origin.id, he.next.origin.id));
+    dissolveList.push([he.origin.id, he.next.origin.id]);
+  }
+
   function buildVariant(startColor: 0 | 1): {
     previewFaces: number[][];
     vertexCount: number;
@@ -135,6 +147,7 @@ export function buildGyro(
     const ownerFace = new Map<number, number>();
     const centerEdges = new Map<string, number>();
     const qverts: QVert[] = [];
+    const qNormal = new Map<number, Vector3>(); // q index -> its home face's outward normal
     let idx = V;
 
     for (const f of dcel.faces) {
@@ -189,8 +202,10 @@ export function buildGyro(
           .multiplyScalar(config.operations.gyroLiftFactor * cotHalf * v0.length());
         // Lift schedule exponent from THIS q's join-edge dihedral (recovered from
         // cot(dihedral/2)): sharper edges lift earlier so the split face stays flat.
-        const liftExp = liftExponent(2 * Math.atan2(1, cotHalf));
-        qverts.push({ index: q, start: mid.clone(), slideFull, liftFull, liftExp });
+        const dihedral = 2 * Math.atan2(1, cotHalf);
+        const liftExp = liftExponent(dihedral);
+        qverts.push({ index: q, start: mid.clone(), slideFull, liftFull, liftExp, dihedral });
+        qNormal.set(q, faceNormal);
         vertexColor[q] = cf + 2;
         ownerFace.set(q, f.id);
       }
@@ -209,7 +224,15 @@ export function buildGyro(
         faceStart.push(old.face[f.id]);
         previewFaces.push([qIdx[(j + 1) % n], P[2 * j + 1], P[(2 * j + 2) % m]]);
         faceColor.push(old.edge.get(edgeKey(P[2 * j + 1], P[(2 * j + 2) % m])) ?? 0);
-        faceStart.push(old.face[f.id]);
+        // This triangle-half is welded (across its dissolved join edge P[2j+1]→P[2j+2])
+        // into the quad/pentagon-half of the NEIGHBOUR face to form one gyro face. Start
+        // it at that neighbour's colour — the colour of the face the merged gyro face is
+        // splitting — rather than its own face's, so the merged face fades as a SINGLE
+        // colour from t=0 instead of showing a seam of two colours along the (now
+        // dissolved, hidden) old join edge.
+        const triBoundary = bh[(s + 2 * j + 1) % m];
+        const triNeighbor = triBoundary.twin ? triBoundary.twin.face.id : f.id;
+        faceStart.push(old.face[triNeighbor]);
       }
     }
 
@@ -226,19 +249,105 @@ export function buildGyro(
       }
     }
 
+    // Re-solve each q's target so the welded gyro faces land planar at t=1 even on a
+    // non-canonical (un-relaxed) join, then keep the same lift schedule (see below).
+    solveGyroTargets(qverts, qNormal, previewFaces, faceColor);
+
     return { previewFaces, vertexCount: idx, vertexColor, faceColor, faceStart, edgeColor, qverts };
   }
 
-  const variants = ([0, 1] as const).map((startColor) => buildVariant(startColor));
+  /**
+   * Per-q target solve that keeps the finished gyro faces planar on a raw, un-relaxed
+   * join — the gyro analog of kis's `computeJoinHeights`.
+   *
+   * The heuristic q target (edge-midpoint + a fixed-fraction slide toward the opposite
+   * edge + a cot(dihedral/2) lift) lands a FLAT pentagon only on a canonical join, whose
+   * quads are congruent. On a non-canonical join (mixed face types, e.g. join of a
+   * cuboctahedron) the same target leaves the t=1 pentagon ~5% of an edge non-planar, and
+   * no lift SCHEDULE can flatten a non-planar endpoint (see
+   * investigations/gyro_lift_exponent.investigate.ts). So we move each q to the point that
+   * best lies on the planes of its incident gyro faces: for each welded pentagon touching
+   * q we require q on the best-fit plane of that face's OTHER vertices — a linear residual
+   * nᵢ·(q−cᵢ)=0 — and least-squares them with a light Tikhonov pull (λ) toward the heuristic
+   * seed (which pins the otherwise-free edge-tangent direction and the underdetermined
+   * canonical case). The faces couple through shared q's, so it's Gauss-Seidel, exactly
+   * like computeJoinHeights.
+   *
+   * The solved target is then split back into an in-plane `slideFull` and an along-normal
+   * `liftFull`, so the drag still runs the slide linearly and leads the lift on t^liftExp
+   * (keeping the "lift has no in-plane component" invariant), only now aimed at a target
+   * that is actually planar.
+   */
+  function solveGyroTargets(
+    qverts: QVert[],
+    qNormal: Map<number, Vector3>,
+    previewFaces: number[][],
+    faceColor: number[],
+  ): void {
+    const bigFaces = weldedFaces(previewFaces, faceColor).faces.filter((f) => f.length > 3);
+    if (!qverts.length) return;
+    const incident = new Map<number, number[][]>(); // q index -> welded faces touching it
+    for (const f of bigFaces) for (const v of f) if (v >= V) (incident.get(v) ?? incident.set(v, []).get(v)!).push(f);
 
-  // Welded max: dissolve every original edge (shared by two faces of the join).
-  const dissolve = new Set<string>();
-  const dissolveList: Array<[number, number]> = [];
-  for (const he of dcel.halfedges) {
-    if (!he.twin || he.id >= he.twin.id) continue;
-    dissolve.add(edgeKey(he.origin.id, he.next.origin.id));
-    dissolveList.push([he.origin.id, he.next.origin.id]);
+    const seed = new Map<number, Vector3>();
+    const cur = new Map<number, Vector3>();
+    for (const q of qverts) {
+      const target = q.start.clone().add(q.slideFull).add(q.liftFull);
+      seed.set(q.index, target);
+      cur.set(q.index, target.clone());
+    }
+    const posOf = (vid: number): Vector3 => (vid < V ? dcel.vertices[vid].position : cur.get(vid)!);
+    const LAMBDA = 0.1; // Tikhonov weight vs the unit-normal data terms
+
+    for (let round = 0; round < 60; round++) {
+      for (const q of qverts) {
+        const faces = incident.get(q.index);
+        if (!faces || !faces.length) continue;
+        // Normal equations (Σnnᵀ + λI)·q = Σn(n·c) + λ·seed, symmetric 3×3.
+        const s = seed.get(q.index)!;
+        let m00 = LAMBDA, m01 = 0, m02 = 0, m11 = LAMBDA, m12 = 0, m22 = LAMBDA;
+        const rhs = s.clone().multiplyScalar(LAMBDA);
+        for (const f of faces) {
+          // Best-fit plane of this face's OTHER vertices (Newell normal + centroid).
+          const nrm = new Vector3();
+          const c = new Vector3();
+          let cnt = 0;
+          const others = f.filter((v) => v !== q.index); // keeps cyclic order
+          for (let i = 0; i < others.length; i++) {
+            const a = posOf(others[i]);
+            const b = posOf(others[(i + 1) % others.length]);
+            nrm.x += (a.y - b.y) * (a.z + b.z);
+            nrm.y += (a.z - b.z) * (a.x + b.x);
+            nrm.z += (a.x - b.x) * (a.y + b.y);
+            c.add(a);
+            cnt++;
+          }
+          if (nrm.lengthSq() < 1e-20 || cnt === 0) continue;
+          nrm.normalize();
+          c.multiplyScalar(1 / cnt);
+          const d = nrm.dot(c);
+          m00 += nrm.x * nrm.x; m01 += nrm.x * nrm.y; m02 += nrm.x * nrm.z;
+          m11 += nrm.y * nrm.y; m12 += nrm.y * nrm.z; m22 += nrm.z * nrm.z;
+          rhs.addScaledVector(nrm, d);
+        }
+        // Solve the SPD 3×3 (always invertible: λI added). three's Matrix3 is row-major set.
+        const inv = new Matrix3().set(m00, m01, m02, m01, m11, m12, m02, m12, m22).invert();
+        cur.set(q.index, rhs.clone().applyMatrix3(inv));
+      }
+    }
+
+    // Split each solved target back into slide (in-plane) + lift (along the face normal).
+    for (const q of qverts) {
+      const target = cur.get(q.index)!;
+      const nrm = qNormal.get(q.index)!;
+      const disp = target.clone().sub(q.start);
+      const liftMag = disp.dot(nrm);
+      q.liftFull = nrm.clone().multiplyScalar(liftMag);
+      q.slideFull = disp.sub(q.liftFull); // in-plane remainder
+    }
   }
+
+  const variants = ([0, 1] as const).map((startColor) => buildVariant(startColor));
 
   function weldedFaces(faces: number[][], faceColorsIn: number[]): { faces: number[][]; faceColors: number[] } {
     const occ = new Map<string, Array<{ fi: number; i: number }>>();
@@ -426,6 +535,10 @@ export function buildGyro(
       start: q.start.clone(),
       slideFull: q.slideFull.clone(),
       liftFull: q.liftFull.clone(),
+      liftExp: q.liftExp,
+      dihedral: q.dihedral,
     })),
-  } as MorphPlan & { _qData(): Array<{ index: number; start: Vector3; slideFull: Vector3; liftFull: Vector3 }> };
+  } as MorphPlan & {
+    _qData(): Array<{ index: number; start: Vector3; slideFull: Vector3; liftFull: Vector3; liftExp: number; dihedral: number }>;
+  };
 }
