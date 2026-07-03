@@ -26,8 +26,8 @@ export const config = {
       join: true, // the welded "max" end of the kis drag (drag fully out)
       snub: true, // continue a full-rectify vertex drag onto the twist arc
       gyro: true, // continue a full-join face drag onto the twist arc
-      chamfer: false, // drag an edge midpoint sideways along a bordering face
-      subdivide: false, // drag an edge midpoint outward along the edge normal
+      chamfer: true, // drag an edge midpoint sideways along a bordering face
+      subdivide: true, // drag an edge midpoint outward along the edge normal
     },
 
     multiSelect: true, // Cmd (macOS) / Ctrl: select several elements before dragging

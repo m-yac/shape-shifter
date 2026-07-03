@@ -124,7 +124,16 @@ interface EdgeAxisInfo {
   midpoint: Vector3;
   faceA: number;
   faceB: number;
-  axes: Array<{ which: "A" | "B" | "normal"; dir: Vector3 }>;
+  // Each axis is a half-line (ray) from the midpoint along `dir` — the direction the
+  // cursor must head to select it. Chamfer axes carry the bordering face's centroid +
+  // outward normal so a face turned away from the camera can be culled (the chamfer
+  // analog of truncate refusing edges facing away); the subdivide (`normal`) axis has
+  // no `view` and is always available.
+  axes: Array<{
+    which: "A" | "B" | "normal";
+    dir: Vector3;
+    view?: { point: Vector3; normal: Vector3 };
+  }>;
 }
 
 /** The live axis state of an edge (chamfer / subdivide) drag. */
@@ -785,7 +794,21 @@ export class DragController {
     // re-pick the nearest axis each frame so the cursor can switch operations.
     if (d.kind === "edge") {
       this.updateEdgeAxis(ray);
-      this.showBasePreview(d, d.base.plan.snap(ray), false, false);
+      const snap = d.base.plan.snap(ray);
+      let t = snap.t;
+      let weld = false;
+      if (t >= 1) {
+        if (d.base.allowMax) weld = true;
+        else t = MAX_T_WITHOUT_WELD;
+      }
+      // Record the drag parameter so a release commits (without this, d.t stays 0
+      // and the release reads as a negligible drag and snaps back).
+      d.t = weld ? 1 : t;
+      d.weld = weld;
+      this.showBasePreview(d, snap, weld, true);
+      this.readout.setDrag({
+        kind: d.base.plan.kind, weld: d.weld, t: d.t, selIds: null, selKind: "edge",
+      });
       return;
     }
 
@@ -1173,16 +1196,20 @@ export class DragController {
       if (n.dot(faceCentroidHE(f)) < 0) n.negate();
       return n;
     };
-    const dirA = perp(faceCentroidHE(fA).sub(mid));
-    const dirB = perp(faceCentroidHE(fB).sub(mid));
-    const normalDir = outward(fA).add(outward(fB)).normalize();
+    const cA = faceCentroidHE(fA);
+    const cB = faceCentroidHE(fB);
+    const dirA = perp(cA.clone().sub(mid));
+    const dirB = perp(cB.clone().sub(mid));
+    const nA = outward(fA);
+    const nB = outward(fB);
+    const normalDir = nA.clone().add(nB).normalize();
     return {
       midpoint: mid,
       faceA: fA.id,
       faceB: fB.id,
       axes: [
-        { which: "A", dir: dirA },
-        { which: "B", dir: dirB },
+        { which: "A", dir: dirA, view: { point: cA, normal: nA } },
+        { which: "B", dir: dirB, view: { point: cB, normal: nB } },
         { which: "normal", dir: normalDir },
       ],
     };
@@ -1245,7 +1272,15 @@ export class DragController {
     let best: { which: "A" | "B" | "normal"; dist: number } | null = null;
     for (const ax of info.axes) {
       if (ax.dir.lengthSq() < 1e-12) continue;
-      const s = closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction);
+      // Skip a chamfer axis whose bordering face is turned away from the camera (the
+      // face analog of truncate culling edges that face away): on a back face only
+      // the other chamfer line and the subdivide line remain selectable.
+      if (ax.view && !this.inView(ax.view.point, [ax.view.normal])) continue;
+      // Measure to the HALF-line (ray from the midpoint along `dir`), not the full
+      // line: clamping the parameter at 0 means the region opposite an axis no longer
+      // snaps to it, so the three axes carve the space into three regions (one around
+      // each line) instead of pairing each line with its opposite.
+      const s = Math.max(0, closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction));
       const point = info.midpoint.clone().add(ax.dir.clone().multiplyScalar(s));
       const dist = distancePointToRay(point, ray);
       if (!best || dist < best.dist) best = { which: ax.which, dist };
