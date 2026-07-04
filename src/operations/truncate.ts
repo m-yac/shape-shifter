@@ -272,12 +272,16 @@ function truncationPositions(
  * @param poly       current polyhedron
  * @param draggedVid the vertex grabbed (the drag handle, always in the selection)
  * @param selected   the arity group / multi-select subset (null → whole solid)
+ * @param collapse   precomputed per-half-edge collapse fractions (from
+ *   `computeCollapseFractions`); solved here if omitted. Callers that drag the same
+ *   solid repeatedly should pass a memoized map — the solve is costly.
  */
 export function buildTruncate(
   poly: Polyhedron,
   draggedVid: number,
   selected: Set<number> | null,
   inView: InViewTest | null = null,
+  collapse: Map<number, number> = computeCollapseFractions(poly),
 ): MorphPlan {
   const dcel = poly.dcel;
   const allIds = dcel.vertices.map((v) => v.id);
@@ -288,8 +292,7 @@ export function buildTruncate(
   // The preview / weld topology is the full truncation of every vertex.
   const full = buildTruncationData(poly, new Set(allIds));
 
-  // Per-half-edge collapse fraction (equal radial depth → planar vertex n-gons).
-  const collapse = computeCollapseFractions(poly);
+  // `collapse` is the per-half-edge fraction (equal radial depth → planar vertex n-gons).
   type CutEnd = TruncationData["cutEnds"][number];
   const sOf = (c: CutEnd) => collapse.get(c.heId) ?? 0.5;
   const selCut = (c: CutEnd, t: number) => sOf(c) * t;

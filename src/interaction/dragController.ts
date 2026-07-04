@@ -13,7 +13,7 @@ import {
   type SchemeName,
 } from "../geometry/colors";
 import { type MorphPlan } from "../operations/types";
-import { buildTruncate, closestIncidentEdge } from "../operations/truncate";
+import { buildTruncate, closestIncidentEdge, computeCollapseFractions } from "../operations/truncate";
 import { buildKis } from "../operations/kis";
 import { buildSnub } from "../operations/snub";
 import { buildGyro } from "../operations/gyro";
@@ -67,6 +67,10 @@ const TWIST_ENGAGE_T = 0.04;
 // retreats back down the truncation line below this t (hysteresis, so nudging onto
 // the arc doesn't snap back to truncating).
 const WELD_UNLATCH_T = 0.75;
+// The twist plan is rebuilt only when its weld anchor (rectify vertex / join apex)
+// moves more than this. The anchor is piecewise-constant per incident edge/face, so
+// this is effectively "rebuild only when the base handle switches", not per frame.
+const TWIST_ANCHOR_EPS = 1e-5;
 
 interface Pending {
   marker: Marker | null;
@@ -97,6 +101,10 @@ interface Drag {
   // base drag passes `arcFadeStartT` (so the arc can hint), and drives the morph once
   // the base welds (t=1) and the cursor moves onto the arc. Null when unavailable.
   twist: PlanSlot | null;
+  // The weld anchor `twist` was built for (rectify vertex / join apex). The plan is
+  // an expensive per-frame rebuild (snub's two chiral variants / gyro's planarity
+  // solve), so we keep it while the anchor holds still and only rebuild when it moves.
+  twistAnchor: Vector3 | null;
   twisting: boolean; // the cursor has engaged the twist arc (snub/gyro active)
   weldLatched: boolean; // base reached the full rectify/join (latched with hysteresis)
   lastRay: Ray | null; // last pick ray, so a re-preview can run in place
@@ -182,6 +190,9 @@ export class DragController {
   // Memoized per-vertex degree (incident-face count) for the current polyhedron,
   // rebuilt only when `this.current` changes.
   private degCache: { poly: Polyhedron; deg: number[] } | null = null;
+  // Memoized per-half-edge truncation collapse fractions for the current
+  // polyhedron (an expensive least-squares solve), rebuilt only when it changes.
+  private collapseCache: { poly: Polyhedron; collapse: Map<number, number> } | null = null;
 
   private readonly picker = new Picker();
   private readonly selection: Selection; // created in the constructor, wired to the readout
@@ -662,6 +673,15 @@ export class DragController {
     return deg;
   }
 
+  /** Per-half-edge truncation collapse fractions for the current polyhedron,
+   *  memoized until it changes (the solve is far too costly to redo per hover). */
+  private collapseFractions(): Map<number, number> {
+    if (this.collapseCache?.poly === this.current) return this.collapseCache.collapse;
+    const collapse = computeCollapseFractions(this.current);
+    this.collapseCache = { poly: this.current, collapse };
+    return collapse;
+  }
+
   /** A marker's arity: a face's side count, or a vertex's degree. */
   private arityOf(m: Marker): number {
     return m.kind === "face"
@@ -836,13 +856,23 @@ export class DragController {
     else if (!d.twisting && baseT < WELD_UNLATCH_T) d.weldLatched = false;
 
     // Build (or refresh) the twist plan once the base drag is deep enough. It is
-    // frozen while actively twisting so its anchor can't jump.
+    // frozen while actively twisting so its anchor can't jump, and otherwise reused
+    // across frames while its weld anchor holds still (rebuilding it runs the snub /
+    // gyro solve, far too costly to redo every mouse-move).
     const twistAvail = !!twistOp && (baseT > ARC_FADE_START || d.weldLatched);
     if (!twistAvail) {
       d.twist = null;
+      d.twistAnchor = null;
       d.twisting = false;
     } else if (!d.twisting) {
-      d.twist = this.buildTwist(d, baseSnap.highlight?.b);
+      const anchor = baseSnap.highlight?.b;
+      const stale =
+        !d.twist || !d.twistAnchor || !anchor ||
+        d.twistAnchor.distanceTo(anchor) > TWIST_ANCHOR_EPS;
+      if (stale) {
+        d.twist = this.buildTwist(d, anchor);
+        d.twistAnchor = d.twist && anchor ? anchor.clone() : null;
+      }
     }
 
     // Snub (vertex twist) rides straight LINE handles that sit alongside the base
@@ -1092,7 +1122,7 @@ export class DragController {
     this.shapes.setSolving(false);
     this.drag = {
       base, sel,
-      twist: null, twisting: false, weldLatched: false, lastRay: null,
+      twist: null, twistAnchor: null, twisting: false, weldLatched: false, lastRay: null,
       kind, id,
       hasSelection: persistent,
       selCount: sel ? sel.size : null,
@@ -1119,7 +1149,7 @@ export class DragController {
     try {
       if (kind === "vertex") {
         if (!ops.truncate) return null;
-        return { plan: buildTruncate(this.current, id, sel, this.inView), allowMax: ops.rectify };
+        return { plan: buildTruncate(this.current, id, sel, this.inView, this.collapseFractions()), allowMax: ops.rectify };
       }
       if (!ops.kis) return null;
       return { plan: buildKis(this.current, id, sel), allowMax: ops.join };
@@ -1242,6 +1272,7 @@ export class DragController {
       base: slot,
       sel: null,
       twist: null,
+      twistAnchor: null,
       twisting: false,
       weldLatched: false,
       lastRay: null,
@@ -1682,7 +1713,7 @@ export class DragController {
     if (marker.id >= (marker.kind === "vertex" ? this.current.vertices : this.current.faces).length)
       return;
     if (marker.kind === "vertex" && config.features.operations.truncate) {
-      const e = closestIncidentEdge(this.current, marker.id, ray, this.inView);
+      const e = closestIncidentEdge(this.current, marker.id, ray, this.inView, this.collapseFractions());
       // While only hovering (not dragging) the line spans the FULL drag range: the
       // vertex center (e.from) → the rectify max (e.mid, the edge midpoint). It does
       // NOT shrink to the snapped cursor position; that only happens during a drag.
