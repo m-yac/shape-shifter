@@ -114,7 +114,7 @@ interface TruncationData {
   weldPairs: Array<[number, number]>;
   /** Rectify vertex colors (oldEdge) — used when the two cut ends weld. */
   vertexColor: GeomColor[];
-  /** Truncated-form vertex colors (truncate.newVertex = oldVertex + oldEdge/10). */
+  /** Truncated-form vertex colors (truncate.newVertex). */
   truncVertexColor: GeomColor[];
   faceColor: GeomColor[];
   edgeColor: Map<string, GeomColor>;
@@ -186,15 +186,15 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
   }
 
   // Colors (config.colors.operations.truncate / rectify):
-  //   cut vertex, TRUNCATED form ← truncate.newVertex = old vertex + its old edge/10.
-  //   cut vertex, WELDED (Rectify) form ← its original edge color (rectify.newVertex):
+  //   cut vertex, TRUNCATED form ← truncate.newVertex.
+  //   cut vertex, WELDED (Rectify) form ← rectify.newVertex:
   //     the two ends of an edge carry the SAME oldEdge but DIFFERENT oldVertex, so the
   //     truncate color can't survive welding (weldVertexPairs needs the pair to agree);
   //     the rectify color does. We keep both colorings and pick per commit path.
   //   kept vertex keeps its color.
-  //   exposed n-gon ← truncate.newFace = old vertex color.
+  //   exposed n-gon ← truncate.newFace.
   //   original faces keep theirs.
-  //   n-gon perimeter edge ← truncate.newEdge = old vertex + nth bordering-face/10.
+  //   n-gon perimeter edge ← truncate.newEdge (its nth source is the bordering face).
   //   surviving edge remnant ← its original edge color.
   const C = config.colors.operations;
   const vertexColor: GeomColor[] = new Array(vertexCount);

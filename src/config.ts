@@ -218,11 +218,11 @@ export const config = {
   // ---------------------------------------------------------------------------
   colors: {
     // A geometric color is an RGB-style TRIPLE built up by the operation rules
-    // below (a rule `["oldVertex","oldFace"]` means oldVertexTriple +
-    // oldFaceTriple/10; each extra token divides by a further ×10). The `schemes`
-    // then declare which triples are "visually the same" — each group lists the
-    // triples that render as its named `swatch`. A computed triple matching no
-    // group falls back to `defaultSwatch`.
+    // below (each rule maps old tokens to the coefficients their triples are
+    // weighted by, e.g. `{oldVertex: 1.0, oldFace: 0.5}` means oldVertexTriple +
+    // oldFaceTriple/2). The `schemes` then declare which triples are "visually the
+    // same" — each group lists the triples that render as its named `swatch`. A
+    // computed triple matching no group falls back to `defaultSwatch`.
     //
     // The swatch NAMES are the keys of `render.palette` (which carries the
     // face / edge / l_face / l_edge hexes for each); that map is the single hex
@@ -230,6 +230,11 @@ export const config = {
 
     // The swatch used for any computed triple that matches no scheme group.
     defaultSwatch: "white",
+    // Each face/vert/edge group also gets a synthesized `<swatch>Adj` swatch (used for
+    // triples tinted by an adjacent group — see adjacentTriples in geometry/colors.ts).
+    // This is how far that swatch is blended from its base toward `defaultSwatch`, in
+    // [0, 1]: 0 = identical to the base, 1 = the default swatch.
+    adjacentSwatchBlend: 0.5,
     // The color scheme selected on load (a key of `schemes`). A freshly-loaded
     // seed is colored under the scheme its topology matches (see schemeForMesh in
     // geometry/colors.ts): each face / vertex / edge takes the representative
@@ -248,37 +253,55 @@ export const config = {
         // tetrahedron or, via rectification, a vertex of the tetrahedron
         // (Dual: Each vertex of the cube comes from either a vertex of the
         // tetrahedron or, via joining, a face of the tetrahedron)
-        face: { swatch: "yellow", triples: [[1, 0, 0], [0, 1, 0]] },
+        face: {
+          swatch: "yellow",
+          triples: [[1, 0, 0], [0, 1, 0]]
+        },
         // Each vertex of the octahedron comes from an edge of the tetrahedron
         // via rectification
         // (Dual: Each face of the cube comes from an edge of the tetrahedron
         // via joining)
-        vert: { swatch: "red", triples: [[0, 0, 1]] },
+        vert: {
+          swatch: "red",
+          triples: [[0, 0, 1]]
+        },
         // Each edge of the octahedron comes from a vertex of the tetrahedron
         // via truncating it into an adjacent face
         // (Dual: Each edge of the cube comes from a face of the tetrahedron
         // via augmenting it with a connection to an adjacent vertex)
-        edge: { swatch: "blue", triples: [[1, 0.1, 0], [0.1, 1, 0]] },
+        edge: {
+          swatch: "blue",
+          triples: [[1, 1, 0]]
+        },
       },
       icosahedral: {
         // Each face of the icosahedron comes from either a face of the
-        // octahedron or, via snubbing, an edge of the octahedron
+        // octahedron or an edge of the octahedron opened up as a vertex of
+        // the octahedron split via snubbing
         // (Dual: Each vertex of the dodecahedron comes from either a vertex of
-        // the cube or, via gyro, an edge of the cube)
-        face: { swatch: "yellow", triples: [[1, 0, 0], [0, 1, 0], [1, 0.1, 0], [0.1, 1, 0]] },
-        // Each vertex of the icosahedron comes from a vertex of the octahedron
-        // via snubbing it along an edge of the octahedron
+        // the cube or an edge of the cube split up as a face of the cube
+        // split via gyro-ing)
+        face: {
+          swatch: "yellow",
+          triples: [[1, 0, 0], [0, 1, 0], [1, 1, 0.5]]
+        },
+        // Each vertex of the icosahedron comes from a vertex of the
+        // octahedron moved along an edge of the octahedron via snubbing
         // (Dual: Each face of the dodecahedron comes from a face of the
-        // cube via gyro-ing it into an edge of the cube)
-        vert: { swatch: "red", triples: [[0.1, 0.01, 1], [0.01, 0.1, 1]] },
+        // cube moved expanded from an edge of the cube via gyro-ing)
+        vert: {
+          swatch: "red",
+          triples: [[0.5, 0.5, 1]]
+        },
         // Each edge of the icosahedron comes from either a vertex of the
-        // octahedron, or from an edge of the octahedron via snubbing it into
-        // an adjacent face of the octahedron
+        // octahedron, or from a face of the octahedron adjacent to it
         // (Dual: Each edge of the dodecahedron comes from either a face of
-        // the cube, or from an edge of the cube via gyro-ing it around a
+        // the cube, or from a face/ edge of the cube via gyro-ing it around a
         // vertex of the cube)
-        edge: { swatch: "blue", triples: [[0, 0, 1], [1.1, 0.1, 0], [1, 0.2, 0],
-                                           [0.2, 1, 0], [0.1, 1.1, 0]] },
+        edge: {
+          swatch: "blue",
+          triples: [[0, 0, 1], [1, 0, 0.5], [0, 1, 0.5]]
+        },
       }
     },
     // How to color new elements for each operation. Tokens oldVertex/oldFace/
@@ -286,62 +309,70 @@ export const config = {
     // the "nth" wording picks a specific neighbor of that old element.
     operations: {
       // Operations on a vertex, where n is in {1, ..., degree}:
-      // - "oldVertex" is the color of the vertex being operated on
+      // - oldVertex is the color of the vertex being operated on
       // - oldEdge is the color of the nth edge adjacent to it
       // - oldFace is the color of the nth face adjacent to it
       // (Dual operations are automatically derived.) SNUB is the exception: it twists a
       // rectification, so its "old" tokens are in rectify space — see its block below.
       truncate: {
         // new face color = old vertex color
-        newFace: ["oldVertex"],
-        // nth new edge color = old vertex color + nth old face color / 10
-        newEdge: ["oldVertex", "oldFace"],
-        // nth new vertex color = old vertex color + nth old edge color / 10
-        newVertex: ["oldVertex", "oldEdge"],
+        newFace: {oldVertex: 1.0},
+        // nth new edge color = nth old face color + old vertex color
+        newEdge: {oldFace: 1.0, oldVertex: 1.0},
+        // nth new vertex color = nth old edge color + old vertex color / 2
+        newVertex: {oldEdge: 1.0, oldVertex: 0.5},
       },
       rectify: {
+        // new face color = old vertex color
+        newFace: {oldVertex: 1.0},
+        // nth new edge color = nth old face color + old vertex color
+        newEdge: {oldFace: 1.0, oldVertex: 1.0},
         // nth new vertex color = nth old edge color
-        newVertex: ["oldEdge"],
-        // otherwise, use newFace and newEdge from `truncate`
+        newVertex: {oldEdge: 1.0},
       },
-      // SNUB is not built on the original solid but as a TWIST OF THE RECTIFICATION,
-      // so here — uniquely — "old" refers to the RECTIFY solid: oldFace/oldVertex/
-      // oldEdge are the colors of the rectify face / vertex / edge a new snub element
-      // derives from (the operation code reads them straight off the rectification's own
-      // stored colors). Each rectify FACE becomes a rotated snub face; each rectify
-      // VERTEX splits into two vertices joined by a new edge; each rectify EDGE opens
-      // into a gap triangle. (Gyro, snub's dual, reuses these rules dualized.)
+      // NB: Snub is built as an operation on the vertices of a rectified
+      // solid, so "old" here refers to the faces/edges/vertices of the
+      // rectification of the shape being snubbed, not of that original shape.
+      // Each degree-4 vertex splits into two based on a chosen chiral
+      // direction, thus where n is in {1,2,3,4} and m is in either {1,3} or
+      // {2,4} depending on the chirality:
+      // - oldVertex is the color of the rectified vertex being operated on
+      // - oldFace is the color of the nth rectified face adjacent to it
+      // - oldEdge is the color of the mth rectified edge along the chosen
+      //   chiral direction
+      // (Dual operation is automatically derived)
       snub: {
-        // a rotated snub face keeps its rectify face color
-        newFace: ["oldFace"],
-        // a gap-triangle face = the rectify edge the gap opens across
-        snubFace: ["oldEdge"],
-        // each split vertex = its rectify vertex + the rectify edge it slides along / 10
-        newVertex: ["oldVertex", "oldEdge"],
-        // the center edge joining a rectify vertex's two split vertices = that vertex
-        newEdge: ["oldVertex"],
-        // a rotated face's boundary edge = the rectify edge it came from + that face / 10.
-        // (Each such edge borders one rotated face; whether it reads as the "inner" or
-        // "outer" of the pair a rectify edge splits into is only which of the edge's two
-        // rectify faces is the adjacent one — the same rule applies to both.)
-        snubEdge: ["oldEdge", "oldFace"],
+        // mth new face color = mth old edge color + old vertex color / 2
+        newFace: {oldEdge: 1.0, oldVertex: 0.5},
+        // new (center) edge = old vertex color
+        newEdge: {oldVertex: 1.0},
+        // nth new (boundary) edge = nth old face color + old vertex color / 2
+        // Each boundary edge borders exactly one gap triangle (a new face above); its
+        // old vertex is the same rectify vertex that triangle opened at.
+        snubEdge: {oldFace: 1.0, oldVertex: 0.5},
+        // mth new vertex color = old vertex color / 2 +
+        //    color of the old edge the split vertex slides along
+        // Splitting a rectify vertex into an edge turns two of its four edges into the
+        // gap triangles bordering that new edge; the split vertex slides along one of
+        // the OTHER two edges, and uses that edge's color.
+        newVertex: {oldVertex: 1.0, oldEdge: 0.5},
       },
       // Operation on an edge, where n is in {1,2}:
       // - oldEdge is the color of the edge being operated on
-      // - "oldVertex" is the color of the nth vertex adjacent to it
+      // - oldVertex is the color of the nth vertex adjacent to it
       // - oldFace is the color of the nth face adjacent to it
       // (Dual operation is automatically derived)
       subdivide: {
-        // nth new face color = nth old face color + nth old vertex color
-        newFace: ["oldFace", "oldVertex"],
-        // new vertex color = old edge color
-        newVertex: ["oldEdge"],
+        // nth new face color = nth old vertex color + nth old face color / 2
+        newFace: {oldVertex: 1.0, oldFace: 0.5},
         // nth subdivided face edge color =
-        //   old vertex color + nth old face color / 10
-        subdivFaceEdge: ["oldVertex", "oldFace"],
+        //   nth old face color * 3 / 2 + old vertex color
+        subdivFaceEdge: {oldFace: 1.5, oldVertex: 1.0},
         // nth subdivided edge edge color =
-        //   old edge color + nth old vertex color
-        subdivEdgeEdge: ["oldEdge", "oldVertex"]
+        //   nth old vertex color + old edge color / 2
+        subdivEdgeEdge: {oldVertex: 1.0, oldEdge: 0.5},
+        // new vertex color = old edge color
+        newVertex: {oldEdge: 1.0},
       },
     },
   },

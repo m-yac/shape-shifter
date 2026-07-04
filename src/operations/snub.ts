@@ -116,14 +116,10 @@ export function buildSnub(
       }
     }
 
-    // Snub colors are the config.colors.operations.snub rules. Because snub is a twist
-    // of the RECTIFICATION, those rules are phrased in RECTIFY space, so their tokens
-    // resolve straight off the rectification's own stored colors (`old`): oldFace=
-    // old.face, oldVertex=old.vertex, oldEdge=old.edge. So the rotated face keeps
-    // its rectify face (newFace); a gap triangle takes its rectify edge (snubFace); a
-    // split vertex is old.vertex + its kept edge/10 (newVertex); a rotated-face boundary
-    // edge is old.edge + old.face/10 (snubEdge); the center split edge is old.vertex
-    // (newEdge). See each pass below.
+    // Snub colors come from the config.colors.operations.snub rules. Because snub is a
+    // twist of the RECTIFICATION, those rules are phrased in RECTIFY space, so their
+    // tokens resolve straight off the rectification's own stored colors (`old`): oldFace
+    // = old.face, oldVertex = old.vertex, oldEdge = old.edge. See each pass below.
 
     const edgeColor = new Map<string, GeomColor>();
     // Faces: each rectification face → the loop of its corners' split vertices.
@@ -135,26 +131,32 @@ export function buildSnub(
       const start = h;
       do { loop.push(heVert.get(h.id)!); h = h.next; } while (h !== start);
       faces.push(loop);
-      // snub.newFace: the rotated rectify face keeps its color.
-      faceColor.push(combine(C.snub.newFace, { oldFace: old.face[f.id] }));
-      // Each boundary edge of this rotated face takes snub.snubEdge: it came from the
-      // rectify edge (h.origin,h.next.origin) and borders THIS rotated face, so it
-      // colors as `that rectify edge + adjacent (rectify) face/10`. (Whether the edge
-      // reads as the "inner" or "outer" of the pair a rectify edge splits into is only
-      // which of its two rectify faces is the adjacent one — the same rule either way.)
+      // the rotated rectify face keeps its color.
+      faceColor.push(old.face[f.id]);
+      // Each boundary edge of this rotated face takes snub.snubEdge, with THIS face as
+      // its oldFace. It also borders exactly one gap triangle (built below); its
+      // oldVertex is the rectify vertex that triangle opens at — the same vertex that
+      // triangle's newFace uses — which is the endpoint where this face and its
+      // neighbour across the edge split into distinct vertices.
       h = f.halfedge;
       do {
+        const splitVid =
+          heVert.get(h.id)! !== heVert.get(h.twin!.next.id)! ? h.origin.id : h.next.origin.id;
         const key = edgeKey(heVert.get(h.id)!, heVert.get(h.next.id)!);
         edgeColor.set(key, combine(C.snub.snubEdge, {
-          oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
           oldFace: old.face[f.id],
+          oldVertex: old.vertex[splitVid],
+          // The rectify edge this boundary edge is a shrunk copy of (unused by the
+          // current rule, but the natural single source if it ever wants oldEdge).
+          oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
         }));
         h = h.next;
       } while (h !== start);
     }
 
     // Triangles: one per rectification edge, at the end where its two faces split.
-    // snub.snubFace = the rectify edge color this gap opens across.
+    // Each takes snub.newFace, from the rectify vertex it opens at and the rectify edge
+    // the gap opens across.
     for (const h of dcel.halfedges) {
       const ht = h.twin!;
       if (h.id >= ht.id) continue;
@@ -162,25 +164,31 @@ export function buildSnub(
       const gAtV = heVert.get(ht.next.id)!;
       const fAtN = heVert.get(h.next.id)!;
       const gAtN = heVert.get(ht.id)!;
-      if (fAtV !== gAtV) faces.push([fAtV, gAtV, fAtN]); // split at v (meet at n)
-      else faces.push([fAtN, gAtN, fAtV]); // split at n
-      faceColor.push(combine(C.snub.snubFace, {
+      // The triangle opens at the rectify vertex where the two faces split; its
+      // first corner sits at that vertex, so srcVid gives the source rectify vertex.
+      const tri = fAtV !== gAtV
+        ? [fAtV, gAtV, fAtN] // split at v (meet at n)
+        : [fAtN, gAtN, fAtV]; // split at n
+      faces.push(tri);
+      faceColor.push(combine(C.snub.newFace, {
+        oldVertex: old.vertex[srcVid.get(tri[0])!],
         oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
       }));
     }
 
     const vertexColor: GeomColor[] = new Array(snubVerts.length);
-    // snub.newVertex = rectify vertex + the rectify edge it slides along / 10.
+    // snub.newVertex: the split vertex takes the color of the rectify edge it slides
+    // along (`keptEdgeCol`).
     for (const sv of snubVerts) {
       vertexColor[sv.index] = combine(C.snub.newVertex, {
-        oldVertex: old.vertex[srcVid.get(sv.index)!],
         oldEdge: keptEdgeCol.get(sv.index)!,
+        oldVertex: old.vertex[srcVid.get(sv.index)!],
       });
     }
     // Remaining edges are the center split edges: a rectify vertex splits into two and
     // the new edge between them (both ends share a source rectify vertex) takes
-    // snub.newEdge = that rectify vertex color. (A non-center edge that somehow escaped
-    // the rotated-face pass falls back to its rectify edge.)
+    // snub.newEdge. (A non-center edge that somehow escaped the rotated-face pass falls
+    // back to its rectify edge.)
     for (const loop of faces) {
       for (let i = 0; i < loop.length; i++) {
         const a = loop[i];

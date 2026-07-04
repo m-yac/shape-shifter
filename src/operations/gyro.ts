@@ -143,25 +143,23 @@ export function buildGyro(
     qverts: QVert[];
   } {
     // Colors mirror snub (its dual): each snub rule, dualized (vertex↔face), read
-    // against the JOIN's own stored colors (`old`). A gyro FACE is the dual of a
-    // snub VERTEX — snub splits a rectify vertex, coloring each split `rectify vertex
-    // + rectify edge/10` (= old.vertex + old.edge/10); dually a join FACE splits, and
-    // each gyro face is `join face + the join edge it splits across /10` (= old.face +
-    // old.edge/10). The center vertex ← dual(snub.newFace...) = join face color
-    // (old.face); a q vertex ← the join edge it sits on (old.edge). Some new-edge
-    // colors are placeholders (see TODOs) pending the same follow-up as snub.
+    // against the JOIN's own stored colors (`old`), so oldFace = old.face, oldVertex =
+    // old.vertex, oldEdge = old.edge. A gyro FACE is the dual of a snub split VERTEX
+    // (dualRule(snub.newVertex)); a q vertex is the dual of a snub gap face
+    // (dualRule(snub.newFace)).
     //
     // A finished gyro face is welded from a big half (owning face f) and a triangle
-    // half of a NEIGHBOUR across a dissolved join edge; each half is colored by ITS
-    // OWN face + the join edge IT welds across /10, so the two halves agree (the join's
-    // faces across that edge share a color on the symmetric solids) and the merged
-    // face reads as one color from t=0.
-    // A gyro face is the dual of a snub split VERTEX (snub.newVertex, vertex↔face
-    // swapped): `join face + the join edge it splits across / 10`.
-    const gyroFaceColor = (fid: number, ea: number, eb: number): GeomColor =>
+    // half of a NEIGHBOUR across a dissolved join edge. Each half is colored from the
+    // join edge IT welds across, so the two halves agree (the join's faces across that
+    // edge share a color on the symmetric solids) and the merged face reads as one
+    // color from t=0.
+    // `fid` = the join face this half splits from (dual of the rectify vertex a snub
+    // split-vertex comes from). Each weld half passes its own parent face; they agree
+    // on the symmetric solids (the two faces across a join edge share a color).
+    const gyroFaceColor = (ea: number, eb: number, fid: number): GeomColor =>
       combine(dualRule(C.snub.newVertex), {
-        oldFace: old.face[fid],
         oldEdge: old.edge.get(edgeKey(ea, eb)) ?? BLACK,
+        oldFace: old.face[fid],
       });
     const previewFaces: number[][] = [];
     const faceColor: GeomColor[] = [];
@@ -234,8 +232,14 @@ export function buildGyro(
         const liftExp = liftExponent(dihedral);
         qverts.push({ index: q, start: mid.clone(), slideFull, liftFull, liftExp, dihedral });
         qNormal.set(q, faceNormal);
-        // gyro.gyroVertex = the join edge (P[2j-1],P[2j]) this q sits on = old.edge.
-        vertexColor[q] = old.edge.get(edgeKey(P[(2 * j - 1 + m) % m], P[2 * j])) ?? BLACK;
+        // A q vertex is the dual of a snub gap triangle (a snub NEW FACE): the join edge
+        // it sits on maps to snub's rectify edge, and the join face f it borders maps to
+        // the rectify vertex the gap opened at. So it's dualRule(snub.newFace) read against
+        // (join edge, join face f).
+        vertexColor[q] = combine(dualRule(C.snub.newFace), {
+          oldFace: old.face[f.id],
+          oldEdge: old.edge.get(edgeKey(P[(2 * j - 1 + m) % m], P[2 * j])) ?? BLACK,
+        });
         ownerFace.set(q, f.id);
         qSourceEdge.set(q, [P[(2 * j - 1 + m) % m], P[2 * j]]);
       }
@@ -250,12 +254,12 @@ export function buildGyro(
           ? [center, qIdx[j], P[2 * j], P[2 * j + 1], qIdx[(j + 1) % n]]
           : [qIdx[j], P[2 * j], P[2 * j + 1], qIdx[(j + 1) % n]];
         previewFaces.push(pent);
-        // Big half: welds across join edge (P[2j],P[2j+1]) → face f + that edge/10.
-        faceColor.push(gyroFaceColor(f.id, P[2 * j], P[2 * j + 1]));
+        // Big half: welds across join edge (P[2j],P[2j+1]).
+        faceColor.push(gyroFaceColor(P[2 * j], P[2 * j + 1], f.id));
         faceStart.push(old.face[f.id]);
         previewFaces.push([qIdx[(j + 1) % n], P[2 * j + 1], P[(2 * j + 2) % m]]);
-        // Triangle half: welds across join edge (P[2j+1],P[2j+2]) → face f + that edge/10.
-        faceColor.push(gyroFaceColor(f.id, P[2 * j + 1], P[(2 * j + 2) % m]));
+        // Triangle half: welds across join edge (P[2j+1],P[2j+2]).
+        faceColor.push(gyroFaceColor(P[2 * j + 1], P[(2 * j + 2) % m], f.id));
         // This triangle-half is welded (across its dissolved join edge P[2j+1]→P[2j+2])
         // into the quad/pentagon-half of the NEIGHBOUR face to form one gyro face. Start
         // it at that neighbour's colour — the colour of the face the merged gyro face is
@@ -277,16 +281,19 @@ export function buildGyro(
         const key = edgeKey(a, b);
         if (edgeColor.has(key)) continue;
         // A q↔original-join-vertex edge is a gyro inner/outer edge: the dual of snub's
-        // boundary edge (snub.snubEdge = "rectify edge + adjacent face/10"), i.e. "join
-        // edge + adjacent vertex/10". The join edge is the one the q sits on; the
-        // adjacent vertex is the original join vertex endpoint.
+        // boundary edge (dualRule(snub.snubEdge)). Dually the boundary's adjacent rotated
+        // face becomes the original join vertex endpoint (oldVertex), and its gap-triangle
+        // vertex becomes the join face this edge borders (oldFace = the q's owner face).
         const q = qSourceEdge.has(a) ? a : qSourceEdge.has(b) ? b : -1;
         const orig = a < V ? a : b < V ? b : -1;
         if (q >= 0 && orig >= 0) {
-          const [e0, e1] = qSourceEdge.get(q)!;
+          const [ea, eb] = qSourceEdge.get(q)!;
           edgeColor.set(key, combine(dualRule(C.snub.snubEdge), {
-            oldEdge: old.edge.get(edgeKey(e0, e1)) ?? BLACK,
             oldVertex: old.vertex[orig],
+            oldFace: old.face[ownerFace.get(q)!],
+            // The join edge this edge runs along (dual of snub's oldEdge above; unused
+            // by the current rule, but the natural single source if it wants oldEdge).
+            oldEdge: old.edge.get(edgeKey(ea, eb)) ?? BLACK,
           }));
           continue;
         }
@@ -425,10 +432,9 @@ export function buildGyro(
       const gRest: number[] = [];
       for (let k = 2; k < lg.length; k++) gRest.push(lg[(G.i + k) % lg.length]);
       out.push([a, ...gRest, b, ...fRest]);
-      // Both halves were colored `their face + this shared join edge/10` (see
-      // gyroFaceColor), so they agree on the merged gyro face's color — keep it
-      // rather than recomputing the bare join-edge color (which reads as a face,
-      // not a split, and mis-colored the gyro faces — e.g. dodecahedron faces).
+      // Both halves were colored from this shared join edge they weld across (see
+      // gyroFaceColor), so they already agree on the merged gyro face's color — keep
+      // it rather than recomputing.
       outColors.push(faceColorsIn[F.fi]);
     }
     for (let fi = 0; fi < faces.length; fi++) {

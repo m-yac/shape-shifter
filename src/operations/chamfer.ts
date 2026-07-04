@@ -68,9 +68,8 @@ export function buildChamfer(
   // positions(t) is a cheap lerp.
   // Chamfer is the exact DUAL of subdivide, so its rules are the dualized (vertex↔
   // face) subdivide rules (see colorUtil.dualRule). An inset corner (a new vertex) ←
-  // dual(subdivide.newFace) = old vertex + this face/10. (At the Join weld a face's
-  // insets collapse to its centre, which recolors to the join apex = old face — see
-  // commit.)
+  // dual(subdivide.newFace), from this vertex and face. (At the Join weld a face's
+  // insets collapse to its centre, which recolors to the join apex — see commit.)
   const C = config.colors.operations;
   const insets: Array<{ index: number; v: Vector3; c: Vector3; color: GeomColor }> = [];
   let idx = V;
@@ -183,8 +182,8 @@ export function buildChamfer(
       p, cornerOf(A.id, p), cornerOf(A.id, q),
       q, cornerOf(B.id, q), cornerOf(B.id, p),
     ]);
-    // The new hexagon replaces the original edge → dual(subdivide.newVertex) = old
-    // edge color (constant through the drag; the welded rhombus keeps it at the Join
+    // The new hexagon replaces the original edge → dual(subdivide.newVertex), from the
+    // original edge (constant through the drag; the welded rhombus keeps it at the Join
     // limit).
     const ec = combine(dualRule(C.subdivide.newVertex), { oldEdge: old.edge.get(edgeKey(p, q)) ?? BLACK });
     faceColor.push(ec);
@@ -203,7 +202,7 @@ export function buildChamfer(
     for (let i = 0; i < loop.length; i++) {
       // Shrunk-face perimeter edges collapse when the face shrinks to its centroid at
       // the Join — the dual of subdivide's fan edges (which vanish at the Rectify) —
-      // so ← dual(subdivEdgeEdge) = the original edge it insets from + this face/10.
+      // so ← dual(subdivEdgeEdge), from the original edge it insets from and this face.
       edgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]),
         combine(dualRule(C.subdivide.subdivEdgeEdge), {
           oldEdge: old.edge.get(edgeKey(vids[i], vids[(i + 1) % vids.length])) ?? BLACK,
@@ -214,7 +213,7 @@ export function buildChamfer(
   // Connector edges (original vertex → its inset corners) SURVIVE the Join — each
   // becomes a spoke to the collapsed face centre, exactly like a kis spoke (the dual
   // of subdivide's central-polygon edges, which survive as the Rectify edges) — so ←
-  // dual(subdivFaceEdge) = the face the connector lies in + its original vertex/10.
+  // dual(subdivFaceEdge), from the face the connector lies in and its original vertex.
   // (This makes a chamfer→Join color-identical to joining directly.)
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue;

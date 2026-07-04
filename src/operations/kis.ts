@@ -186,10 +186,9 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
 
   // Colors: kis is the exact DUAL of truncate, so its rules are the dualized
   // (vertex↔face) truncate rules (see colorUtil.dualRule). apex vertex ←
-  // dual(truncate.newFace) = old face; new triangle ← dual(truncate.newVertex) =
-  // old face + nth base-edge/10 (its flat start color is the old face); spoke edges
-  // ← dual(truncate.newEdge) = old face + nth vertex/10. (The Join quad recolors to
-  // dual(rectify.newVertex) = old edge in joinTopology.)
+  // dual(truncate.newFace); new triangle ← dual(truncate.newVertex) (its flat start
+  // color is the old face); spoke edges ← dual(truncate.newEdge). (The Join quad
+  // recolors to dual(rectify.newVertex) in joinTopology.)
   const C = config.colors.operations;
   const previewFaces: number[][] = [];
   const triOwner: number[] = [];
@@ -218,8 +217,8 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
       }));
       faceStart.push(old.face[f.id]);
       // At the Join this triangle merges (across base edge a-b) into a quad recolored
-      // to dual(rectify.newVertex) = old edge; preview that at the weld so releasing
-      // into the Join doesn't snap.
+      // to dual(rectify.newVertex), from the base edge; preview that at the weld so
+      // releasing into the Join doesn't snap.
       faceJoin.push(combine(dualRule(C.rectify.newVertex), {
         oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK,
       }));
@@ -287,8 +286,8 @@ function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; fac
     do {
       const a = h.origin.id;
       const b = h.next.origin.id;
-      // Join face = dual(rectify.newVertex) = nth old edge (both the merged quad and
-      // an un-merged boundary tri).
+      // Join face = dual(rectify.newVertex), from the nth base edge (both the merged
+      // quad and an un-merged boundary tri).
       const baseColor = combine(dualRule(C.rectify.newVertex), { oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK });
       const g = h.twin!.face;
       const kg = data.kfaces.get(g.id);

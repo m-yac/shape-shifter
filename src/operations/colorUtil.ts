@@ -13,6 +13,10 @@ import { type GeomColor, paletteRGB } from "../geometry/colors";
  *  The caller supplies the specific neighbor for each token (incl. any "nth" one). */
 export type ColorSources = Record<string, GeomColor | undefined>;
 
+/** A combination rule (as stored in config.colors.operations): a map from each old
+ *  token to the coefficient its triple is weighted by. */
+export type ColorRule = Readonly<Record<string, number>>;
+
 /** The only tokens a combination rule (in config.colors.operations) may contain.
  *  Everything that reads the rules — `combine`, `dualRule` — depends on this exact
  *  set, so both validate against it and throw a descriptive error on anything else. */
@@ -20,9 +24,9 @@ export const COLOR_TOKENS = ["oldVertex", "oldFace", "oldEdge"] as const;
 const TOKEN_SET = new Set<string>(COLOR_TOKENS);
 
 /**
- * The DUAL of a combination rule: the same tokens with the vertex/face roles
- * exchanged (`oldVertex`↔`oldFace`; `oldEdge` maps to itself). Kis / join /
- * gyro / chamfer are the exact polyhedral duals of truncate / rectify / snub /
+ * The DUAL of a combination rule: the same tokens (with their coefficients) but the
+ * vertex/face roles exchanged (`oldVertex`↔`oldFace`; `oldEdge` maps to itself). Kis /
+ * join / gyro / chamfer are the exact polyhedral duals of truncate / rectify / snub /
  * subdivide, so their color rules are NOT stored in config — each is derived here
  * from its primal. Under duality a new element's role flips too (a vertex↔a face,
  * an edge stays an edge), so the caller pairs each dual element with the PRIMAL
@@ -31,23 +35,24 @@ const TOKEN_SET = new Set<string>(COLOR_TOKENS);
  * `dualRule(truncate.newVertex)`. The caller likewise supplies sources with the
  * roles already swapped (an `oldFace` source where the primal used `oldVertex`).
  */
-export function dualRule(rule: readonly string[]): string[] {
-  return rule.map((tok) => {
+export function dualRule(rule: ColorRule): ColorRule {
+  const out: Record<string, number> = {};
+  for (const [tok, coeff] of Object.entries(rule)) {
     if (!TOKEN_SET.has(tok)) {
       throw new Error(
-        `dualRule: unknown color-rule token "${tok}" (rule = [${rule.join(", ")}]). ` +
+        `dualRule: unknown color-rule token "${tok}" (rule = ${JSON.stringify(rule)}). ` +
           `Rules in config.colors.operations may only use ${COLOR_TOKENS.join(", ")}.`,
       );
     }
-    return tok === "oldVertex" ? "oldFace" : tok === "oldFace" ? "oldVertex" : tok;
-  });
+    const dual = tok === "oldVertex" ? "oldFace" : tok === "oldFace" ? "oldVertex" : tok;
+    out[dual] = coeff;
+  }
+  return out;
 }
 
 /**
- * Evaluate a combination rule against its sources:
- *   `[a, b, c]` → src[a] + src[b]/10 + src[c]/100
- * (each successive token divided by a further ×10). Returns the resulting
- * geometric-color triple.
+ * Evaluate a combination rule against its sources: the weighted sum of each token's
+ * triple by that token's coefficient. Returns the resulting geometric-color triple.
  *
  * STRICT on form: the rule may only contain `COLOR_TOKENS`, and the caller MUST
  * supply a source for every token the rule uses. A rule token with no matching
@@ -56,16 +61,15 @@ export function dualRule(rule: readonly string[]): string[] {
  * caller doesn't provide), which would otherwise drop part of the color unnoticed.
  * `label` (an operation.rule name) is included in the message to locate the culprit.
  */
-export function combine(rule: readonly string[], src: ColorSources, label?: string): GeomColor {
+export function combine(rule: ColorRule, src: ColorSources, label?: string): GeomColor {
   const where = label ? ` for '${label}'` : "";
   let r = 0;
   let g = 0;
   let b = 0;
-  let scale = 1;
-  for (const tok of rule) {
+  for (const [tok, coeff] of Object.entries(rule)) {
     if (!TOKEN_SET.has(tok)) {
       throw new Error(
-        `combine: unknown color-rule token "${tok}"${where} (rule = [${rule.join(", ")}]). ` +
+        `combine: unknown color-rule token "${tok}"${where} (rule = ${JSON.stringify(rule)}). ` +
           `Rules in config.colors.operations may only use ${COLOR_TOKENS.join(", ")}.`,
       );
     }
@@ -73,14 +77,13 @@ export function combine(rule: readonly string[], src: ColorSources, label?: stri
       throw new Error(
         `combine: color rule${where} references "${tok}" but the call site provided no ` +
           `source for it (provided: ${Object.keys(src).join(", ") || "none"}; rule = ` +
-          `[${rule.join(", ")}]). Supply this token at the call site, or update the rule.`,
+          `${JSON.stringify(rule)}). Supply this token at the call site, or update the rule.`,
       );
     }
     const c = src[tok] ?? [0, 0, 0];
-    r += c[0] * scale;
-    g += c[1] * scale;
-    b += c[2] * scale;
-    scale /= 10;
+    r += c[0] * coeff;
+    g += c[1] * coeff;
+    b += c[2] * coeff;
   }
   return [r, g, b];
 }

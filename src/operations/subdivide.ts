@@ -118,11 +118,10 @@ export function buildSubdivide(
   }
 
   // ---- Faces: per-face midpoint polygon + per-vertex triangle fan. ------------
-  // Colors (config.colors.operations.subdivide): midpoint vertex ← newVertex = old
-  // edge; central polygon keeps the old face; corner triangle ← newFace = nth old
-  // face + nth old vertex/10. The drag stages each preview face across THREE colors
-  // (see colorUtil.stagedFaceColors): the ORIGINAL solid at t=0, the subdivision at
-  // t=0.5, then the welded Rectify at t=1.
+  // Colors (config.colors.operations.subdivide): midpoint vertex ← newVertex; central
+  // polygon keeps the old face; corner triangle ← newFace. The drag stages each preview
+  // face across THREE colors (see colorUtil.stagedFaceColors): the ORIGINAL solid at
+  // t=0, the subdivision at t=0.5, then the welded Rectify at t=1.
   const C = config.colors.operations;
   const midColor = (vid: number, wid: number): GeomColor =>
     old.edge.get(edgeKey(vid, wid)) ?? BLACK;
@@ -163,7 +162,7 @@ export function buildSubdivide(
       const incFace = old.face[ring[(i + 1) % ring.length].face.id];
       // Original: that face's color (so the un-dragged solid looks unchanged).
       faceOrig.push(incFace);
-      // Subdivided: newFace = nth old face + nth old vertex/10.
+      // Subdivided: newFace, from this incident face and the corner's vertex.
       faceMid.push(combine(C.subdivide.newFace, {
         oldFace: incFace,
         oldVertex: old.vertex[v.id],
@@ -182,7 +181,8 @@ export function buildSubdivide(
   for (const v of dcel.vertices) vertexColor[apexOf(v.id)] = old.vertex[v.id];
 
   const edgeColor = new Map<string, GeomColor>();
-  // (a) central-polygon edges ← subdivFaceEdge = the shared vertex + this face/10.
+  // (a) central-polygon edges ← subdivFaceEdge (the shared vertex the midpoints flank,
+  //     and the face they lie in).
   for (const f of dcel.faces) {
     let h = f.halfedge;
     const start = h;
@@ -196,8 +196,8 @@ export function buildSubdivide(
       h = h.next;
     } while (h !== start);
   }
-  // (b) fan edges (midpoint → apex, along an original edge) ← subdivEdgeEdge = that
-  //     original edge + its vertex/10.
+  // (b) fan edges (midpoint → apex, along an original edge) ← subdivEdgeEdge (from that
+  //     original edge and its vertex).
   for (const v of dcel.vertices) {
     const ring = outgoingHalfEdges(v);
     for (let i = 0; i < ring.length; i++) {
@@ -253,7 +253,7 @@ export function buildSubdivide(
       for (const m of midData) {
         verts[m.index] = m.mid.clone().addScaledVector(m.normal, hMax);
         const [a, b] = m.key.split("_").map(Number);
-        // Rectify vertex ← its source edge (rectify.newVertex = old edge).
+        // Rectify vertex ← its source edge (subdivide.newVertex).
         midCol[m.index] = combine(C.subdivide.newVertex, { oldEdge: midColor(a, b) });
       }
       const faces: number[][] = [];
@@ -272,7 +272,7 @@ export function buildSubdivide(
       }
       // (b) the vertex figure of each original vertex (its surrounding midpoints).
       // At the limit this is the rectify face-from-vertex, which reuses truncate.newFace
-      // (= old vertex color) — the same rule truncate.ts applies to this exposed n-gon.
+      // — the same rule truncate.ts applies to this exposed n-gon.
       for (const v of dcel.vertices) {
         faces.push(outgoingHalfEdges(v).map((h) => midOf(v.id, h.next.origin.id)));
         rFaceColor.push(combine(C.truncate.newFace, { oldVertex: old.vertex[v.id] }, "truncate.newFace"));
