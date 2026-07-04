@@ -1,6 +1,6 @@
 import { Vector3 } from "three";
 import { type Mesh } from "../geometry/HalfEdge";
-import { type ColorSet, edgeKey } from "../geometry/colors";
+import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 
 /**
  * Merge the given vertex-index pairs into single vertices (union-find), then
@@ -37,7 +37,7 @@ export function weldVertexPairs(
 
   // Compact roots into new contiguous indices, averaging merged positions and
   // taking the first member's color (welded pairs share a color by construction).
-  const accum = new Map<number, { sum: Vector3; count: number; index: number; color: number }>();
+  const accum = new Map<number, { sum: Vector3; count: number; index: number; color: GeomColor }>();
   let next = 0;
   for (let i = 0; i < n; i++) {
     const r = find(i);
@@ -50,7 +50,7 @@ export function weldVertexPairs(
     rec.count++;
   }
   const vertices: Vector3[] = new Array(next);
-  const vertexColor: number[] = new Array(next);
+  const vertexColor: GeomColor[] = new Array(next);
   for (const rec of accum.values()) {
     vertices[rec.index] = rec.sum.multiplyScalar(1 / rec.count);
     vertexColor[rec.index] = rec.color;
@@ -58,7 +58,7 @@ export function weldVertexPairs(
   const remap = (old: number): number => accum.get(find(old))!.index;
 
   const faces: number[][] = [];
-  const faceColor: number[] = [];
+  const faceColor: GeomColor[] = [];
   for (let fi = 0; fi < mesh.faces.length; fi++) {
     const mapped = mesh.faces[fi].map(remap);
     // drop consecutive duplicates (including the wrap-around)
@@ -73,7 +73,7 @@ export function weldVertexPairs(
   }
 
   // Re-key edge colors to the new vertex indices; collapsed edges vanish.
-  const edge = new Map<string, number>();
+  const edge = new Map<string, GeomColor>();
   for (const [key, c] of colors.edge) {
     const [a, b] = key.split("_").map(Number);
     const ra = remap(a);

@@ -24,6 +24,7 @@ import { Polyhedron } from "../geometry/polyhedron";
 import { faceCentroidOf, newellNormal } from "../geometry/polyhedron";
 import {
   edgeKey,
+  type GeomColor,
   faceColorsRGB,
   darkRGB,
   faceColorsRGBLight,
@@ -35,8 +36,8 @@ import { config } from "../config";
 export interface PreviewOpts {
   /** Per-face RGB to display (length = mesh.faces). Omit to keep current colors. */
   faceColors?: Color[];
-  /** Palette indices per edge (keyed by edgeKey). Omit to keep current colors. */
-  edgeColors?: Map<string, number>;
+  /** Geometric colors per edge (keyed by edgeKey). Omit to keep current colors. */
+  edgeColors?: Map<string, GeomColor>;
   /** Undirected edge keys to omit from the wireframe (vanishing-at-weld edges). */
   hiddenEdges?: Set<string>;
 }
@@ -91,7 +92,7 @@ export function faceGeometryArrays(
   const colors: number[] = [];
   for (let fi = 0; fi < mesh.faces.length; fi++) {
     const f = mesh.faces[fi];
-    const col = faceColors[fi] ?? new Color(config.render.palette[0].face);
+    const col = faceColors[fi] ?? new Color(config.render.palette[config.colors.defaultSwatch].face);
     const n = newellNormal(f.map((i) => mesh.vertices[i]));
     // Orient outward (same centroid convention as the markers / highlights): the
     // solid is centered at the origin, so a face's outward direction is its
@@ -120,9 +121,9 @@ export function faceGeometryArrays(
  *  but the _light.png export passes `darkRGBLight`. */
 export function edgeGeometryArrays(
   mesh: Mesh,
-  edgeColors: Map<string, number>,
+  edgeColors: Map<string, GeomColor>,
   hidden?: Set<string>,
-  resolve: (index: number) => Color = darkRGB,
+  resolve: (c: GeomColor | undefined) => Color = darkRGB,
 ): { positions: number[]; colors: number[] } {
   const positions: number[] = [];
   const colors: number[] = [];
@@ -130,7 +131,7 @@ export function edgeGeometryArrays(
     const pa = mesh.vertices[a];
     const pb = mesh.vertices[b];
     positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
-    const c = resolve(edgeColors.get(edgeKey(a, b)) ?? -1);
+    const c = resolve(edgeColors.get(edgeKey(a, b)));
     colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
   }
   return { positions, colors };
@@ -202,7 +203,7 @@ export class SceneView {
   private displayFaceColors: Color[] = [];
   private faceVertCounts: number[] = [];
   // Palette index per displayed edge (keyed by edgeKey); drawn via the dark palette.
-  private displayEdgeColors: Map<string, number> = new Map();
+  private displayEdgeColors: Map<string, GeomColor> = new Map();
   // Active face-color fade (release → final colors). null when idle.
   private colorFade: { from: Color[]; to: Color[]; start: number; durMs: number } | null = null;
   private vertexGeo = new SphereGeometry(config.render.vertexMarkerRadius, 14, 10);
@@ -423,8 +424,8 @@ export class SceneView {
     const k = Math.min(1, (nowMs - f.start) / f.durMs);
     const ease = k * k * (3 - 2 * k); // smoothstep
     for (let i = 0; i < this.displayFaceColors.length; i++) {
-      const from = f.from[i] ?? new Color(config.render.palette[0].face);
-      const to = f.to[i] ?? new Color(config.render.palette[0].face);
+      const from = f.from[i] ?? new Color(config.render.palette[config.colors.defaultSwatch].face);
+      const to = f.to[i] ?? new Color(config.render.palette[config.colors.defaultSwatch].face);
       this.displayFaceColors[i] = from.clone().lerp(to, ease);
     }
     this.writeFaceColors();
@@ -447,7 +448,7 @@ export class SceneView {
   private updateSurface(
     mesh: Mesh,
     faceColors: Color[],
-    edgeColors: Map<string, number>,
+    edgeColors: Map<string, GeomColor>,
     hiddenEdges?: Set<string>,
   ): void {
     this.displayFaceColors = faceColors;
@@ -478,7 +479,7 @@ export class SceneView {
     const arr = attr.array as Float32Array;
     let o = 0;
     for (let fi = 0; fi < this.faceVertCounts.length; fi++) {
-      const c = this.displayFaceColors[fi] ?? new Color(config.render.palette[0].face);
+      const c = this.displayFaceColors[fi] ?? new Color(config.render.palette[config.colors.defaultSwatch].face);
       for (let k = 0; k < this.faceVertCounts[fi]; k++) {
         arr[o++] = c.r;
         arr[o++] = c.g;

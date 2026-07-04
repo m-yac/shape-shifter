@@ -2,10 +2,13 @@ import { Vector3, Ray, Color } from "three";
 import { type Mesh, type HEFace } from "../geometry/HalfEdge";
 import { type Polyhedron } from "../geometry/polyhedron";
 import { faceCentroidHE, faceNormalHE } from "../geometry/polyhedron";
-import { type ColorSet, edgeKey } from "../geometry/colors";
+import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
 import { type MorphPlan } from "./types";
-import { faceMaxPlus1, lerpFaceColors } from "./colorUtil";
+import { combine, dualRule } from "./colorUtil";
+import { config } from "../config";
 import { closestLineParam } from "../util/lines";
+
+const BLACK: GeomColor = [0, 0, 0];
 
 /** Smallest strictly-positive root of A h² + B h + C, or null. */
 export function smallestPositiveRoot(A: number, B: number, C: number): number | null {
@@ -155,10 +158,11 @@ interface KisData {
   previewFaces: number[][];
   /** Owner original-face id per preview triangle (for staged color / height). */
   triOwner: number[];
-  vertexColor: number[];
-  faceColor: number[]; // per preview triangle: the "at Join" color (base-edge)
-  faceStart: number[]; // per preview triangle: the flat face color
-  edgeColor: Map<string, number>;
+  vertexColor: GeomColor[];
+  faceColor: GeomColor[]; // per preview triangle: the (unwelded) kis triangle color
+  faceStart: GeomColor[]; // per preview triangle: the flat face color (t=0 look)
+  faceJoin: GeomColor[]; // per preview triangle: the welded Join-quad color it merges into
+  edgeColor: Map<string, GeomColor>;
   joinDissolve: Array<[number, number]>;
 }
 
@@ -180,10 +184,18 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
   }
   const vertexCount = apexIdx;
 
+  // Colors: kis is the exact DUAL of truncate, so its rules are the dualized
+  // (vertex↔face) truncate rules (see colorUtil.dualRule). apex vertex ←
+  // dual(truncate.newFace) = old face; new triangle ← dual(truncate.newVertex) =
+  // old face + nth base-edge/10 (its flat start color is the old face); spoke edges
+  // ← dual(truncate.newEdge) = old face + nth vertex/10. (The Join quad recolors to
+  // dual(rectify.newVertex) = old edge in joinTopology.)
+  const C = config.colors.operations;
   const previewFaces: number[][] = [];
   const triOwner: number[] = [];
-  const faceColor: number[] = [];
-  const faceStart: number[] = [];
+  const faceColor: GeomColor[] = [];
+  const faceStart: GeomColor[] = [];
+  const faceJoin: GeomColor[] = [];
   for (const f of dcel.faces) {
     const loop = faceLoop(f);
     const kf = kfaces.get(f.id);
@@ -192,6 +204,7 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
       triOwner.push(f.id);
       faceColor.push(old.face[f.id]);
       faceStart.push(old.face[f.id]);
+      faceJoin.push(old.face[f.id]); // never joined → keeps its color at the weld
       continue;
     }
     for (let i = 0; i < loop.length; i++) {
@@ -199,22 +212,37 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
       const b = loop[(i + 1) % loop.length];
       previewFaces.push([a, b, kf.apex]);
       triOwner.push(f.id);
-      faceColor.push(old.edge.get(edgeKey(a, b)) ?? 0);
+      faceColor.push(combine(dualRule(C.truncate.newVertex), {
+        oldFace: old.face[f.id],
+        oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK,
+      }));
       faceStart.push(old.face[f.id]);
+      // At the Join this triangle merges (across base edge a-b) into a quad recolored
+      // to dual(rectify.newVertex) = old edge; preview that at the weld so releasing
+      // into the Join doesn't snap.
+      faceJoin.push(combine(dualRule(C.rectify.newVertex), {
+        oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK,
+      }));
     }
   }
 
-  const vertexColor: number[] = new Array(vertexCount);
+  const vertexColor: GeomColor[] = new Array(vertexCount);
   for (let i = 0; i < V; i++) vertexColor[i] = old.vertex[i];
-  for (const kf of kfaces.values()) vertexColor[kf.apex] = old.face[kf.id];
+  for (const kf of kfaces.values()) {
+    vertexColor[kf.apex] = combine(dualRule(C.truncate.newFace), { oldFace: old.face[kf.id] });
+  }
 
-  const edgeColor = new Map<string, number>();
+  const edgeColor = new Map<string, GeomColor>();
   for (const [k, c] of old.edge) edgeColor.set(k, c);
   for (const f of dcel.faces) {
     const kf = kfaces.get(f.id);
     if (!kf) continue;
-    const mp = faceMaxPlus1(f, old);
-    for (const u of faceLoop(f)) edgeColor.set(edgeKey(u, kf.apex), mp);
+    for (const u of faceLoop(f)) {
+      edgeColor.set(edgeKey(u, kf.apex), combine(dualRule(C.truncate.newEdge), {
+        oldFace: old.face[f.id],
+        oldVertex: old.vertex[u],
+      }));
+    }
   }
 
   const joinDissolve: Array<[number, number]> = [];
@@ -225,7 +253,7 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
     }
   }
 
-  return { V, vertexCount, kfaces, previewFaces, triOwner, vertexColor, faceColor, faceStart, edgeColor, joinDissolve };
+  return { V, vertexCount, kfaces, previewFaces, triOwner, vertexColor, faceColor, faceStart, faceJoin, edgeColor, joinDissolve };
 }
 
 /** Apex positions for a kis, given a per-face height fraction (0..1 of hJoin). */
@@ -240,11 +268,12 @@ function kisPositions(poly: Polyhedron, data: KisData, frac: (fid: number) => nu
 
 /** Merge adjacent kissed-face triangles across each shared edge into a quad (Join);
  *  triangles bordering a non-kissed face stay triangles. */
-function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; faceColors: number[]; edge: Map<string, number> } {
+function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; faceColors: GeomColor[]; edge: Map<string, GeomColor> } {
   const dcel = poly.dcel;
   const old = poly.colors;
+  const C = config.colors.operations;
   const faces: number[][] = [];
-  const faceColors: number[] = [];
+  const faceColors: GeomColor[] = [];
   const emitted = new Set<number>();
   for (const f of dcel.faces) {
     const kf = data.kfaces.get(f.id);
@@ -258,7 +287,9 @@ function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; fac
     do {
       const a = h.origin.id;
       const b = h.next.origin.id;
-      const baseColor = old.edge.get(edgeKey(a, b)) ?? 0;
+      // Join face = dual(rectify.newVertex) = nth old edge (both the merged quad and
+      // an un-merged boundary tri).
+      const baseColor = combine(dualRule(C.rectify.newVertex), { oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK });
       const g = h.twin!.face;
       const kg = data.kfaces.get(g.id);
       if (kg) {
@@ -316,15 +347,23 @@ export function buildKis(
     return kisPositions(poly, full, fracFor(t));
   }
 
-  function previewFaceColors(t: number): Color[] {
-    // Each triangle interpolates from its flat face color to its Join base-edge
-    // color by its OWNING face's height fraction (so unselected faces don't tint
-    // until they start rising at t=0.5).
+  function previewFaceColors(t: number, weld?: boolean): Color[] {
+    // At the Join weld each pair of triangles merges into one recolored quad — show
+    // that quad color now so releasing into the Join is seamless (the merge seams are
+    // hidden by the caller, so both halves reading the same color look like one quad).
+    if (weld) return full.faceJoin.map((c) => paletteRGB(c));
+    // Otherwise each triangle stages across its three colors by its OWNING face's
+    // height fraction (so on a partial n-kis the unselected faces don't tint until
+    // they start rising at t=0.5): flat face color → kis color (half height) → Join
+    // quad color (full height).
     const frac = fracFor(t);
-    const eff = full.triOwner.map((fid) => frac(fid));
     const out: Color[] = new Array(full.previewFaces.length);
     for (let i = 0; i < out.length; i++) {
-      out[i] = lerpFaceColors([full.faceStart[i]], [full.faceColor[i]], eff[i])[0];
+      const e = frac(full.triOwner[i]);
+      out[i] =
+        e <= 0.5
+          ? paletteRGB(full.faceStart[i]).lerp(paletteRGB(full.faceColor[i]), e * 2)
+          : paletteRGB(full.faceColor[i]).lerp(paletteRGB(full.faceJoin[i]), (e - 0.5) * 2);
     }
     return out;
   }

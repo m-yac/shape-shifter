@@ -9,6 +9,7 @@ import {
   schemeForMesh,
   paletteRGB,
   darkRGB,
+  type GeomColor,
   type SchemeName,
 } from "../geometry/colors";
 import { type MorphPlan } from "../operations/types";
@@ -378,10 +379,10 @@ export class DragController {
   /** DEBUG: dump a poly's per-class geometric colors + how the active scheme paints
    *  them, so a live click-load / snub can be compared. Paste the console output. */
   private logColors(label: string, poly: Polyhedron): void {
-    const tally = (nums: number[], resolve: (g: number) => { getHexString(): string }) => {
+    const tally = (nums: GeomColor[], resolve: (g: GeomColor) => { getHexString(): string }) => {
       const out: Record<string, number> = {};
       for (const n of nums) {
-        const k = `geom${n}=#${resolve(n).getHexString()}`;
+        const k = `geom[${n.join(",")}]=#${resolve(n).getHexString()}`;
         out[k] = (out[k] ?? 0) + 1;
       }
       return out;
@@ -968,7 +969,7 @@ export class DragController {
       : undefined;
     this.view.showPreview(
       { vertices: plan.positions(t), faces: plan.previewFaces },
-      { faceColors: plan.previewFaceColors(t), edgeColors: plan.previewEdgeColors, hiddenEdges },
+      { faceColors: plan.previewFaceColors(t, weld), edgeColors: plan.previewEdgeColors, hiddenEdges },
     );
     const inSel = d.hasSelection;
     this.view.setDragMarker(snap.point, inSel ? config.render.selectedColor : config.render.dragMarkerColor);

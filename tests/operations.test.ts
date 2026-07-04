@@ -59,7 +59,7 @@ describe("weldVertexPairs", () => {
         [0, 2, 3],
       ],
     };
-    const welded = weldVertexPairs(mesh, [[1, 3]], uniformColors(mesh, 0, 0, 0));
+    const welded = weldVertexPairs(mesh, [[1, 3]], uniformColors(mesh, [0, 0, 0], [0, 0, 0], [0, 0, 0]));
     expect(welded.mesh.vertices.length).toBe(3);
     expect(welded.mesh.faces.every((f) => f.length === 3)).toBe(true);
   });

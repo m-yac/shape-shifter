@@ -1,6 +1,6 @@
 import { Vector3, Ray, Color } from "three";
 import { type Mesh } from "../geometry/HalfEdge";
-import { type ColorSet } from "../geometry/colors";
+import { type ColorSet, type GeomColor } from "../geometry/colors";
 
 /** The kind of interactive operation a gesture maps to. */
 export type OperationKind =
@@ -53,17 +53,24 @@ export interface MorphPlan {
 
   /**
    * Per-PREVIEW-face RGB color for the live drag, interpolated by t between each
-   * face's t=0 appearance and its final ("at the drag limit") rule color. One
-   * entry per `previewFaces` face. Used to animate colors while dragging.
+   * face's t=0 appearance and its final ("at the drag limit") rule color. One entry
+   * per `previewFaces` face. Used to animate colors while dragging.
+   *
+   * `weld` is the live weld state (the drag has reached the Rectify/Join max). Some
+   * operations RECOLOR faces at the weld — e.g. kis's two triangles merge into a
+   * differently-colored Join quad, subdivide's corner fan merges into the vertex
+   * figure — so at the weld those merged preview faces must already show the WELDED
+   * color, otherwise releasing snaps from the drag look to the committed colors.
+   * (Ops that don't recolor at the weld ignore the flag.)
    */
-  previewFaceColors(t: number): Color[];
+  previewFaceColors(t: number, weld?: boolean): Color[];
 
   /**
    * Palette indices for the preview topology's edges, keyed by undirected
    * preview-vertex-index pair (`edgeKey`). Used to draw the colored wireframe
    * during a drag (the dark-palette edge colors don't interpolate).
    */
-  previewEdgeColors: Map<string, number>;
+  previewEdgeColors: Map<string, GeomColor>;
 
   /**
    * Edges (as PREVIEW vertex-index pairs) that collapse / dissolve at the weld.

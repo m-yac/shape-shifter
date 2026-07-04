@@ -6,12 +6,14 @@ import {
   outgoingHalfEdges,
 } from "../geometry/HalfEdge";
 import { type Polyhedron, faceCentroidHE } from "../geometry/polyhedron";
-import { type ColorSet, edgeKey, paletteRGB } from "../geometry/colors";
-import { vertexMax, vertexMaxPlus1 } from "./colorUtil";
+import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
+import { combine } from "./colorUtil";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
 import { closestLineParam, distancePointToRay } from "../util/lines";
 import { config } from "../config";
+
+const BLACK: GeomColor = [0, 0, 0];
 
 // A nominal per-split-vertex slide magnitude. Only the slide DIRECTIONS (and their
 // relative sizes) matter: the handle step below rescales every slide uniformly so the
@@ -68,6 +70,7 @@ export function buildSnub(
 ): MorphPlan {
   const dcel = poly.dcel;
   const old = poly.colors;
+  const C = config.colors.operations;
   const faceCol = twoColorFaces(dcel);
 
   const outAt = new Map<number, HalfEdge[]>();
@@ -83,7 +86,7 @@ export function buildSnub(
     const indexOf = new Map<number, number>();
     const heVert = new Map<number, number>(); // half-edge id → snub vertex index
     const srcVid = new Map<number, number>(); // snub vertex index → source rectification vertex id
-    const keptEdgeCol = new Map<number, number>(); // snub vertex index → its kept edge's colour
+    const keptEdgeCol = new Map<number, GeomColor>(); // snub vertex index → its kept edge's colour
     const snubVerts: SnubVert[] = [];
 
     for (const v of dcel.vertices) {
@@ -106,26 +109,52 @@ export function buildSnub(
           const slide = kept.next.origin.position.clone().sub(v.position).multiplyScalar(SEP);
           snubVerts.push({ index: idx, source: v.position.clone(), slide });
           srcVid.set(idx, v.id);
-          keptEdgeCol.set(idx, old.edge.get(edgeKey(v.id, kept.next.origin.id)) ?? 0);
+          keptEdgeCol.set(idx, old.edge.get(edgeKey(v.id, kept.next.origin.id)) ?? BLACK);
           indexOf.set(key, idx);
         }
         heVert.set(h.id, idx);
       }
     }
 
+    // Snub colors are the config.colors.operations.snub rules. Because snub is a twist
+    // of the RECTIFICATION, those rules are phrased in RECTIFY space, so their tokens
+    // resolve straight off the rectification's own stored colors (`old`): oldFace=
+    // old.face, oldVertex=old.vertex, oldEdge=old.edge. So the rotated face keeps
+    // its rectify face (newFace); a gap triangle takes its rectify edge (snubFace); a
+    // split vertex is old.vertex + its kept edge/10 (newVertex); a rotated-face boundary
+    // edge is old.edge + old.face/10 (snubEdge); the center split edge is old.vertex
+    // (newEdge). See each pass below.
+
+    const edgeColor = new Map<string, GeomColor>();
     // Faces: each rectification face → the loop of its corners' split vertices.
     const faces: number[][] = [];
-    const faceColor: number[] = [];
+    const faceColor: GeomColor[] = [];
     for (const f of dcel.faces) {
       const loop: number[] = [];
       let h = f.halfedge;
       const start = h;
       do { loop.push(heVert.get(h.id)!); h = h.next; } while (h !== start);
       faces.push(loop);
-      faceColor.push(old.face[f.id]);
+      // snub.newFace: the rotated rectify face keeps its color.
+      faceColor.push(combine(C.snub.newFace, { oldFace: old.face[f.id] }));
+      // Each boundary edge of this rotated face takes snub.snubEdge: it came from the
+      // rectify edge (h.origin,h.next.origin) and borders THIS rotated face, so it
+      // colors as `that rectify edge + adjacent (rectify) face/10`. (Whether the edge
+      // reads as the "inner" or "outer" of the pair a rectify edge splits into is only
+      // which of its two rectify faces is the adjacent one — the same rule either way.)
+      h = f.halfedge;
+      do {
+        const key = edgeKey(heVert.get(h.id)!, heVert.get(h.next.id)!);
+        edgeColor.set(key, combine(C.snub.snubEdge, {
+          oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
+          oldFace: old.face[f.id],
+        }));
+        h = h.next;
+      } while (h !== start);
     }
 
     // Triangles: one per rectification edge, at the end where its two faces split.
+    // snub.snubFace = the rectify edge color this gap opens across.
     for (const h of dcel.halfedges) {
       const ht = h.twin!;
       if (h.id >= ht.id) continue;
@@ -133,33 +162,36 @@ export function buildSnub(
       const gAtV = heVert.get(ht.next.id)!;
       const fAtN = heVert.get(h.next.id)!;
       const gAtN = heVert.get(ht.id)!;
-      // The gap triangle is a brand-NEW face; it opens at whichever end the two faces
-      // split, so it takes a fresh colour keyed off that split vertex (c+2).
-      const splitV = fAtV !== gAtV ? h.origin : h.next.origin;
       if (fAtV !== gAtV) faces.push([fAtV, gAtV, fAtN]); // split at v (meet at n)
       else faces.push([fAtN, gAtN, fAtV]); // split at n
-      faceColor.push(vertexMax(splitV, old) + 2);
+      faceColor.push(combine(C.snub.snubFace, {
+        oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
+      }));
     }
 
-    // Colours (the exact dual of the gyro's rules): a split vertex ← the rectification
-    // EDGE it slid off (dual of the gyro pentagon-face ← its join edge); the new split
-    // edge joining the two vertices a rectification vertex splits into ← that vertex's
-    // colour (dual of the gyro split edge ← its face); every other new edge ← c+1 (dual
-    // of the gyro's new edges ← faceMaxPlus1).
-    const vertexColor: number[] = new Array(snubVerts.length);
-    for (const sv of snubVerts) vertexColor[sv.index] = keptEdgeCol.get(sv.index)!;
-    const edgeColor = new Map<string, number>();
+    const vertexColor: GeomColor[] = new Array(snubVerts.length);
+    // snub.newVertex = rectify vertex + the rectify edge it slides along / 10.
+    for (const sv of snubVerts) {
+      vertexColor[sv.index] = combine(C.snub.newVertex, {
+        oldVertex: old.vertex[srcVid.get(sv.index)!],
+        oldEdge: keptEdgeCol.get(sv.index)!,
+      });
+    }
+    // Remaining edges are the center split edges: a rectify vertex splits into two and
+    // the new edge between them (both ends share a source rectify vertex) takes
+    // snub.newEdge = that rectify vertex color. (A non-center edge that somehow escaped
+    // the rotated-face pass falls back to its rectify edge.)
     for (const loop of faces) {
       for (let i = 0; i < loop.length; i++) {
         const a = loop[i];
         const b = loop[(i + 1) % loop.length];
         const key = edgeKey(a, b);
         if (edgeColor.has(key)) continue;
-        // A split edge's two ends share a source rectification vertex → that vertex's
-        // colour; every other edge is new → c+1 around its (either) source vertex.
         const va = srcVid.get(a)!;
         const vb = srcVid.get(b)!;
-        edgeColor.set(key, va === vb ? old.vertex[va] : vertexMaxPlus1(dcel.vertices[va], old));
+        edgeColor.set(key, va === vb
+          ? combine(C.snub.newEdge, { oldVertex: old.vertex[va] })
+          : old.edge.get(edgeKey(va, vb)) ?? BLACK);
       }
     }
 

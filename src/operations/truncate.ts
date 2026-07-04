@@ -6,11 +6,14 @@ import {
   faceVertices,
 } from "../geometry/HalfEdge";
 import { type Polyhedron, faceNormalHE, faceCentroidHE } from "../geometry/polyhedron";
-import { type ColorSet, edgeKey, paletteRGB } from "../geometry/colors";
+import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
 import { type MorphPlan } from "./types";
 import { weldVertexPairs } from "./weld";
-import { vertexMaxPlus1 } from "./colorUtil";
+import { combine } from "./colorUtil";
+import { config } from "../config";
 import { closestLineParam, distancePointToRay } from "../util/lines";
+
+const BLACK: GeomColor = [0, 0, 0];
 
 /** A point is "in view" if any of the given (outward) normals faces the camera. */
 export type InViewTest = (point: Vector3, normals: Vector3[]) => boolean;
@@ -109,9 +112,12 @@ interface TruncationData {
   vertexCount: number;
   previewFaces: number[][];
   weldPairs: Array<[number, number]>;
-  vertexColor: number[];
-  faceColor: number[];
-  edgeColor: Map<string, number>;
+  /** Rectify vertex colors (oldEdge) — used when the two cut ends weld. */
+  vertexColor: GeomColor[];
+  /** Truncated-form vertex colors (truncate.newVertex = oldVertex + oldEdge/10). */
+  truncVertexColor: GeomColor[];
+  faceColor: GeomColor[];
+  edgeColor: Map<string, GeomColor>;
   /** Cut vertices: index + the half-edge they slide along + origin vertex id. */
   cutEnds: Array<{ index: number; heId: number; origin: Vector3; dest: Vector3; originVid: number }>;
   /** Untruncated (kept) vertices, carried through unchanged. */
@@ -179,30 +185,51 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
     if (a !== undefined && b !== undefined) weldPairs.push([a, b]);
   }
 
-  // Colors: cut vertex ← original edge; kept vertex keeps its color; exposed n-gon
-  // ← the truncated vertex color; original faces keep theirs; n-gon perimeter edges
-  // ← c+1; surviving edge remnants keep their original color.
-  const vertexColor: number[] = new Array(vertexCount);
+  // Colors (config.colors.operations.truncate / rectify):
+  //   cut vertex, TRUNCATED form ← truncate.newVertex = old vertex + its old edge/10.
+  //   cut vertex, WELDED (Rectify) form ← its original edge color (rectify.newVertex):
+  //     the two ends of an edge carry the SAME oldEdge but DIFFERENT oldVertex, so the
+  //     truncate color can't survive welding (weldVertexPairs needs the pair to agree);
+  //     the rectify color does. We keep both colorings and pick per commit path.
+  //   kept vertex keeps its color.
+  //   exposed n-gon ← truncate.newFace = old vertex color.
+  //   original faces keep theirs.
+  //   n-gon perimeter edge ← truncate.newEdge = old vertex + nth bordering-face/10.
+  //   surviving edge remnant ← its original edge color.
+  const C = config.colors.operations;
+  const vertexColor: GeomColor[] = new Array(vertexCount);
+  const truncVertexColor: GeomColor[] = new Array(vertexCount);
   for (const he of dcel.halfedges) {
     const i = cutIndex.get(he.id);
-    if (i !== undefined) vertexColor[i] = old.edge.get(edgeKey(he.origin.id, he.next.origin.id)) ?? 0;
+    if (i === undefined) continue;
+    const oldEdge = old.edge.get(edgeKey(he.origin.id, he.next.origin.id)) ?? BLACK;
+    vertexColor[i] = combine(C.rectify.newVertex, { oldEdge }, "rectify.newVertex");
+    truncVertexColor[i] = combine(C.truncate.newVertex, { oldVertex: old.vertex[he.origin.id], oldEdge }, "truncate.newVertex");
   }
   for (const v of dcel.vertices) {
     const i = keepIndex.get(v.id);
-    if (i !== undefined) vertexColor[i] = old.vertex[v.id];
+    if (i !== undefined) vertexColor[i] = truncVertexColor[i] = old.vertex[v.id];
   }
 
-  const faceColor: number[] = [];
+  const faceColor: GeomColor[] = [];
   for (const f of dcel.faces) faceColor.push(old.face[f.id]);
-  for (const v of dcel.vertices) if (truncated.has(v.id)) faceColor.push(old.vertex[v.id]);
-
-  const edgeColor = new Map<string, number>();
   for (const v of dcel.vertices) {
     if (!truncated.has(v.id)) continue;
-    const mp = vertexMaxPlus1(v, old);
-    const ring = outgoingHalfEdges(v).map((h) => cutIndex.get(h.id)!);
+    faceColor.push(combine(C.truncate.newFace, { oldVertex: old.vertex[v.id] }));
+  }
+
+  const edgeColor = new Map<string, GeomColor>();
+  for (const v of dcel.vertices) {
+    if (!truncated.has(v.id)) continue;
+    const H = outgoingHalfEdges(v);
+    const ring = H.map((h) => cutIndex.get(h.id)!);
     for (let k = 0; k < ring.length; k++) {
-      edgeColor.set(edgeKey(ring[k], ring[(k + 1) % ring.length]), mp);
+      // The n-gon edge (ring[k],ring[k+1]) borders original face H[k+1].face.
+      const borderFace = old.face[H[(k + 1) % H.length].face.id];
+      edgeColor.set(
+        edgeKey(ring[k], ring[(k + 1) % ring.length]),
+        combine(C.truncate.newEdge, { oldVertex: old.vertex[v.id], oldFace: borderFace }),
+      );
     }
   }
   for (const he of dcel.halfedges) {
@@ -211,10 +238,10 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
     const w = he.next.origin.id;
     const endU = truncated.has(u) ? cutIndex.get(he.id)! : keepIndex.get(u)!;
     const endW = truncated.has(w) ? cutIndex.get(he.twin.id)! : keepIndex.get(w)!;
-    edgeColor.set(edgeKey(endU, endW), old.edge.get(edgeKey(u, w)) ?? 0);
+    edgeColor.set(edgeKey(endU, endW), old.edge.get(edgeKey(u, w)) ?? BLACK);
   }
 
-  return { vertexCount, previewFaces, weldPairs, vertexColor, faceColor, edgeColor, cutEnds, keepEnds };
+  return { vertexCount, previewFaces, weldPairs, vertexColor, truncVertexColor, faceColor, edgeColor, cutEnds, keepEnds };
 }
 
 /** Positions for a truncation, given a per-cut-end fraction along its half-edge. */
@@ -294,13 +321,13 @@ export function buildTruncate(
       const sub = buildTruncationData(poly, selectedSet);
       return {
         mesh: { vertices: truncationPositions(sub, (c) => selCut(c, t)), faces: sub.previewFaces.map((f) => f.slice()) },
-        colors: { vertex: sub.vertexColor.slice(), face: sub.faceColor.slice(), edge: new Map(sub.edgeColor) },
+        colors: { vertex: sub.truncVertexColor.slice(), face: sub.faceColor.slice(), edge: new Map(sub.edgeColor) },
       };
     }
     // Full truncation (uniform, or partial past the t=0.5 transition).
     return {
       mesh: { vertices: positions(t), faces: full.previewFaces.map((f) => f.slice()) },
-      colors: { vertex: full.vertexColor.slice(), face: full.faceColor.slice(), edge: new Map(full.edgeColor) },
+      colors: { vertex: full.truncVertexColor.slice(), face: full.faceColor.slice(), edge: new Map(full.edgeColor) },
     };
   }
 

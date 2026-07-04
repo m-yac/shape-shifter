@@ -6,7 +6,7 @@ import {
   buildDCEL,
   faceVertices,
 } from "./HalfEdge";
-import { type ColorSet, uniformColors } from "./colors";
+import { type ColorSet, seedColors } from "./colors";
 
 /** Centroid of a face given the mesh vertex array and the face's index loop. */
 export function faceCentroidOf(vertices: Vector3[], loop: number[]): Vector3 {
@@ -81,7 +81,7 @@ export class Polyhedron {
 
   constructor(mesh: Mesh, colors?: ColorSet, raw?: Mesh) {
     this.mesh = mesh;
-    this.colors = colors ?? uniformColors(mesh, 1, 2, 0);
+    this.colors = colors ?? seedColors(mesh);
     this.raw = raw ?? cloneMesh(mesh);
   }
 

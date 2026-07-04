@@ -1,23 +1,15 @@
 import { Vector3, Ray, Color } from "three";
 import { type Mesh, type HEFace, faceVertices } from "../geometry/HalfEdge";
 import { type Polyhedron, faceCentroidHE } from "../geometry/polyhedron";
-import { type ColorSet, edgeKey } from "../geometry/colors";
+import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
 import { weldVertexPairs } from "./weld";
-import { lerpFaceColors } from "./colorUtil";
+import { combine, dualRule, lerpFaceColors } from "./colorUtil";
+import { config } from "../config";
 import { closestLineParam } from "../util/lines";
 
-/** 1 + the maximum geometric color anywhere in the set — the "fresh color" base so
- *  new chamfer elements are visually distinct from every existing one (matching the
- *  fresh-color rule used by truncate/kis, applied globally for an all-edges op). */
-function freshBase(old: ColorSet): number {
-  let m = 0;
-  for (const c of old.vertex) m = Math.max(m, c);
-  for (const c of old.face) m = Math.max(m, c);
-  for (const c of old.edge.values()) m = Math.max(m, c);
-  return m + 1;
-}
+const BLACK: GeomColor = [0, 0, 0];
 
 /** Vertices of a face as an ordered id loop. */
 function faceLoopIds(f: HEFace): number[] {
@@ -74,13 +66,29 @@ export function buildChamfer(
   const cornerOf = (fid: number, vid: number) => cornerIndex.get(`${fid}_${vid}`)!;
   // Per inset vertex, cache its original vertex position and its face centroid so
   // positions(t) is a cheap lerp.
-  const insets: Array<{ index: number; v: Vector3; c: Vector3 }> = [];
+  // Chamfer is the exact DUAL of subdivide, so its rules are the dualized (vertex↔
+  // face) subdivide rules (see colorUtil.dualRule). An inset corner (a new vertex) ←
+  // dual(subdivide.newFace) = old vertex + this face/10. (At the Join weld a face's
+  // insets collapse to its centre, which recolors to the join apex = old face — see
+  // commit.)
+  const C = config.colors.operations;
+  const insets: Array<{ index: number; v: Vector3; c: Vector3; color: GeomColor }> = [];
   let idx = V;
   for (const f of dcel.faces) {
     const centroid = faceCentroidHE(f);
-    for (const v of faceVertices(f)) {
+    const loop = faceVertices(f);
+    for (let i = 0; i < loop.length; i++) {
+      const v = loop[i];
       cornerIndex.set(`${f.id}_${v.id}`, idx);
-      insets.push({ index: idx, v: v.position, c: centroid });
+      insets.push({
+        index: idx,
+        v: v.position,
+        c: centroid,
+        color: combine(dualRule(C.subdivide.newFace), {
+          oldVertex: old.vertex[v.id],
+          oldFace: old.face[f.id],
+        }),
+      });
       idx++;
     }
   }
@@ -154,10 +162,9 @@ export function buildChamfer(
   }
 
   // ---- Build the (un-welded) chamfered faces ---------------------------------
-  const base = freshBase(old);
   const previewFaces: number[][] = [];
-  const faceColor: number[] = [];
-  const faceStart: number[] = [];
+  const faceColor: GeomColor[] = [];
+  const faceStart: GeomColor[] = [];
 
   // (a) one shrunk polygon per original face (same arity, inset toward centroid).
   for (const f of dcel.faces) {
@@ -176,37 +183,49 @@ export function buildChamfer(
       p, cornerOf(A.id, p), cornerOf(A.id, q),
       q, cornerOf(B.id, q), cornerOf(B.id, p),
     ]);
-    // The new hexagon replaces the original edge, so it keeps that edge's color
-    // (constant through the drag) — the same color its welded rhombus carries at
-    // the Join limit, where weldVertexPairs preserves each face's color.
-    const ec = old.edge.get(edgeKey(p, q)) ?? base;
+    // The new hexagon replaces the original edge → dual(subdivide.newVertex) = old
+    // edge color (constant through the drag; the welded rhombus keeps it at the Join
+    // limit).
+    const ec = combine(dualRule(C.subdivide.newVertex), { oldEdge: old.edge.get(edgeKey(p, q)) ?? BLACK });
     faceColor.push(ec);
     faceStart.push(ec);
   }
 
   // ---- Colors for vertices + edges -------------------------------------------
-  const vertexColor: number[] = new Array(vertexCount);
+  const vertexColor: GeomColor[] = new Array(vertexCount);
   for (let i = 0; i < V; i++) vertexColor[i] = old.vertex[i];
-  for (const n of insets) vertexColor[n.index] = base;
+  for (const n of insets) vertexColor[n.index] = n.color;
 
-  const edgeColor = new Map<string, number>();
+  const edgeColor = new Map<string, GeomColor>();
   for (const f of dcel.faces) {
-    const loop = faceLoopIds(f).map((vid) => cornerOf(f.id, vid));
+    const vids = faceLoopIds(f);
+    const loop = vids.map((vid) => cornerOf(f.id, vid));
     for (let i = 0; i < loop.length; i++) {
-      edgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]), base + 1); // shrunk-face perimeter
+      // Shrunk-face perimeter edges collapse when the face shrinks to its centroid at
+      // the Join — the dual of subdivide's fan edges (which vanish at the Rectify) —
+      // so ← dual(subdivEdgeEdge) = the original edge it insets from + this face/10.
+      edgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]),
+        combine(dualRule(C.subdivide.subdivEdgeEdge), {
+          oldEdge: old.edge.get(edgeKey(vids[i], vids[(i + 1) % vids.length])) ?? BLACK,
+          oldFace: old.face[f.id],
+        }));
     }
   }
-  // connector edges (original vertex → its inset corners) keep the original edge's
-  // color when they sit on an original edge, else a fresh color.
+  // Connector edges (original vertex → its inset corners) SURVIVE the Join — each
+  // becomes a spoke to the collapsed face centre, exactly like a kis spoke (the dual
+  // of subdivide's central-polygon edges, which survive as the Rectify edges) — so ←
+  // dual(subdivFaceEdge) = the face the connector lies in + its original vertex/10.
+  // (This makes a chamfer→Join color-identical to joining directly.)
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue;
     const p = he.origin.id;
     const q = he.next.origin.id;
-    const c = old.edge.get(edgeKey(p, q)) ?? base;
-    edgeColor.set(edgeKey(p, cornerOf(he.face.id, p)), c);
-    edgeColor.set(edgeKey(q, cornerOf(he.face.id, q)), c);
-    edgeColor.set(edgeKey(p, cornerOf(he.twin.face.id, p)), c);
-    edgeColor.set(edgeKey(q, cornerOf(he.twin.face.id, q)), c);
+    const spoke = (fid: number, vid: number): GeomColor =>
+      combine(dualRule(C.subdivide.subdivFaceEdge), { oldFace: old.face[fid], oldVertex: old.vertex[vid] });
+    edgeColor.set(edgeKey(p, cornerOf(he.face.id, p)), spoke(he.face.id, p));
+    edgeColor.set(edgeKey(q, cornerOf(he.face.id, q)), spoke(he.face.id, q));
+    edgeColor.set(edgeKey(p, cornerOf(he.twin.face.id, p)), spoke(he.twin.face.id, p));
+    edgeColor.set(edgeKey(q, cornerOf(he.twin.face.id, q)), spoke(he.twin.face.id, q));
   }
 
   // ---- Weld: each face collapses to its centroid at the Join end. -------------
@@ -238,8 +257,17 @@ export function buildChamfer(
 
   function commit(t: number, weld: boolean): { mesh: Mesh; colors: ColorSet } {
     const mesh: Mesh = { vertices: positions(t), faces: previewFaces.map((f) => f.slice()) };
+    const vertex = vertexColor.slice();
+    if (weld) {
+      // At the Join each face's insets collapse to its centroid, becoming the join
+      // apex vertex — which (like a kis apex, the dual) is the old FACE color, NOT the
+      // inset's old-vertex tint. Recolor them so a chamfer→Join matches joining
+      // directly (e.g. cube → rhombic dodecahedron identically).
+      for (const f of dcel.faces)
+        for (const v of faceVertices(f)) vertex[cornerOf(f.id, v.id)] = old.face[f.id];
+    }
     const colors: ColorSet = {
-      vertex: vertexColor.slice(),
+      vertex,
       face: faceColor.slice(),
       edge: new Map(edgeColor),
     };

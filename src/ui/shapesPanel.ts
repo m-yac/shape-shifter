@@ -51,7 +51,7 @@ export class ShapesPanel {
   private flashRaf = 0;
   private flashHovered = false;
   private strategy: Strategy = config.solver.defaultStrategy;
-  private colorScheme: string = config.render.defaultColorScheme;
+  private colorScheme: string = config.colors.defaultScheme;
   private solving = false;
   private onPress: (s: Strategy) => void = () => {};
   private onRelease: () => void = () => {};

@@ -2,7 +2,7 @@ import { Vector3 } from "three";
 import { config } from "../config";
 import { Polyhedron } from "../geometry/polyhedron";
 import { type Mesh } from "../geometry/HalfEdge";
-import { type ColorSet } from "../geometry/colors";
+import { type ColorSet, type GeomColor } from "../geometry/colors";
 import { type HistoryEntry, type HistoryOptions } from "./history";
 import { type OpDescriptor } from "../operations/naming";
 
@@ -25,9 +25,9 @@ interface SavedMesh {
 }
 
 interface SavedColors {
-  vertex: number[];
-  face: number[];
-  edge: [string, number][];
+  vertex: GeomColor[];
+  face: GeomColor[];
+  edge: [string, GeomColor][];
 }
 
 interface SavedEntry {

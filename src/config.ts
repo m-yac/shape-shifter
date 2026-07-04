@@ -214,6 +214,140 @@ export const config = {
   },
 
   // ---------------------------------------------------------------------------
+  // COLORS — system for coloring solids.
+  // ---------------------------------------------------------------------------
+  colors: {
+    // A geometric color is an RGB-style TRIPLE built up by the operation rules
+    // below (a rule `["oldVertex","oldFace"]` means oldVertexTriple +
+    // oldFaceTriple/10; each extra token divides by a further ×10). The `schemes`
+    // then declare which triples are "visually the same" — each group lists the
+    // triples that render as its named `swatch`. A computed triple matching no
+    // group falls back to `defaultSwatch`.
+    //
+    // The swatch NAMES are the keys of `render.palette` (which carries the
+    // face / edge / l_face / l_edge hexes for each); that map is the single hex
+    // source of truth and the schemes below only pick a swatch name.
+
+    // The swatch used for any computed triple that matches no scheme group.
+    defaultSwatch: "white",
+    // The color scheme selected on load (a key of `schemes`). A freshly-loaded
+    // seed is colored under the scheme its topology matches (see schemeForMesh in
+    // geometry/colors.ts): each face / vertex / edge takes the representative
+    // (first) triple of the matching group, so a directly-loaded solid looks like
+    // the built-from-tetra one. (Operations then layer the combination rules on top.)
+    defaultScheme: "tetrahedral",
+    // Which colors are visually the same for each symmetry group.
+    schemes: {
+      tetrahedral: {
+        face: { swatch: "white",  triples: [[1, 0, 0]] },
+        vert: { swatch: "yellow", triples: [[0, 1, 0]] },
+        edge: { swatch: "red",    triples: [[0, 0, 1]] },
+      },
+      octahedral: {
+        // Each face of the octahedron comes from either a face of the
+        // tetrahedron or, via rectification, a vertex of the tetrahedron
+        // (Dual: Each vertex of the cube comes from either a vertex of the
+        // tetrahedron or, via joining, a face of the tetrahedron)
+        face: { swatch: "yellow", triples: [[1, 0, 0], [0, 1, 0]] },
+        // Each vertex of the octahedron comes from an edge of the tetrahedron
+        // via rectification
+        // (Dual: Each face of the cube comes from an edge of the tetrahedron
+        // via joining)
+        vert: { swatch: "red", triples: [[0, 0, 1]] },
+        // Each edge of the octahedron comes from a vertex of the tetrahedron
+        // via truncating it into an adjacent face
+        // (Dual: Each edge of the cube comes from a face of the tetrahedron
+        // via augmenting it with a connection to an adjacent vertex)
+        edge: { swatch: "blue", triples: [[1, 0.1, 0], [0.1, 1, 0]] },
+      },
+      icosahedral: {
+        // Each face of the icosahedron comes from either a face of the
+        // octahedron or, via snubbing, an edge of the octahedron
+        // (Dual: Each vertex of the dodecahedron comes from either a vertex of
+        // the cube or, via gyro, an edge of the cube)
+        face: { swatch: "yellow", triples: [[1, 0, 0], [0, 1, 0], [1, 0.1, 0], [0.1, 1, 0]] },
+        // Each vertex of the icosahedron comes from a vertex of the octahedron
+        // via snubbing it along an edge of the octahedron
+        // (Dual: Each face of the dodecahedron comes from a face of the
+        // cube via gyro-ing it into an edge of the cube)
+        vert: { swatch: "red", triples: [[0.1, 0.01, 1], [0.01, 0.1, 1]] },
+        // Each edge of the icosahedron comes from either a vertex of the
+        // octahedron, or from an edge of the octahedron via snubbing it into
+        // an adjacent face of the octahedron
+        // (Dual: Each edge of the dodecahedron comes from either a face of
+        // the cube, or from an edge of the cube via gyro-ing it around a
+        // vertex of the cube)
+        edge: { swatch: "blue", triples: [[0, 0, 1], [1.1, 0.1, 0], [1, 0.2, 0],
+                                           [0.2, 1, 0], [0.1, 1.1, 0]] },
+      }
+    },
+    // How to color new elements for each operation. Tokens oldVertex/oldFace/
+    // oldEdge resolve to the color of the OLD element a new element derives from;
+    // the "nth" wording picks a specific neighbor of that old element.
+    operations: {
+      // Operations on a vertex, where n is in {1, ..., degree}:
+      // - "oldVertex" is the color of the vertex being operated on
+      // - oldEdge is the color of the nth edge adjacent to it
+      // - oldFace is the color of the nth face adjacent to it
+      // (Dual operations are automatically derived.) SNUB is the exception: it twists a
+      // rectification, so its "old" tokens are in rectify space — see its block below.
+      truncate: {
+        // new face color = old vertex color
+        newFace: ["oldVertex"],
+        // nth new edge color = old vertex color + nth old face color / 10
+        newEdge: ["oldVertex", "oldFace"],
+        // nth new vertex color = old vertex color + nth old edge color / 10
+        newVertex: ["oldVertex", "oldEdge"],
+      },
+      rectify: {
+        // nth new vertex color = nth old edge color
+        newVertex: ["oldEdge"],
+        // otherwise, use newFace and newEdge from `truncate`
+      },
+      // SNUB is not built on the original solid but as a TWIST OF THE RECTIFICATION,
+      // so here — uniquely — "old" refers to the RECTIFY solid: oldFace/oldVertex/
+      // oldEdge are the colors of the rectify face / vertex / edge a new snub element
+      // derives from (the operation code reads them straight off the rectification's own
+      // stored colors). Each rectify FACE becomes a rotated snub face; each rectify
+      // VERTEX splits into two vertices joined by a new edge; each rectify EDGE opens
+      // into a gap triangle. (Gyro, snub's dual, reuses these rules dualized.)
+      snub: {
+        // a rotated snub face keeps its rectify face color
+        newFace: ["oldFace"],
+        // a gap-triangle face = the rectify edge the gap opens across
+        snubFace: ["oldEdge"],
+        // each split vertex = its rectify vertex + the rectify edge it slides along / 10
+        newVertex: ["oldVertex", "oldEdge"],
+        // the center edge joining a rectify vertex's two split vertices = that vertex
+        newEdge: ["oldVertex"],
+        // a rotated face's boundary edge = the rectify edge it came from + that face / 10.
+        // (Each such edge borders one rotated face; whether it reads as the "inner" or
+        // "outer" of the pair a rectify edge splits into is only which of the edge's two
+        // rectify faces is the adjacent one — the same rule applies to both.)
+        snubEdge: ["oldEdge", "oldFace"],
+      },
+      // Operation on an edge, where n is in {1,2}:
+      // - oldEdge is the color of the edge being operated on
+      // - "oldVertex" is the color of the nth vertex adjacent to it
+      // - oldFace is the color of the nth face adjacent to it
+      // (Dual operation is automatically derived)
+      subdivide: {
+        // nth new face color = nth old face color + nth old vertex color
+        newFace: ["oldFace", "oldVertex"],
+        // new vertex color = old edge color
+        newVertex: ["oldEdge"],
+        // nth subdivided face edge color =
+        //   old vertex color + nth old face color / 10
+        subdivFaceEdge: ["oldVertex", "oldFace"],
+        // nth subdivided edge edge color =
+        //   old edge color + nth old vertex color
+        subdivEdgeEdge: ["oldEdge", "oldVertex"]
+      },
+    },
+  },
+
+
+  // ---------------------------------------------------------------------------
   // IDENTIFY — naming + verification.
   // ---------------------------------------------------------------------------
   identify: {
@@ -837,23 +971,17 @@ export const config = {
     faceColor: 0xffffff, // base/fallback shape color (white); per-face colors come from `palette`
     faceOpacity: 0.92,
 
-    // Colors available for faces and edges in both dark and light modes
-    palette: [
-      { face: 0xffffff, edge: 0x666666, l_face: 0xe6e6e6, l_edge: 0x555555 }, // white (fallback color)
-      { face: 0xffd24a, edge: 0x66541e, l_face: 0xf2c230, l_edge: 0x66541e }, // yellow
-      { face: 0xe0524a, edge: 0x5a211e, l_face: 0xe0524a, l_edge: 0x5a211e }, // red
-      { face: 0x4a78e0, edge: 0x1e305a, l_face: 0x4a78e0, l_edge: 0x1e305a }, // blue
-    ],
-    // Mapping of a geometric "color" (an unbounded index assigned by the Conway
-    // operations) to a `palette` entry. Out-of-range geometric colors fall back to
-    // palette entry 0 (white). The user switches schemes via the OPTIONS buttons.
-    colorSchemes: {
-      tetrahedral: [0, 1, 2, 3],
-      octahedral:  [1, 1, 2, 3],
-      icosahedral: [1, 1, 3, 2, 3, 1]
+    // Colors available for faces and edges in both dark and light modes, keyed by
+    // swatch name (the same names the `colors.schemes` groups pick).
+    palette: {
+      white:  { face: 0xffffff, edge: 0x666666, l_face: 0xe6e6e6, l_edge: 0x555555 }, // fallback color
+      yellow: { face: 0xffd24a, edge: 0x66541e, l_face: 0xf2c230, l_edge: 0x66541e },
+      red:    { face: 0xe0524a, edge: 0x5a211e, l_face: 0xe0524a, l_edge: 0x5a211e },
+      blue:   { face: 0x4a78e0, edge: 0x1e305a, l_face: 0x4a78e0, l_edge: 0x1e305a },
     },
-    // The color scheme selected on load (a key of `colorSchemes`).
-    defaultColorScheme: "tetrahedral",
+    // `render.palette` is the swatch source of truth; geometric colors (RGB-style
+    // triples) are grouped and mapped to a swatch by `config.colors` (schemes →
+    // swatch name → palette entry). See geometry/colors.ts.
 
     // How long (seconds) the face colors fade from the drag colors to the final
     // committed colors after release (also drives the special-solid recolor).

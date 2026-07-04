@@ -3,29 +3,33 @@ import { type Mesh } from "./HalfEdge";
 import { config } from "../config";
 
 /**
- * Per-element GEOMETRIC colors that travel with a committed polyhedron. Each value
- * is an unbounded non-negative integer assigned by the Conway operations (the
- * "c+1 / c+2 / c+3" rules). A geometric color is mapped to an actual palette entry
- * through the currently-selected color SCHEME (`config.render.colorSchemes`); a
- * geometric color past the scheme's length falls back to palette entry 0.
+ * A geometric color is an RGB-style TRIPLE built up by the Conway operations via
+ * the combination rules in `config.colors.operations` (a rule
+ * `["oldVertex","oldFace"]` means oldVertexTriple + oldFaceTriple/10, each
+ * further token ÷10). The triples are grouped by `config.colors.schemes`: every
+ * triple in a group renders as that group's named swatch (an entry of
+ * `config.render.palette`). A computed triple that matches no group falls back to
+ * `config.colors.defaultSwatch`.
  *
  * Edges are keyed by their undirected vertex-index pair (`edgeKey`). Vertex and
- * face colors are indexed by mesh vertex / face index. Only face colors are drawn
- * today; vertex/edge colors are tracked so the Conway-operation rules can read
- * them and so they can be displayed later.
+ * face colors are indexed by mesh vertex / face index. Faces (and edge lines) are
+ * drawn; vertex colors are tracked so the operation rules can read them.
  */
+export type GeomColor = readonly [number, number, number];
+
 export interface ColorSet {
-  vertex: number[];
-  face: number[];
-  edge: Map<string, number>;
+  vertex: GeomColor[];
+  face: GeomColor[];
+  edge: Map<string, GeomColor>;
 }
 
-export type SchemeName = keyof typeof config.render.colorSchemes;
+export type SchemeName = keyof typeof config.colors.schemes;
+type SwatchName = keyof typeof config.render.palette;
 
 // The currently-selected color scheme. Switched by the OPTIONS "Colors" buttons
 // (see ui/shapesPanel.ts → DragController.selectColorScheme); read by every
 // geometric-color → RGB resolution below so a switch recolors the whole solid.
-let currentScheme: SchemeName = config.render.defaultColorScheme as SchemeName;
+let currentScheme: SchemeName = config.colors.defaultScheme as SchemeName;
 
 /** The active color scheme name. */
 export function getColorScheme(): SchemeName {
@@ -37,11 +41,34 @@ export function setColorScheme(name: SchemeName): void {
   currentScheme = name;
 }
 
-/** Map a geometric color to a palette entry index via the active scheme
- *  (out-of-range geometric colors → palette entry 0, the fallback). */
-function paletteIndex(geom: number): number {
-  const scheme = config.render.colorSchemes[currentScheme] as readonly number[];
-  return geom >= 0 && geom < scheme.length ? scheme[geom] : 0;
+// --- geometric color (triple) → palette swatch resolution -------------------
+
+/** A stable string key for a triple. The combination arithmetic yields exact
+ *  decimals (0.1 / 0.01 / 0.11 / …), so rounding to 3 dp matches a scheme entry
+ *  robustly without floating-point drift. */
+function colorKey(c: GeomColor): string {
+  return `${Math.round(c[0] * 1000)},${Math.round(c[1] * 1000)},${Math.round(c[2] * 1000)}`;
+}
+
+// Per-scheme lookup: rounded-triple key → the swatch name of its group.
+const schemeLookup: Record<string, Map<string, SwatchName>> = {};
+for (const [name, groups] of Object.entries(config.colors.schemes)) {
+  const map = new Map<string, SwatchName>();
+  for (const g of Object.values(groups) as ReadonlyArray<{
+    swatch: SwatchName;
+    triples: ReadonlyArray<ReadonlyArray<number>>;
+  }>) {
+    for (const t of g.triples) map.set(colorKey(t as GeomColor), g.swatch);
+  }
+  schemeLookup[name] = map;
+}
+const defaultSwatch = config.colors.defaultSwatch as SwatchName;
+
+/** Palette swatch name for a geometric color under the active scheme (a color that
+ *  matches no scheme group — or is missing — falls back to the default swatch). */
+function paletteSwatch(geom: GeomColor | undefined): SwatchName {
+  if (!geom) return defaultSwatch;
+  return schemeLookup[currentScheme].get(colorKey(geom)) ?? defaultSwatch;
 }
 
 /** Undirected edge key from two vertex indices. */
@@ -50,35 +77,35 @@ export function edgeKey(a: number, b: number): string {
 }
 
 /** Resolve a geometric color to a FACE RGB Color (via the active scheme). */
-export function paletteRGB(geom: number): Color {
-  return new Color(config.render.palette[paletteIndex(geom)].face);
+export function paletteRGB(geom: GeomColor | undefined): Color {
+  return new Color(config.render.palette[paletteSwatch(geom)].face);
 }
 
 /** Resolve a geometric color to a darkened EDGE RGB Color (via the active scheme). */
-export function darkRGB(geom: number): Color {
-  return new Color(config.render.palette[paletteIndex(geom)].edge);
+export function darkRGB(geom: GeomColor | undefined): Color {
+  return new Color(config.render.palette[paletteSwatch(geom)].edge);
 }
 
 /** Map a whole face-color array to RGB (one Color per face). */
-export function faceColorsRGB(face: number[]): Color[] {
-  return face.map((i) => paletteRGB(i));
+export function faceColorsRGB(face: GeomColor[]): Color[] {
+  return face.map((c) => paletteRGB(c));
 }
 
 // --- "light" palette variants (only used by the _light.png export) ----------
 
 /** Resolve a geometric color to a FACE RGB Color in the LIGHT palette. */
-export function paletteRGBLight(geom: number): Color {
-  return new Color(config.render.palette[paletteIndex(geom)].l_face);
+export function paletteRGBLight(geom: GeomColor | undefined): Color {
+  return new Color(config.render.palette[paletteSwatch(geom)].l_face);
 }
 
 /** Resolve a geometric color to an EDGE RGB Color in the LIGHT palette. */
-export function darkRGBLight(geom: number): Color {
-  return new Color(config.render.palette[paletteIndex(geom)].l_edge);
+export function darkRGBLight(geom: GeomColor | undefined): Color {
+  return new Color(config.render.palette[paletteSwatch(geom)].l_edge);
 }
 
 /** Map a whole face-color array to RGB using the LIGHT palette. */
-export function faceColorsRGBLight(face: number[]): Color[] {
-  return face.map((i) => paletteRGBLight(i));
+export function faceColorsRGBLight(face: GeomColor[]): Color[] {
+  return face.map((c) => paletteRGBLight(c));
 }
 
 /** Every undirected edge of a mesh, as keys, once each. */
@@ -97,18 +124,18 @@ export function meshEdgeKeys(mesh: Mesh): string[] {
   return out;
 }
 
-/** A ColorSet with every element set to a single index (used for seeds). */
+/** A ColorSet with every element set to a single triple (used for seeds). */
 export function uniformColors(
   mesh: Mesh,
-  vertexIdx: number,
-  edgeIdx: number,
-  faceIdx: number,
+  vertexColor: GeomColor,
+  edgeColor: GeomColor,
+  faceColor: GeomColor,
 ): ColorSet {
-  const edge = new Map<string, number>();
-  for (const k of meshEdgeKeys(mesh)) edge.set(k, edgeIdx);
+  const edge = new Map<string, GeomColor>();
+  for (const k of meshEdgeKeys(mesh)) edge.set(k, edgeColor);
   return {
-    vertex: mesh.vertices.map(() => vertexIdx),
-    face: mesh.faces.map(() => faceIdx),
+    vertex: mesh.vertices.map(() => vertexColor),
+    face: mesh.faces.map(() => faceColor),
     edge,
   };
 }
@@ -134,11 +161,19 @@ export function schemeForMesh(mesh: Mesh): SchemeName | null {
 }
 
 /**
- * Initial colors for a freshly-loaded seed: the generic geometric coloring
- * (faces → 0, vertices → 1, edges → 2). The operations then layer on c+1/c+2/c+3
- * geometric colors, and the chosen color scheme decides how all of them display.
- * (There is no longer any per-solid special-casing; the scheme buttons replace it.)
+ * Initial colors for a freshly-loaded seed: each face / vertex / edge takes the
+ * representative (first) triple of the matching group in the scheme the seed's
+ * topology fits (see `schemeForMesh`), so a directly-loaded solid is colored like
+ * the one built from the tetrahedron. The operations then layer the combination
+ * rules on top, and the chosen scheme decides how all of them display.
  */
 export function seedColors(mesh: Mesh): ColorSet {
-  return uniformColors(mesh, 1, 2, 0); // vertices 1, edges 2, faces 0
+  const scheme = schemeForMesh(mesh) ?? (config.colors.defaultScheme as SchemeName);
+  const g = config.colors.schemes[scheme];
+  return uniformColors(
+    mesh,
+    g.vert.triples[0] as GeomColor,
+    g.edge.triples[0] as GeomColor,
+    g.face.triples[0] as GeomColor,
+  );
 }

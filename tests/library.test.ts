@@ -117,9 +117,9 @@ describe("library shapes (rooted at the tetrahedron)", () => {
   it("colors the cube the way the game makes it: join(tetrahedron) → all faces one color", () => {
     const cube = libraryShapeFor("Cube")!;
     expect(cube.scheme).toBe("octahedral");
-    // join() colors its rhombi by the parent's edge color (the tetrahedron's, 2),
-    // NOT the bare-seed face color 0 — so every face shares the single color 2.
-    expect(new Set(cube.poly.colors.face)).toEqual(new Set([2]));
+    // join() colors its rhombi by the parent's edge color (the tetrahedron's edge
+    // triple [0,0,1]), NOT the bare-seed face color — so every face is that one color.
+    expect(new Set(cube.poly.colors.face.map((c) => c.join(",")))).toEqual(new Set(["0,0,1"]));
   });
 
   it("gives each Platonic solid its own symmetry color scheme", () => {
