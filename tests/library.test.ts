@@ -23,21 +23,24 @@ const visibleNames = (discovered: string[]): Set<string> => {
 
 describe("parseArrow (per-axis span notation)", () => {
   it("reads a single axis with a span (bare token = middle head)", () => {
-    expect(parseArrow("d2")).toEqual([{ step: [0, -2, 0], head: "middle" }]);
+    expect(parseArrow("d2")).toEqual([{ step: [0, -2, 0], head: "middle", dashed: false }]);
   });
   it("gives each direction letter its own span (non-45° lines)", () => {
-    expect(parseArrow("d3r2")).toEqual([{ step: [2, -3, 0], head: "middle" }]);
+    expect(parseArrow("d3r2")).toEqual([{ step: [2, -3, 0], head: "middle", dashed: false }]);
   });
   it("defaults a missing span to 1 and reads a leading '>' as a start head", () => {
-    expect(parseArrow(">u")).toEqual([{ step: [0, 1, 0], head: "start" }]);
+    expect(parseArrow(">u")).toEqual([{ step: [0, 1, 0], head: "start", dashed: false }]);
   });
   it("reads a trailing '>' as an end head", () => {
-    expect(parseArrow("u2>")).toEqual([{ step: [0, 2, 0], head: "end" }]);
+    expect(parseArrow("u2>")).toEqual([{ step: [0, 2, 0], head: "end", dashed: false }]);
+  });
+  it("reads a leading ':' as a dashed arrow (before the head '>')", () => {
+    expect(parseArrow(":>fl")).toEqual([{ step: [-1, 0, 1], head: "start", dashed: true }]);
   });
   it("splits a bundled token group into several arrows", () => {
     expect(parseArrow(">f4r4, b2r2")).toEqual([
-      { step: [4, 0, 4], head: "start" },
-      { step: [2, 0, -2], head: "middle" },
+      { step: [4, 0, 4], head: "start", dashed: false },
+      { step: [2, 0, -2], head: "middle", dashed: false },
     ]);
   });
 });
@@ -55,10 +58,11 @@ describe("diagram graph", () => {
 });
 
 describe("computeVisible (directed neighbours)", () => {
-  it("reveals the Tetrahedron's children + one solid-arrowhead hop", () => {
+  it("reveals the Tetrahedron's whole compound chain (truncate → rectify → snub)", () => {
     // The spec example: with only the Tetrahedron made, you see it, its
-    // truncation + kis + chamfer + subdivision, and (one solid-arrowhead hop
-    // further) the octahedron + cube.
+    // truncation + kis (start), their rectification + join — the Octahedron +
+    // Cube (middle) — and one further hop, the snub + gyro — the Icosahedron +
+    // Dodecahedron (end). Plus its dashed chamfer + subdivide leaves.
     const v = visibleNames(["Tetrahedron"]);
     expect(v).toEqual(
       new Set([
@@ -69,14 +73,27 @@ describe("computeVisible (directed neighbours)", () => {
         "Subdivided Tetrahedron",
         "Octahedron",
         "Cube",
+        "Icosahedron",
+        "Dodecahedron",
       ]),
     );
   });
 
-  it("does NOT reveal grandchildren beyond the one arrowhead hop", () => {
-    // Cuboctahedron is a descendant of the Octahedron, which is itself only a
-    // second-hop node — so it must stay hidden.
+  it("does NOT expand a chain node's own new branches", () => {
+    // The Octahedron is reached mid-chain (via a middle arrow), so only its END
+    // arrow (the snub) continues; its own truncations must stay hidden until it
+    // is discovered. The Cuboctahedron (a truncation-branch of the Octahedron)
+    // therefore stays hidden.
     expect(visibleNames(["Tetrahedron"]).has("Cuboctahedron")).toBe(false);
+  });
+
+  it("does NOT chain a dashed chamfer/subdivide leaf onward into a middle arrow", () => {
+    // The Cube reaches the Chamfered Cube by a dashed (:>) arrow, so it is a
+    // leaf: the Rhombicuboctahedron it points on to (via a solid middle arrow)
+    // must not be revealed just from making the Cube.
+    const v = visibleNames(["Cube"]);
+    expect(v.has("Chamfered Cube")).toBe(true);
+    expect(v.has("Rhombicuboctahedron")).toBe(false);
   });
 
   it("only follows arrows in their direction (a node is a neighbour only if an arrow points TO it)", () => {
@@ -86,20 +103,22 @@ describe("computeVisible (directed neighbours)", () => {
   });
 });
 
-describe("drawableEdges (second-hop ghosts show incoming arrows only)", () => {
+describe("drawableEdges (only the traversed chain arrows)", () => {
   const edgeNames = (eis: number[]): [string, string][] =>
     eis.map((i) => [graph.nodes[graph.edges[i].from].name, graph.nodes[graph.edges[i].to].name]);
 
-  it("draws arrows leading TO a second-hop ghost but not FROM it", () => {
+  it("draws every arrow the reveal chain follows, but not a node's un-followed branches", () => {
     const discovered = new Set([indexOf("Tetrahedron")]);
     const visible = computeVisible(graph, discovered);
     const drawn = edgeNames(drawableEdges(graph, discovered, visible));
 
-    // Octahedron is a second-hop ghost: the arrow INTO it (from Truncated
-    // Tetrahedron, a first-hop neighbour) is drawn...
+    // The chain arrows are all drawn: truncate → rectify → snub.
     expect(drawn).toContainEqual(["Truncated Tetrahedron", "Octahedron"]);
-    // ...but its OWN outgoing arrows are not (they'd lead off to hidden shapes).
-    expect(drawn.every(([from]) => from !== "Octahedron")).toBe(true);
+    expect(drawn).toContainEqual(["Octahedron", "Icosahedron"]);
+    // But the Octahedron's OWN start branches (its truncations) are not followed
+    // here, so they aren't drawn (they'd lead off to still-hidden shapes).
+    expect(drawn).not.toContainEqual(["Octahedron", "Truncated Octahedron"]);
+    expect(drawn).not.toContainEqual(["Octahedron", "Triakis Octahedron"]);
   });
 });
 

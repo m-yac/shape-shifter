@@ -56,12 +56,23 @@ const defaultSwatch = config.colors.defaultSwatch as SwatchName;
 // --- ADJACENCY preprocessing (built here, NOT in the config) ----------------
 //
 // `config.render.palette` and each `config.colors.schemes[*]` are augmented with
-// synthesized "adjacency" swatches/groups. For every face/vert/edge group we add
-// a faceAdj/vertAdj/edgeAdj group whose triples are that group's triples tinted
-// by 1/2 of every triple in the OTHER groups; it renders as a `<baseSwatch>Adj`
-// swatch that is a blend (config.colors.adjacentSwatchBlend) of the base swatch
-// and the default swatch. The plain groups are preferred over the adjacency ones
-// when a computed triple matches both (adjacency groups can overlap primaries).
+// synthesized "adjacency" swatches/groups. Two kinds are added:
+//
+//   1. HALF-TINT (`<base>Adj`). For every face/vert/edge group we add a
+//      faceAdj/vertAdj/edgeAdj group whose triples are that group's triples tinted
+//      by 1/2 of every triple in the OTHER groups; it renders as a `<baseSwatch>Adj`
+//      swatch that is a blend (config.colors.adjacentSwatchBlend) of the base swatch
+//      and the default swatch.
+//
+//   2. EQUAL BLEND (`<a>+<b>`). For every unordered pair of DISTINCT groups whose
+//      swatches are both non-default, we add a group whose triples are an equal sum
+//      (coefficient 1 each) of a triple from each group — e.g. octahedral face
+//      (yellow) + vert (red) gives [1,0,1] / [0,1,1]. It renders as a `<a>+<b>`
+//      swatch that is an equal 3-way split of the two base swatches AND the default
+//      swatch — the default share is what marks it as an adjacency color.
+//
+// The plain groups are preferred over both adjacency kinds when a computed triple
+// matches more than one; half-tint beats equal-blend on any remaining tie.
 
 /** The palette (config swatches + synthesized `<base>Adj` blends). */
 const palette: Record<string, PaletteEntry> = { ...config.render.palette };
@@ -88,6 +99,33 @@ function ensureAdjSwatch(base: string): string {
   return name;
 }
 
+/** Equal 1/3 : 1/3 : 1/3 mix of `p`, `q` and the default swatch's hex `d`. Mixing
+ *  p↔q at ½ gives (p+q)/2, then lerping that toward d by 1/3 gives (p+q)/3 + d/3. */
+function blend3Hex(p: number, q: number, d: number): number {
+  return blendHex(blendHex(p, q, 0.5), d, 1 / 3);
+}
+
+/** Ensure a `<a>+<b>` swatch exists and return its name. To read as an ADJACENCY
+ *  color (rather than a plain two-color mix), it is an equal 3-way split of swatches
+ *  a, b AND the default swatch. The two names are sorted so the pair is
+ *  order-independent. */
+function ensurePairSwatch(a: string, b: string): string {
+  const [x, y] = [a, b].sort();
+  const name = `${x}+${y}`;
+  if (!(name in palette)) {
+    const p = config.render.palette[x as SwatchName];
+    const q = config.render.palette[y as SwatchName];
+    const d = config.render.palette[defaultSwatch];
+    palette[name] = {
+      face: blend3Hex(p.face, q.face, d.face),
+      edge: blend3Hex(p.edge, q.edge, d.edge),
+      l_face: blend3Hex(p.l_face, q.l_face, d.l_face),
+      l_edge: blend3Hex(p.l_edge, q.l_edge, d.l_edge),
+    };
+  }
+  return name;
+}
+
 /** Add each base triple tinted by 1/2 of every triple in the other groups. */
 function adjacentTriples(base: Group, others: Group[]): GeomColor[] {
   const out: GeomColor[] = [];
@@ -98,7 +136,18 @@ function adjacentTriples(base: Group, others: Group[]): GeomColor[] {
   return out;
 }
 
-// Per-scheme: the plain face/vert/edge groups plus derived faceAdj/vertAdj/edgeAdj.
+/** Every equal sum (coefficient 1 each) of a triple from each of two groups. */
+function combinedTriples(a: Group, b: Group): GeomColor[] {
+  const out: GeomColor[] = [];
+  for (const t of a.triples)
+    for (const ot of b.triples)
+      out.push([t[0] + ot[0], t[1] + ot[1], t[2] + ot[2]]);
+  return out;
+}
+
+// Per-scheme: the plain face/vert/edge groups plus derived faceAdj/vertAdj/edgeAdj
+// half-tints and `<a>+<b>` equal blends. Half-tint keys end in "Adj"; equal-blend
+// keys contain "+" (their name doubles as the swatch name); plain keys have neither.
 const augmentedSchemes: Record<string, Record<string, Group>> = {};
 for (const [name, groups] of Object.entries(config.colors.schemes)) {
   const g = groups as Record<string, Group>;
@@ -111,25 +160,34 @@ for (const [name, groups] of Object.entries(config.colors.schemes)) {
       triples: adjacentTriples(g[key], others),
     };
   }
+  // Equal blends of each unordered pair of distinct groups, skipping any pair that
+  // touches the default swatch (the request is for two *non-default* colors).
+  for (let i = 0; i < keys.length; i++)
+    for (let j = i + 1; j < keys.length; j++) {
+      const a = g[keys[i]], b = g[keys[j]];
+      if (a.swatch === defaultSwatch || b.swatch === defaultSwatch) continue;
+      const swatch = ensurePairSwatch(a.swatch, b.swatch);
+      aug[`${keys[i]}+${keys[j]}`] = { swatch, triples: combinedTriples(a, b) };
+    }
   augmentedSchemes[name] = aug;
 }
 
-// Per-scheme lookup: rounded-triple key → the swatch name of its group. Plain
-// groups (keys without the "Adj" suffix) are inserted first so they win any key
-// an adjacency group would otherwise claim.
+// Per-scheme lookup: rounded-triple key → the swatch name of its group. Inserted in
+// precedence tiers, highest first, so a key claimed by an earlier tier is never
+// overwritten: plain groups, then half-tint (`<base>Adj`), then equal-blend (`<a>+<b>`).
 const schemeLookup: Record<string, Map<string, string>> = {};
 for (const [name, aug] of Object.entries(augmentedSchemes)) {
   const map = new Map<string, string>();
+  const tier = (key: string): number =>
+    key.includes("+") ? 2 : key.endsWith("Adj") ? 1 : 0;
   const entries = Object.entries(aug);
-  for (const [key, grp] of entries)
-    if (!key.endsWith("Adj"))
-      for (const t of grp.triples) map.set(colorKey(t), grp.swatch);
-  for (const [key, grp] of entries)
-    if (key.endsWith("Adj"))
-      for (const t of grp.triples) {
-        const k = colorKey(t);
-        if (!map.has(k)) map.set(k, grp.swatch);
-      }
+  for (const t of [0, 1, 2])
+    for (const [key, grp] of entries)
+      if (tier(key) === t)
+        for (const tr of grp.triples) {
+          const k = colorKey(tr);
+          if (!map.has(k)) map.set(k, grp.swatch);
+        }
   schemeLookup[name] = map;
 }
 

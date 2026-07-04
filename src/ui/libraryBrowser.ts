@@ -13,6 +13,7 @@ import {
   MeshStandardMaterial,
   MeshBasicMaterial,
   LineBasicMaterial,
+  LineDashedMaterial,
   Color,
   Vector2,
   Vector3,
@@ -381,8 +382,20 @@ export class LibraryBrowser {
       }
 
       const geo = new BufferGeometry().setFromPoints([lineStart, lineEnd]);
-      const mat = new LineBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.85 });
-      this.arrowGroup.add(new Line(geo, mat));
+      // Dashed lines (the chamfer/subdivide branches) need per-vertex distances
+      // for LineDashedMaterial; solid lines use the plain basic material.
+      const mat = e.dashed
+        ? new LineDashedMaterial({
+            color: config.library.arrowColor,
+            dashSize: config.library.dashSize,
+            gapSize: config.library.gapSize,
+            transparent: true,
+            opacity: 0.85,
+          })
+        : new LineBasicMaterial({ color: config.library.arrowColor, transparent: true, opacity: 0.85 });
+      const line = new Line(geo, mat);
+      if (e.dashed) line.computeLineDistances();
+      this.arrowGroup.add(line);
 
       // A flat triangle with its tip at the local origin and its base behind
       // along -Y; positioned at `headPos` and billboarded each frame (see

@@ -231,9 +231,12 @@ export const config = {
     // The swatch used for any computed triple that matches no scheme group.
     defaultSwatch: "white",
     // Each face/vert/edge group also gets a synthesized `<swatch>Adj` swatch (used for
-    // triples tinted by an adjacent group — see adjacentTriples in geometry/colors.ts).
+    // triples tinted by HALF an adjacent group — see adjacentTriples in geometry/colors.ts).
     // This is how far that swatch is blended from its base toward `defaultSwatch`, in
-    // [0, 1]: 0 = identical to the base, 1 = the default swatch.
+    // [0, 1]: 0 = identical to the base, 1 = the default swatch. (Separately, an equal
+    // blend of two non-default groups — coefficient 1 each, e.g. octahedral face+vert —
+    // gets a synthesized `<a>+<b>` swatch that is an equal 3-way split of the two base
+    // swatches AND the default swatch; that split is fixed, so it needs no config knob.)
     adjacentSwatchBlend: 0.5,
     // The color scheme selected on load (a key of `schemes`). A freshly-loaded
     // seed is colored under the scheme its topology matches (see schemeForMesh in
@@ -718,6 +721,10 @@ export const config = {
     // its base width, in world units. The tip sits exactly at the line's end.
     arrowheadLength: 0.34,
     arrowheadWidth: 0.26,
+    // Dashed arrows (the ":>…" chamfer / subdivide branches): the lit dash and
+    // the gap between dashes, in world units. See parseArrow in data/libraryDiagram.ts.
+    dashSize: 0.12,
+    gapSize: 0.1,
     // Undiscovered-but-visible solids render in this color at this opacity
     // ("all white at 25%"); discovered ones use their full default colors.
     ghostColor: 0x8b94a3,
@@ -727,13 +734,13 @@ export const config = {
     diagram: [
       // Tetrahedron family
       [ -1,  0,  1, "Chamfered Tetrahedron", []  ],
-      [  0,  6,  0, "Icosahedron", [">d3l4", ">d3r4", ">l4d5f4", ">r4d5b4"] ],
-      [  0,  4,  0, "Octahedron", [">d2l2", ">d2r2", "u2>", ">l2d3f2", ">r2d3b2"] ],
+      [  0,  6,  0, "Icosahedron", [">d3l4", ">d3r4", ":>l4d5f4", ":>r4d5b4"] ],
+      [  0,  4,  0, "Octahedron", [">d2l2", ">d2r2", "u2>", ":>l2d3f2", ":>r2d3b2"] ],
       [  0,  2,  0, "Truncated Tetrahedron", ["u2"] ],
-      [  0,  0,  0, "Tetrahedron", [">u2", ">d2", ">fl", ">br"] ],
+      [  0,  0,  0, "Tetrahedron", [">u2", ">d2", ":>fl", ":>br"] ],
       [  0, -2,  0, "Triakis Tetrahedron", ["d2"] ],
-      [  0, -4,  0, "Cube", [">u2l2", ">u2r2", "d2>", ">l2u3f2", ">r2u3b2"] ],
-      [  0, -6,  0, "Dodecahedron", [">u3l4", ">u3r4", ">l4u5f4", ">r4u5b4"] ],
+      [  0, -4,  0, "Cube", [">u2l2", ">u2r2", "d2>", ":>l2u3f2", ":>r2u3b2"] ],
+      [  0, -6,  0, "Dodecahedron", [">u3l4", ">u3r4", ":>l4u5f4", ":>r4u5b4"] ],
       [  1,  0, -1, "Subdivided Tetrahedron", []  ],
       // Octahedron / Cube family
       [ -2,  2,  0, "Triakis Octahedron", ["d2l2"] ],
