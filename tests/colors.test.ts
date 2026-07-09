@@ -10,6 +10,7 @@ import {
   paletteRGB,
 } from "../src/geometry/colors";
 import { config } from "../src/config";
+import { formatHex } from "culori";
 import { buildTruncate } from "../src/operations/truncate";
 import { buildKis } from "../src/operations/kis";
 import { buildSnub } from "../src/operations/snub";
@@ -40,9 +41,12 @@ const groupSizes = (colors: Iterable<GeomColor>): number[] => {
 // geometric color can be checked by the swatch a viewer actually SEES. Only the base
 // swatches are indexed: a color that falls through to an `<x>Adj` blend or the default
 // swatch won't match any name here, which is exactly the mis-color we want to catch.
+// The palette stores OKLab, so convert each base face color to its sRGB hex to match
+// `paletteRGB(...).getHex()`.
 const swatchByHex = new Map<number, string>();
 for (const [name, entry] of Object.entries(config.render.palette)) {
-  swatchByHex.set(entry.face, name);
+  const { l, a, b } = entry.face;
+  swatchByHex.set(parseInt(formatHex({ mode: "oklab", l, a, b })!.slice(1), 16), name);
 }
 
 /** Count of each swatch NAME across a geometric-color list, under the active scheme.

@@ -225,26 +225,29 @@ export const config = {
     // computed triple matching no group falls back to `defaultSwatch`.
     //
     // The swatch NAMES are the keys of `render.palette` (which carries the
-    // face / edge / l_face / l_edge hexes for each); that map is the single hex
-    // source of truth and the schemes below only pick a swatch name.
+    // face / l_face colors for each; edges are derived by darkening the face); that
+    // map is the single color source of truth and the schemes below only pick a name.
 
-    // The swatch used for any computed triple that matches no scheme group.
+    // The swatch used for any computed triple that matches no scheme group. It is also
+    // one leg of the synthesized `<a>+<b>` blend swatches (see geometry/colors.ts): an
+    // `<a>+<b>` equal average (½ each, e.g. octahedral face+vert) renders as an equal
+    // 3-way split of the two base swatches AND this default swatch. (A `<base>Tint`
+    // swatch, by contrast, is a ½ : ¼ : ¼ blend of the base and its two neighbor
+    // swatches and doesn't touch the default.) Both splits are intrinsic — no config knob.
     defaultSwatch: "white",
-    // Each face/vert/edge group also gets a synthesized `<swatch>Adj` swatch (used for
-    // triples tinted by HALF an adjacent group — see adjacentTriples in geometry/colors.ts).
-    // This is how far that swatch is blended from its base toward `defaultSwatch`, in
-    // [0, 1]: 0 = identical to the base, 1 = the default swatch. (Separately, an equal
-    // blend of two non-default groups — coefficient 1 each, e.g. octahedral face+vert —
-    // gets a synthesized `<a>+<b>` swatch that is an equal 3-way split of the two base
-    // swatches AND the default swatch; that split is fixed, so it needs no config knob.)
-    adjacentSwatchBlend: 0.5,
     // The color scheme selected on load (a key of `schemes`). A freshly-loaded
     // seed is colored under the scheme its topology matches (see schemeForMesh in
     // geometry/colors.ts): each face / vertex / edge takes the representative
     // (first) triple of the matching group, so a directly-loaded solid looks like
     // the built-from-tetra one. (Operations then layer the combination rules on top.)
     defaultScheme: "tetrahedral",
-    // Which colors are visually the same for each symmetry group.
+    // Which colors are visually the same for each symmetry group. Only the
+    // tetrahedral scheme lists its triples: it is the root, and the octahedral /
+    // icosahedral triples are DERIVED from it by geometry/colors.ts by pushing the
+    // tetrahedral triples through the same `operations` rules below (octahedron =
+    // rectify of the tetrahedron, icosahedron = snub of the octahedron). So the
+    // octa/ico groups only need to declare their swatch — edit an operation rule
+    // and the directly-loaded Platonic solids re-color to match automatically.
     schemes: {
       tetrahedral: {
         face: { swatch: "white",  triples: [[1, 0, 0]] },
@@ -258,7 +261,6 @@ export const config = {
         // tetrahedron or, via joining, a face of the tetrahedron)
         face: {
           swatch: "yellow",
-          triples: [[1, 0, 0], [0, 1, 0]]
         },
         // Each vertex of the octahedron comes from an edge of the tetrahedron
         // via rectification
@@ -266,7 +268,6 @@ export const config = {
         // via joining)
         vert: {
           swatch: "red",
-          triples: [[0, 0, 1]]
         },
         // Each edge of the octahedron comes from a vertex of the tetrahedron
         // via truncating it into an adjacent face
@@ -274,7 +275,6 @@ export const config = {
         // via augmenting it with a connection to an adjacent vertex)
         edge: {
           swatch: "blue",
-          triples: [[1, 1, 0]]
         },
       },
       icosahedral: {
@@ -286,7 +286,6 @@ export const config = {
         // split via gyro-ing)
         face: {
           swatch: "yellow",
-          triples: [[1, 0, 0], [0, 1, 0], [1, 1, 0.5]]
         },
         // Each vertex of the icosahedron comes from a vertex of the
         // octahedron moved along an edge of the octahedron via snubbing
@@ -294,7 +293,6 @@ export const config = {
         // cube moved expanded from an edge of the cube via gyro-ing)
         vert: {
           swatch: "red",
-          triples: [[0.5, 0.5, 1]]
         },
         // Each edge of the icosahedron comes from either a vertex of the
         // octahedron, or from a face of the octahedron adjacent to it
@@ -303,7 +301,6 @@ export const config = {
         // vertex of the cube)
         edge: {
           swatch: "blue",
-          triples: [[0, 0, 1], [1, 0, 0.5], [0, 1, 0.5]]
         },
       }
     },
@@ -320,16 +317,16 @@ export const config = {
       truncate: {
         // new face color = old vertex color
         newFace: {oldVertex: 1.0},
-        // nth new edge color = nth old face color + old vertex color
-        newEdge: {oldFace: 1.0, oldVertex: 1.0},
-        // nth new vertex color = nth old edge color + old vertex color / 2
-        newVertex: {oldEdge: 1.0, oldVertex: 0.5},
+        // nth new edge color = (nth old face color + old vertex color) / 2
+        newEdge: {oldFace: 0.5, oldVertex: 0.5},
+        // nth new vertex color = (nth old edge color + old vertex color) / 2
+        newVertex: {oldEdge: 0.5, oldVertex: 0.5},
       },
       rectify: {
         // new face color = old vertex color
         newFace: {oldVertex: 1.0},
-        // nth new edge color = nth old face color + old vertex color
-        newEdge: {oldFace: 1.0, oldVertex: 1.0},
+        // nth new edge color = (nth old face color + old vertex color) / 2
+        newEdge: {oldFace: 0.5, oldVertex: 0.5},
         // nth new vertex color = nth old edge color
         newVertex: {oldEdge: 1.0},
       },
@@ -345,20 +342,22 @@ export const config = {
       //   chiral direction
       // (Dual operation is automatically derived)
       snub: {
-        // mth new face color = mth old edge color + old vertex color / 2
-        newFace: {oldEdge: 1.0, oldVertex: 0.5},
+        // mth new face color = (mth old edge color * 3 + old vertex color) / 4
+        // (where the edge being referred to is the rectify edge the gap opens across)
+        newFace: {oldEdge: 0.75, oldVertex: 0.25},
         // new (center) edge = old vertex color
         newEdge: {oldVertex: 1.0},
-        // nth new (boundary) edge = nth old face color + old vertex color / 2
-        // Each boundary edge borders exactly one gap triangle (a new face above); its
-        // old vertex is the same rectify vertex that triangle opened at.
-        snubEdge: {oldFace: 1.0, oldVertex: 0.5},
-        // mth new vertex color = old vertex color / 2 +
-        //    color of the old edge the split vertex slides along
+        // nth new (boundary) edge = (mth old edge color + nth old face color) / 2
+        // Each boundary edge is a shrunk copy of the rectify edge it runs along (its
+        // old edge), bordering the rotated face it belongs to (its old face).
+        snubEdge: {oldEdge: 0.5, oldFace: 0.5},
+        // mth new vertex color =
+        //   (color of the old edge the split vertex slides along +
+        //     old vertex color) / 2
         // Splitting a rectify vertex into an edge turns two of its four edges into the
         // gap triangles bordering that new edge; the split vertex slides along one of
         // the OTHER two edges, and uses that edge's color.
-        newVertex: {oldVertex: 1.0, oldEdge: 0.5},
+        newVertex: {oldEdge: 0.5, oldVertex: 0.5},
       },
       // Operation on an edge, where n is in {1,2}:
       // - oldEdge is the color of the edge being operated on
@@ -366,14 +365,15 @@ export const config = {
       // - oldFace is the color of the nth face adjacent to it
       // (Dual operation is automatically derived)
       subdivide: {
-        // nth new face color = nth old vertex color + nth old face color / 2
-        newFace: {oldVertex: 1.0, oldFace: 0.5},
-        // nth subdivided face edge color =
-        //   nth old face color * 3 / 2 + old vertex color
-        subdivFaceEdge: {oldFace: 1.5, oldVertex: 1.0},
-        // nth subdivided edge edge color =
-        //   nth old vertex color + old edge color / 2
-        subdivEdgeEdge: {oldVertex: 1.0, oldEdge: 0.5},
+        // nth new face color = (nth old face color + nth old vertex color) / 2
+        newFace: {oldFace: 0.5, oldVertex: 0.5},
+        // nth subdivided-face edge color =
+        //   (nth old face color + nth new face color) / 2 =
+        //   (nth old face color * 3 + old vertex color) / 4
+        subdivFaceEdge: {oldFace: 0.75, oldVertex: 0.25},
+        // nth subdivided-edge edge color =
+        //   (old edge color + old vertex color) / 2
+        subdivEdgeEdge: {oldEdge: 0.5, oldVertex: 0.5},
         // new vertex color = old edge color
         newVertex: {oldEdge: 1.0},
       },
@@ -1009,13 +1009,22 @@ export const config = {
     faceColor: 0xffffff, // base/fallback shape color (white); per-face colors come from `palette`
     faceOpacity: 0.92,
 
-    // Colors available for faces and edges in both dark and light modes, keyed by
-    // swatch name (the same names the `colors.schemes` groups pick).
+    // Face colors available in both dark and light modes, keyed by swatch name (the
+    // same names the `colors.schemes` groups pick). Each is stored as OKLab `{ l, a, b }`
+    // (l≈0..1 lightness, a green↔red, b blue↔yellow) — the perceptual space the
+    // synthesized tint/blend swatches are mixed in (see geometry/colors.ts), so no
+    // sRGB↔OKLab round-tripping is needed to blend them. `face` is the on-screen (dark
+    // backlight) color; `l_face` its light-export variant. The matching EDGE colors are
+    // NOT stored — they are derived on the spot as a uniform OKLab darken of the face
+    // (× config.render.edgeDarken; see geometry/colors.ts `darken`).
+    // These were generated from the original sRGB face hexes (white #ffffff, l_face
+    // #e6e6e6; yellow #ffd24a/#f2c230; red #e0524a; blue #4a78e0).
+    edgeDarken: 0.5, // edge OKLab = face OKLab × this (all channels)
     palette: {
-      white:  { face: 0xffffff, edge: 0x666666, l_face: 0xe6e6e6, l_edge: 0x555555 }, // fallback color
-      yellow: { face: 0xffd24a, edge: 0x66541e, l_face: 0xf2c230, l_edge: 0x66541e },
-      red:    { face: 0xe0524a, edge: 0x5a211e, l_face: 0xe0524a, l_edge: 0x5a211e },
-      blue:   { face: 0x4a78e0, edge: 0x1e305a, l_face: 0x4a78e0, l_edge: 0x1e305a },
+      white:   { face: { l: 1, a: 0, b: 0 }, l_face: { l: 0.92494, a: 0, b: 0 } }, // fallback color
+      yellow:  { face: { l: 0.87967, a: -0.00016, b: 0.15541 }, l_face: { l: 0.83396, a: 0.00287, b: 0.15841 } },
+      red:     { face: { l: 0.62816, a: 0.15962, b: 0.08035 }, l_face: { l: 0.62816, a: 0.15962, b: 0.08035 } },
+      blue:    { face: { l: 0.59351, a: -0.01719, b: -0.1653 }, l_face: { l: 0.59351, a: -0.01719, b: -0.1653 } },
     },
     // `render.palette` is the swatch source of truth; geometric colors (RGB-style
     // triples) are grouped and mapped to a swatch by `config.colors` (schemes →
@@ -1071,9 +1080,9 @@ export const config = {
 
     // "LIGHT" EXPORT LOOK — used ONLY by the <name>_light.png save: a clean,
     // printable render (square, high-res, no bloom, white background). The on-
-    // screen palette is tuned for a dark backlight, so each palette entry carries
-    // `l_face` / `l_edge` light variants (e.g. white → light grey so it reads on
-    // white paper); the faces are also drawn opaque.
+    // screen palette is tuned for a dark backlight, so each palette entry carries an
+    // `l_face` light variant (e.g. white → light grey so it reads on white paper); its
+    // light edge is the same darken of `l_face`. The faces are also drawn opaque.
     light: {
       resolution: 2048, // square px of the exported image
       backgroundColor: 0xffffff, // white paper background
