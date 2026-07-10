@@ -155,6 +155,12 @@ canvas {
   z-index: 10;
   pointer-events: auto;
 }
+/* `opaque` on a Popup (ui/screen.ts): fill the box with the scene's background
+   colour so it cuts out whatever is behind it. Passing a number instead of
+   `true` sets --popup-bg-alpha, thinning the fill so the scene shows through. */
+.popup-opaque {
+  background: rgb(from var(--backlight, #10141c) r g b / var(--popup-bg-alpha, 1));
+}
 .confirm-text {
   white-space: pre;
   text-align: center;
@@ -165,12 +171,11 @@ canvas {
   text-align: center;
 }
 /* The bezel "Help & Info" popup: centered, above EVERYTHING (including the
-   full-screen LIBRARY view), with a solid backlight backing so the 3D behind it
-   doesn't show through. It accepts pointer events so it reads as a real dialog. */
+   full-screen LIBRARY view). It accepts pointer events so it reads as a real
+   dialog, and is built `opaque` so the 3D behind it doesn't show through. */
 .help-popup {
   z-index: 12;
   pointer-events: auto;
-  background: var(--backlight, #10141c);
 }
 .help-text {
   color: var(--text-bright, #ffffff);

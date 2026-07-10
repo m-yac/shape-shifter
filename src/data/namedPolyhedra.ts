@@ -82,13 +82,19 @@ const kis = (p: Polyhedron): Polyhedron =>
 /** Join (the welded "max" of the kis drag). */
 const join = (p: Polyhedron): Polyhedron =>
   wrap(buildKis(p, 0, null).commit(1, true));
-/** Snub — the twist extension of a rectification `p` (any vertex / anchor works,
- *  since the committed topology is the whole-solid snub). */
-const snub = (p: Polyhedron): Polyhedron =>
-  wrap(buildSnub(p, 0, p.vertices[0].clone()).commit(1, true));
-/** Gyro — the twist extension of a join `p`. */
-const gyro = (p: Polyhedron): Polyhedron =>
-  wrap(buildGyro(p, 0, p.vertices[0].clone()).commit(1, true));
+/** Snub of `p` — a SINGLE game operation: the vertex drag rectifies `p` and keeps
+ *  going into the twist, so the rectification is an internal stage, not a step of
+ *  its own. (Any vertex / anchor works, since the committed topology is the
+ *  whole-solid snub.) */
+const snub = (p: Polyhedron): Polyhedron => {
+  const r = rectify(p);
+  return wrap(buildSnub(r, 0, r.vertices[0].clone()).commit(1, true));
+};
+/** Gyro of `p` — likewise a single operation: the face drag joins `p` and twists on. */
+const gyro = (p: Polyhedron): Polyhedron => {
+  const j = join(p);
+  return wrap(buildGyro(j, 0, j.vertices[0].clone()).commit(1, true));
+};
 
 // --- chamfer / subdivide ----------------------------------------------------
 // These are built with the actual interactive operations (the same `buildChamfer`
@@ -163,8 +169,11 @@ const IC: SchemeName = "icosahedral";
 // wrappers record each step so a tetrahedron-rooted history can be replayed.)
 const octB = Rectify(root); //     rectify(tetra) = octahedron
 const cubeB = Join(root); //       join(tetra)    = cube
-const icoB = Snub(octB); //        snub(octa)     = icosahedron
-const dodB = Gyro(cubeB); //       gyro(cube)     = dodecahedron
+// Snub / gyro are SINGLE operations that pass through the rectify / join on their
+// way, so they hang off the same parent as those — not off their result. (Snubbing
+// the tetrahedron makes the icosahedron in one drag; the octahedron is never a step.)
+const icoB = Snub(root); //        snub(tetra)    = icosahedron
+const dodB = Gyro(root); //        gyro(tetra)    = dodecahedron
 
 const cuboctB = Rectify(octB); //  rectify(octa)  = cuboctahedron
 const rhDodB = Join(octB); //      join(octa)     = rhombic dodecahedron
@@ -192,8 +201,8 @@ export const NAMED: NamedPolyhedron[] = [
   E("Truncated Icosidodecahedron", A, IC, Truncate(icosidodB)),
   E("Rhombicuboctahedron", A, OC, Rectify(cuboctB)),
   E("Rhombicosidodecahedron", A, IC, Rectify(icosidodB)),
-  E("Snub cuboctahedron", A, OC, Snub(cuboctB)),
-  E("Snub Icosidodecahedron", A, IC, Snub(icosidodB)),
+  E("Snub cuboctahedron", A, OC, Snub(octB)),
+  E("Snub Icosidodecahedron", A, IC, Snub(icoB)),
 
   // Catalan solids — kis
   E("Triakis tetrahedron", C, TE, Kis(root)),
@@ -208,8 +217,8 @@ export const NAMED: NamedPolyhedron[] = [
   E("Disdyakis triacontahedron", C, IC, Kis(rhTriB)),
   E("Deltoidal icositetrahedron", C, OC, Join(cuboctB)),
   E("Deltoidal hexecontahedron", C, IC, Join(icosidodB)),
-  E("Pentagonal icositetrahedron", C, OC, Gyro(rhDodB)),
-  E("Pentagonal hexecontahedron", C, IC, Gyro(rhTriB)),
+  E("Pentagonal icositetrahedron", C, OC, Gyro(octB)),
+  E("Pentagonal hexecontahedron", C, IC, Gyro(icoB)),
 
   // Chamfered solids — every edge chamfered (the live operation).
   E("Chamfered tetrahedron", Ch, TE, Chamfer(root)),

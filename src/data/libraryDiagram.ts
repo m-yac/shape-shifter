@@ -133,13 +133,18 @@ interface Walk {
  * shape along the way. A node only counts as a "neighbour" if an arrow points TO
  * it, so we only ever follow edges in their arrow direction. The rule:
  *   • discovered solids;
- *   • from any node, following a SOLID arrow whose head style comes strictly
- *     LATER than the one we arrived by (a discovered root may follow any style)
- *     reveals its target and continues the chain from there. So a start (>…)
- *     leads into a middle (…) which leads into an end (…>): truncate → rectify →
- *     snub. (With only the Tetrahedron made you thus see its truncation + kis,
- *     their rectification + join — the Octahedron + Cube — and one further hop,
- *     the snub + gyro — the Icosahedron + Dodecahedron.)
+ *   • a chain may only BEGIN at a start (>…) arrow — never partway along a
+ *     compound arrow. So the Subdivided Cube, which a dashed branch reveals and
+ *     which only carries a middle arrow onward (its rectification, the Deltoidal
+ *     Icositetrahedron), reveals nothing: the ">…" hop that middle arrow
+ *     continues (Cuboctahedron → Subdivided Octahedron) was never traversed.
+ *   • from a node the chain has reached, following a SOLID arrow whose head
+ *     style comes strictly LATER than the one we arrived by reveals its target
+ *     and continues the chain from there. So a start (>…) leads into a middle
+ *     (…) which leads into an end (…>): truncate → rectify → snub. (With only
+ *     the Tetrahedron made you thus see its truncation + kis, their
+ *     rectification + join — the Octahedron + Cube — and one further hop, the
+ *     snub + gyro — the Icosahedron + Dodecahedron.)
  *   • DASHED arrows (:>…, the chamfer/subdivide branches) are followed only from
  *     a discovered solid and are leaves: they reveal their target but never chain
  *     onward into a middle arrow.
@@ -148,7 +153,7 @@ function walk(graph: DiagramGraph, discovered: Set<number>): Walk {
   const visible = new Set<number>(discovered);
   const edges = new Set<number>();
   // BFS over (node, phase) states; `phase` is the rank of the head we arrived
-  // by, or -1 for a discovered root (which may begin the chain at any style).
+  // by, or -1 for a discovered root (which may only OPEN a chain, at a start head).
   const seen = new Set<string>();
   const queue: { node: number; phase: number }[] = [];
   for (const d of discovered) {
@@ -168,7 +173,9 @@ function walk(graph: DiagramGraph, discovered: Set<number>): Walk {
         continue;
       }
       const rank = HEAD_RANK[e.head];
-      if (rank <= phase) continue; // must be a strictly later stage of the chain
+      // A root opens a chain only at its head (a start arrow); once inside a
+      // chain, each hop must be a strictly later stage of it.
+      if (phase === -1 ? rank !== HEAD_RANK.start : rank <= phase) continue;
       visible.add(e.to);
       edges.add(ei);
       const key = `${e.to}:${rank}`;

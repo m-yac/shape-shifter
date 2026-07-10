@@ -607,9 +607,15 @@ export class LibraryBrowser {
     const btnWidth = c.yes.length + 2 + 2 + c.no.length + 2; // "[Yes]  [No]"
     const inner = Math.max(...c.lines.map((l) => l.length), btnWidth);
     const cols = Math.min(this.screen.cols - 2, inner + 4);
-    const rows = Math.min(this.screen.rows - 2, c.lines.length + 4); // text + blank + buttons + border
+    const rows = Math.min(this.screen.rows - 2, c.lines.length + 3); // text + buttons + border
 
-    const popup = new Popup(this.screen, { cols, rows, title: config.ui.titles.confirm, style: "double" });
+    const popup = new Popup(this.screen, {
+      cols,
+      rows,
+      title: config.ui.titles.confirm,
+      style: "double",
+      opaque: c.bgAlpha,
+    });
     popup.el.classList.add("library-panel", "confirm-popup");
 
     const body = document.createElement("div");

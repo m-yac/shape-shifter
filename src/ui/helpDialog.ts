@@ -65,7 +65,13 @@ export class HelpDialog {
     const cols = Math.min(this.screen.cols, maxLen + 4);
     const rows = Math.min(this.screen.rows, lines.length + 2);
 
-    const popup = new Popup(this.screen, { cols, rows, title: config.ui.titles.help, style: "double" });
+    const popup = new Popup(this.screen, {
+      cols,
+      rows,
+      title: config.ui.titles.help,
+      style: "double",
+      opaque: true,
+    });
     popup.el.classList.add("help-popup");
     const body = document.createElement("div");
     body.className = "popup-resize help-text";

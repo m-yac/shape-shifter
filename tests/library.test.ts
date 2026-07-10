@@ -97,6 +97,17 @@ describe("computeVisible (directed neighbours)", () => {
     expect(v.has("Rhombicuboctahedron")).toBe(false);
   });
 
+  it("does NOT begin a chain partway along a compound arrow (a middle head)", () => {
+    // Making (not just seeing) the Subdivided Cube reveals nothing new: its only
+    // arrow onward is the MIDDLE of the compound arrow Cuboctahedron →
+    // Subdivided Octahedron → Deltoidal Icositetrahedron, and its ">…" first hop
+    // is not active — you have not rectified. So the Deltoidal Icositetrahedron
+    // (and the arrow leading to it) must stay hidden.
+    const v = visibleNames(["Subdivided Cube"]);
+    expect(v.has("Deltoidal Icositetrahedron")).toBe(false);
+    expect(v).toEqual(new Set(["Subdivided Cube"]));
+  });
+
   it("only follows arrows in their direction (a node is a neighbour only if an arrow points TO it)", () => {
     // The Octahedron has no arrow pointing back to the Tetrahedron, so making the
     // Octahedron must not reveal the Tetrahedron.

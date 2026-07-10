@@ -554,9 +554,11 @@ export const config = {
           "",
           "This erases every shape you've made",
           "and restarts from the beginning.",
+          ""
         ],
         yes: "Reset",
         no: "Cancel",
+        bgAlpha: 0.85,
       },
     },
 

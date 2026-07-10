@@ -286,6 +286,11 @@ export interface PopupOpts {
   rows: number;
   title?: string;
   style?: BoxStyle;
+  /** Fill the box with the scene's background colour, so whatever is behind it
+   *  (the 3D view, other panels) is masked out rather than showing through.
+   *  `true` is fully opaque; a number is the fill's alpha (0..1), letting the
+   *  scene show through faintly. */
+  opaque?: boolean | number;
 }
 
 /**
@@ -305,6 +310,12 @@ export class Popup {
   ) {
     this.el = document.createElement("div");
     this.el.className = "popup gui";
+    if (opts.opaque) {
+      this.el.classList.add("popup-opaque");
+      if (typeof opts.opaque === "number") {
+        this.el.style.setProperty("--popup-bg-alpha", `${opts.opaque}`);
+      }
+    }
 
     this.frame = document.createElement("pre");
     this.frame.className = "popup-frame";
