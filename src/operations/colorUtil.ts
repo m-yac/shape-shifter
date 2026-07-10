@@ -63,9 +63,7 @@ export function dualRule(rule: ColorRule): ColorRule {
  */
 export function combine(rule: ColorRule, src: ColorSources, label?: string): GeomColor {
   const where = label ? ` for '${label}'` : "";
-  let r = 0;
-  let g = 0;
-  let b = 0;
+  const out: number[] = [];
   for (const [tok, coeff] of Object.entries(rule)) {
     if (!TOKEN_SET.has(tok)) {
       throw new Error(
@@ -80,12 +78,12 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
           `${JSON.stringify(rule)}). Supply this token at the call site, or update the rule.`,
       );
     }
-    const c = src[tok] ?? [0, 0, 0];
-    r += c[0] * coeff;
-    g += c[1] * coeff;
-    b += c[2] * coeff;
+    // ID vectors are variable length (a one-hot is length 14; a `[0,0,0]` fallback is
+    // shorter). Accumulate component-wise over the longest, treating missing entries as 0.
+    const c = src[tok] ?? [];
+    for (let i = 0; i < c.length; i++) out[i] = (out[i] ?? 0) + c[i] * coeff;
   }
-  return [r, g, b];
+  return out;
 }
 
 /**

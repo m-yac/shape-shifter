@@ -26,17 +26,6 @@ const snub = (p: Polyhedron) => buildSnub(p, 0, p.vertices[0].clone()).commit(1,
 const gyro = (p: Polyhedron) => buildGyro(p, 0, p.vertices[0].clone()).commit(1, true).colors;
 const join = (p: Polyhedron) => wrap(buildKis(p, 0, null).commit(1, true));
 
-/** The sorted multiset of group SIZES of a geometric-color list — i.e. "how many
- *  elements share each distinct color", robust to the exact triple values. */
-const groupSizes = (colors: Iterable<GeomColor>): number[] => {
-  const out: Record<string, number> = {};
-  for (const c of colors) {
-    const k = c.join(",");
-    out[k] = (out[k] ?? 0) + 1;
-  }
-  return Object.values(out).sort((a, b) => a - b);
-};
-
 // Reverse map from a swatch's rendered FACE hex back to its name, so a resolved
 // geometric color can be checked by the swatch a viewer actually SEES. Only the base
 // swatches are indexed: a color that falls through to an `<x>Adj` blend or the default
@@ -71,13 +60,13 @@ const withScheme = <T>(scheme: SchemeName, fn: () => T): T => {
 };
 
 describe("snub / gyro geometric colors", () => {
-  it("snub(rectify(tetra)) = icosahedron, grouped by provenance", () => {
+  it("snub(rectify(tetra)) = icosahedron: 20 faces / 12 vertices / 30 edges", () => {
     const c = snub(rectify(seed("tetrahedron")));
-    // 20 faces: 4 tetra faces + 4 tetra-vertex faces + 12 new snub triangles.
-    expect(groupSizes(c.face)).toEqual([4, 4, 12]);
-    // 12 vertices, all from the rectification edge each split off.
-    expect(groupSizes(c.vertex)).toEqual([12]);
-    // 30 edges.
+    // Every element now carries its own distinct ID (uniqueness is checked in
+    // tests/colorIds); here we just pin the element counts. 20 faces = 4 tetra faces +
+    // 4 tetra-vertex faces + 12 new snub triangles; 12 vertices; 30 edges.
+    expect(c.face.length).toBe(20);
+    expect(c.vertex.length).toBe(12);
     expect(c.edge.size).toBe(30);
   });
 

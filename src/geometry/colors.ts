@@ -1,21 +1,28 @@
 import { Color } from "three";
 import { formatHex } from "culori";
 import { type Mesh } from "./HalfEdge";
+import { getSeed } from "./seeds";
 import { config } from "../config";
 
 /**
- * A geometric color is an RGB-style TRIPLE built up by the Conway operations via
- * the combination rules in `config.colors.operations` (each rule is a map from old
- * tokens to the coefficients their triples are weighted by). The triples are grouped
- * by `config.colors.schemes`: every triple in a group renders as that group's named
- * swatch (an entry of `config.render.palette`). A computed triple that matches no
- * group falls back to `config.colors.defaultSwatch`.
+ * A geometric color is an ID VECTOR (variable length): the tetrahedron's 14 elements
+ * each get a distinct one-hot of length 14 (4 faces + 6 edges + 4 vertices), and every
+ * other element's color is a weighted combination of those, produced by the Conway
+ * operations via the rules in `config.colors.operations` (each rule maps old tokens to
+ * the coefficients their vectors are weighted by). Every rule's weights sum to 1, so
+ * every ID is a convex combination — barycentric coordinates over the tetrahedron's
+ * elements, always summing to 1 (only the tetrahedron's own IDs are pure 0/1 one-hots).
+ *
+ * Coloring is separate: the ID vectors are grouped by `config.render.schemes`, and
+ * every vector in a group renders as that group's named swatch (an entry of
+ * `config.render.palette`). A computed vector that matches no group falls back to
+ * `config.colors.defaultSwatch`.
  *
  * Edges are keyed by their undirected vertex-index pair (`edgeKey`). Vertex and
  * face colors are indexed by mesh vertex / face index. Faces (and edge lines) are
  * drawn; vertex colors are tracked so the operation rules can read them.
  */
-export type GeomColor = readonly [number, number, number];
+export type GeomColor = readonly number[];
 
 export interface ColorSet {
   vertex: GeomColor[];
@@ -23,7 +30,7 @@ export interface ColorSet {
   edge: Map<string, GeomColor>;
 }
 
-export type SchemeName = keyof typeof config.colors.schemes;
+export type SchemeName = keyof typeof config.render.schemes;
 type SwatchName = keyof typeof config.render.palette;
 /** A color in the OKLab perceptual space (the form the palette is stored in). */
 type OKLab = { readonly l: number; readonly a: number; readonly b: number };
@@ -47,46 +54,58 @@ export function setColorScheme(name: SchemeName): void {
 
 // --- geometric color (triple) → palette swatch resolution -------------------
 
-/** A stable string key for a triple. The combination arithmetic yields exact
+/** A stable string key for an ID vector. The combination arithmetic yields exact
  *  decimals from the rule coefficients, so rounding to 3 dp matches a scheme entry
- *  robustly without floating-point drift. */
+ *  robustly without floating-point drift. Trailing zeros are dropped so vectors of
+ *  different lengths that agree on their leading entries (e.g. a padded one-hot and a
+ *  short `[0,0,0]` fallback) key identically. */
 function colorKey(c: GeomColor): string {
-  return `${Math.round(c[0] * 1000)},${Math.round(c[1] * 1000)},${Math.round(c[2] * 1000)}`;
+  const r = c.map((x) => Math.round(x * 1000));
+  let end = r.length;
+  while (end > 0 && r[end - 1] === 0) end--;
+  return r.slice(0, end).join(",");
 }
 
 const defaultSwatch = config.colors.defaultSwatch as SwatchName;
 
-// --- TINT & BLEND preprocessing (built here, NOT in the config) -------------
+// --- SYNTHESIZED SWATCH preprocessing (built here, NOT in the config) --------
 //
 // `config.render.palette` and each `config.colors.schemes[*]` are augmented with
-// synthesized swatches/groups. Two kinds are added:
+// synthesized swatches/groups so a computed color that isn't a pure symmetry orbit still
+// resolves to a sensible swatch instead of the default. Three kinds are added, each
+// catching a different weighted combination the operation rules can produce (listed in
+// precedence order — highest first):
 //
-//   1. TINT (`<base>Tint`). For each face/vert/edge group we add a faceTint/vertTint/
-//      edgeTint group whose triples are that group's triples given a tint of the OTHER
-//      two groups: base·½ + ¼ of one triple from each of the two other groups (so ½
-//      base, the other ½ split evenly across the two neighbors, normalized). It renders
-//      as a swatch that is the SAME ½ : ¼ : ¼ blend of the base swatch and its two
-//      neighbor swatches (no default involved).
-//
-//   2. EQUAL BLEND (`<a>+<b>`). For every unordered pair of DISTINCT groups we add a
-//      group whose triples are an equal average (½ each) of a triple from each group —
+//   1. avg(<a>,<b>)  [0.5 + 0.5]. For every unordered pair of DISTINCT groups we add a
+//      group whose triples are an equal average (0.5 each) of a triple from each group —
 //      e.g. octahedral face (yellow) + vert (red) gives [0.5,0,0.5] / [0,0.5,0.5]. It
-//      renders as a `<a>+<b>` swatch that is an equal 3-way split of the two base
-//      swatches AND the default swatch — the default share is what marks it as an
-//      adjacency color.
+//      renders as an equal 3-way split of the two base swatches AND the default swatch —
+//      the default share is what marks it as an adjacency color.
 //
-// The plain groups are preferred over both synthesized kinds when a computed triple
-// matches more than one; tint beats equal-blend on any remaining tie.
+//   2. avg(<base>,avg(<n1>,<n2>))  [0.5 base + 0.25 + 0.25]. For each group we add a group
+//      whose triples are that base weighted 0.5 plus 0.25 of one triple from each of the
+//      two other groups. It renders as the SAME 0.5 : 0.25 : 0.25 blend of the base swatch
+//      and its two neighbor swatches (no default involved).
+//
+//   3. tint(<base>)  [0.75 base + 0.25 other]. For each face/vert/edge group we add a
+//      group whose triples are that group's triples weighted 0.75 plus 0.25 of any OTHER
+//      single group's triple, or of an equal average of two other groups' triples. It
+//      renders as the base swatch mixed 0.75/0.25 toward the default swatch — a slight
+//      tint of the base color.
+//
+// The plain groups are preferred over all synthesized kinds when a computed triple matches
+// more than one; among the synthesized, the equal average wins, then the nested average,
+// then tint(<base>).
 
-/** The palette (config swatches + synthesized `<base>Tint` and `<a>+<b>` blends). */
+/** The palette (config swatches + synthesized tint / nested-average / equal-average). */
 const palette: Record<string, PaletteEntry> = { ...config.render.palette };
 
 /** Linear blend of two OKLab colors; `t` = fraction from `base` toward `toward`. Because
- *  the palette is stored in OKLab (a perceptually-uniform space), a ½ blend lands on the
+ *  the palette is stored in OKLab (a perceptually-uniform space), a 0.5 blend lands on the
  *  color the eye reads as halfway — vivid, even midtones, rather than the muddy result a
  *  raw sRGB byte lerp gives or the brightened one three.js `Color.lerp` (linear) gives.
  *  Component-wise lerp is exactly what culori's OKLab interpolation does, but with no
- *  sRGB↔OKLab round-trip per blend now that the swatches are already OKLab. */
+ *  sRGB->OKLab round-trip per blend now that the swatches are already OKLab. */
 function blendOklab(base: OKLab, toward: OKLab, t: number): OKLab {
   return {
     l: base.l + (toward.l - base.l) * t,
@@ -95,21 +114,37 @@ function blendOklab(base: OKLab, toward: OKLab, t: number): OKLab {
   };
 }
 
-/** ½ `base` + ¼ `n1` + ¼ `n2` in OKLab. Blending n1↔n2 at ½ gives their perceptual
- *  midpoint, then base↔that at ½ weights base ½ and each neighbor ¼ — matching the
- *  weights `tintedTriples` uses. */
+/** 0.5 `base` + 0.25 `n1` + 0.25 `n2` in OKLab. Blending n1<->n2 at 0.5 gives their
+ *  perceptual midpoint, then base<->that at 0.5 weights base 0.5 and each neighbor 0.25 —
+ *  matching the weights `nestedAvgTriples` uses. */
 function tint3Oklab(base: OKLab, n1: OKLab, n2: OKLab): OKLab {
   return blendOklab(base, blendOklab(n1, n2, 0.5), 0.5);
 }
 
-/** Ensure a `<base>Tint` swatch exists and return its name: the ½ base + ¼ + ¼ blend
- *  of the base swatch with its two neighbor swatches `n1`, `n2` (the same weights
- *  `tintedTriples` gives the triples). The neighbors are baked into the name — a given
- *  base swatch has different neighbors across schemes — so the shared palette doesn't
- *  collide; they are sorted so the name is order-independent. */
-function ensureTintSwatch(base: string, n1: string, n2: string): string {
+/** Ensure a `tint(<base>)` swatch exists and return its name: the base swatch mixed
+ *  0.75/0.25 toward the default swatch — a slight tint of the base color (the default is
+ *  white, so this lightens it). */
+function ensureTintSwatch(base: string): string {
+  const name = `tint(${base})`;
+  if (!(name in palette)) {
+    const b = config.render.palette[base as SwatchName];
+    const d = config.render.palette[defaultSwatch];
+    palette[name] = {
+      face: blendOklab(b.face, d.face, 0.25),
+      l_face: blendOklab(b.l_face, d.l_face, 0.25),
+    };
+  }
+  return name;
+}
+
+/** Ensure an `avg(<base>,avg(<n1>,<n2>))` swatch exists and return its name: the
+ *  0.5 base + 0.25 + 0.25 blend of the base swatch with its two neighbor swatches `n1`,
+ *  `n2` (the same weights `nestedAvgTriples` gives the triples). The neighbors are baked
+ *  into the name — a given base swatch has different neighbors across schemes — so the
+ *  shared palette doesn't collide; they are sorted so the name is order-independent. */
+function ensureNestedAvgSwatch(base: string, n1: string, n2: string): string {
   const [x, y] = [n1, n2].sort();
-  const name = `${base}Tint(${x}+${y})`;
+  const name = `avg(${base},avg(${x},${y}))`;
   if (!(name in palette)) {
     const b = config.render.palette[base as SwatchName];
     const p = config.render.palette[x as SwatchName];
@@ -123,18 +158,18 @@ function ensureTintSwatch(base: string, n1: string, n2: string): string {
 }
 
 /** Equal 1/3 : 1/3 : 1/3 mix of OKLab colors `p`, `q` and the default swatch's `d`.
- *  Mixing p↔q at ½ gives (p+q)/2, then lerping that toward d by 1/3 gives (p+q)/3 + d/3. */
+ *  Mixing p<->q at 0.5 gives (p+q)/2, then lerping that toward d by 1/3 gives (p+q)/3 + d/3. */
 function blend3Oklab(p: OKLab, q: OKLab, d: OKLab): OKLab {
   return blendOklab(blendOklab(p, q, 0.5), d, 1 / 3);
 }
 
-/** Ensure a `<a>+<b>` swatch exists and return its name. To read as an ADJACENCY
+/** Ensure an `avg(<a>,<b>)` swatch exists and return its name. To read as an ADJACENCY
  *  color (rather than a plain two-color mix), it is an equal 3-way split of swatches
  *  a, b AND the default swatch. The two names are sorted so the pair is
  *  order-independent. */
 function ensurePairSwatch(a: string, b: string): string {
   const [x, y] = [a, b].sort();
-  const name = `${x}+${y}`;
+  const name = `avg(${x},${y})`;
   if (!(name in palette)) {
     const p = config.render.palette[x as SwatchName];
     const q = config.render.palette[y as SwatchName];
@@ -147,37 +182,102 @@ function ensurePairSwatch(a: string, b: string): string {
   return name;
 }
 
-/** Each base triple given a tint of the two other groups: base·½ + ¼ of one triple
+/** Weighted component-wise sum of ID vectors (missing entries treated as 0), over the
+ *  max of their lengths. The single length-generic vector combinator these helpers and
+ *  `derive` build on. */
+function weightedSum(terms: ReadonlyArray<readonly [GeomColor, number]>): GeomColor {
+  const len = terms.reduce((m, [v]) => Math.max(m, v.length), 0);
+  const out = new Array(len).fill(0);
+  for (const [v, coeff] of terms)
+    for (let i = 0; i < v.length; i++) out[i] += v[i] * coeff;
+  return out;
+}
+
+/** `tint(base)` triples: each base triple weighted 0.75, plus 0.25 of either a single
+ *  other group's triple, or an equal average of two other groups' triples (0.125 each). */
+function tintTriples(base: Group, others: Group[]): GeomColor[] {
+  const out: GeomColor[] = [];
+  for (const bt of base.triples) {
+    for (const o of others)
+      for (const ot of o.triples)
+        out.push(weightedSum([[bt, 0.75], [ot, 0.25]]));
+    for (let i = 0; i < others.length; i++)
+      for (let j = i + 1; j < others.length; j++)
+        for (const o1 of others[i].triples)
+          for (const o2 of others[j].triples)
+            out.push(weightedSum([[bt, 0.75], [o1, 0.125], [o2, 0.125]]));
+  }
+  return out;
+}
+
+/** Each base triple given a tint of the two other groups: base·0.5 + 0.25 of one triple
  *  from each of `other1` and `other2` (i.e. (base·2 + o1 + o2) / 4). */
-function tintedTriples(base: Group, other1: Group, other2: Group): GeomColor[] {
+function nestedAvgTriples(base: Group, other1: Group, other2: Group): GeomColor[] {
   const out: GeomColor[] = [];
   for (const t of base.triples)
     for (const ot1 of other1.triples)
       for (const ot2 of other2.triples)
-        out.push([(t[0] * 2 + ot1[0] + ot2[0]) / 4,
-                  (t[1] * 2 + ot1[1] + ot2[1]) / 4,
-                  (t[2] * 2 + ot1[2] + ot2[2]) / 4]);
+        out.push(weightedSum([[t, 0.5], [ot1, 0.25], [ot2, 0.25]]));
   return out;
 }
 
-/** Every equal average (½ each) of a triple from each of two groups. */
+/** Every equal average (0.5 each) of a triple from each of two groups. */
 function combinedTriples(a: Group, b: Group): GeomColor[] {
   const out: GeomColor[] = [];
   for (const t of a.triples)
     for (const ot of b.triples)
-      out.push([(t[0] + ot[0]) / 2,
-                (t[1] + ot[1]) / 2,
-                (t[2] + ot[2]) / 2]);
+      out.push(weightedSum([[t, 0.5], [ot, 0.5]]));
   return out;
+}
+
+// --- TETRAHEDRAL ONE-HOT IDs (the identity root) ----------------------------
+//
+// The tetrahedron's elements are THE basis: its faces, edges and vertices each get a
+// distinct one-hot ID of length D = (#faces + #edges + #vertices) = 14. Every other
+// color is a convex combination of these. The block order is faces, then edges, then
+// vertices; the assignment is arbitrary but fixed (see config.colors header) and is what
+// `seedColors` hands a freshly-loaded tetrahedron so its elements start all-distinct.
+const TET_MESH = getSeed("tetrahedron");
+const TET_EDGE_KEYS = meshEdgeKeys(TET_MESH);
+const N_TET_FACE = TET_MESH.faces.length;
+const N_TET_EDGE = TET_EDGE_KEYS.length;
+const N_TET_VERT = TET_MESH.vertices.length;
+const ID_DIM = N_TET_FACE + N_TET_EDGE + N_TET_VERT;
+const oneHot = (i: number): GeomColor => {
+  const v = new Array(ID_DIM).fill(0);
+  v[i] = 1;
+  return v;
+};
+const tetFaceIds: GeomColor[] = Array.from({ length: N_TET_FACE }, (_, i) => oneHot(i));
+const tetEdgeIds: GeomColor[] = Array.from({ length: N_TET_EDGE }, (_, i) => oneHot(N_TET_FACE + i));
+const tetVertIds: GeomColor[] = Array.from({ length: N_TET_VERT }, (_, i) => oneHot(N_TET_FACE + N_TET_EDGE + i));
+
+/**
+ * Collapse a full ID vector to the 3D (face, vert, edge) "provenance" triple the swatch
+ * lookup runs in: sum the weight sitting on the tetrahedron's face / vertex / edge blocks
+ * respectively. This is the linear map sending each tetra face one-hot → [1,0,0], each
+ * vertex → [0,1,0], each edge → [0,0,1]. Since every color is a convex combination of the
+ * one-hots and this map is linear, two distinct IDs in the same orbit collapse to the same
+ * triple (and so the same swatch), while the scheme lookup below stays in this tiny 3D
+ * provenance space instead of ever enumerating the huge 14-D combination space.
+ */
+function collapse(c: GeomColor): GeomColor {
+  let f = 0, e = 0, v = 0;
+  for (let i = 0; i < c.length; i++) {
+    if (i < N_TET_FACE) f += c[i];
+    else if (i < N_TET_FACE + N_TET_EDGE) e += c[i];
+    else v += c[i];
+  }
+  return [f, v, e]; // [face, vert, edge] provenance order
 }
 
 // --- DERIVED SCHEME TRIPLES -------------------------------------------------
 //
-// Only the tetrahedral scheme lists its triples in the config; the octahedral and
-// icosahedral triples are derived HERE by pushing those base triples through the same
-// operation color rules the live operations use (config.colors.operations), so tweaking
-// an operation's coefficients re-colors a directly-loaded octa/cube/ico/dodec to match
-// without re-hand-entering triples:
+// The tetrahedral orbits ARE the one-hot IDs above; the octahedral and icosahedral
+// orbits are derived HERE by pushing those base IDs through the same operation color
+// rules the live operations use (config.colors.operations), so tweaking an operation's
+// coefficients re-colors a directly-loaded octa/cube/ico/dodec to match without
+// re-hand-entering anything:
 //   - octahedron  = RECTIFY of the tetrahedron
 //   - icosahedron = SNUB of the octahedron (snub reads the colors of the shape's
 //     rectification, which for the icosahedron are exactly the octahedral triples)
@@ -191,12 +291,12 @@ type Triples = ReadonlyArray<GeomColor>;
 /** Weighted combinations of one triple per rule token, over the cross product of the
  *  per-token triple lists — the same weighted sum `combine` (colorUtil) computes live. */
 function derive(rule: Readonly<Record<string, number>>, sources: Record<string, Triples>): GeomColor[] {
-  let combos: GeomColor[] = [[0, 0, 0]];
+  let combos: GeomColor[] = [[]];
   for (const [tok, coeff] of Object.entries(rule)) {
     const next: GeomColor[] = [];
     for (const acc of combos)
       for (const t of sources[tok])
-        next.push([acc[0] + t[0] * coeff, acc[1] + t[1] * coeff, acc[2] + t[2] * coeff]);
+        next.push(weightedSum([[acc, 1], [t, coeff]]));
     combos = next;
   }
   return combos;
@@ -219,8 +319,7 @@ const ops = config.colors.operations;
 // derivation is handed the FULL old-triple source set (face/vert/edge of the shape the
 // operation reads); `derive` only consumes the tokens a given rule actually names, so a
 // rule swapping which old tokens it uses re-colors automatically without touching this.
-const tet = config.colors.schemes.tetrahedral;
-const tetSrc = { oldFace: tet.face.triples, oldVertex: tet.vert.triples, oldEdge: tet.edge.triples };
+const tetSrc = { oldFace: tetFaceIds, oldVertex: tetVertIds, oldEdge: tetEdgeIds };
 
 // octahedron = rectify(tetrahedron): rectify keeps the old faces, adds a face per old
 // vertex, a vertex per old edge, and an edge per old face/vertex incidence.
@@ -239,61 +338,82 @@ const icoEdge = dedupeTriples([
   ...derive(ops.snub.snubEdge, octaSrc),
 ]);
 
-// The config schemes with each group's `triples` filled in (tetrahedral already has
-// them; octa/ico get the derived ones above). Used everywhere below in place of the
-// raw config schemes.
+// The swatch-only config schemes (config.render.schemes) with each group's `triples`
+// filled in: tetrahedral gets the one-hot IDs, octa/ico the derived ones above. Used
+// everywhere below in place of the raw config schemes.
 const resolvedSchemes: Record<string, Record<string, Group>> = {};
-for (const [name, groups] of Object.entries(config.colors.schemes))
+for (const [name, groups] of Object.entries(config.render.schemes))
   resolvedSchemes[name] = Object.fromEntries(
-    Object.entries(groups as Record<string, { swatch: string; triples?: Triples }>).map(([k, grp]) => [
+    Object.entries(groups as Record<string, { swatch: string }>).map(([k, grp]) => [
       k,
-      { swatch: grp.swatch, triples: grp.triples ?? [] },
+      { swatch: grp.swatch, triples: [] as GeomColor[] },
     ]),
   );
 const withTriples = (name: string, t: Record<string, GeomColor[]>) => {
   for (const [k, triples] of Object.entries(t)) resolvedSchemes[name][k] = { ...resolvedSchemes[name][k], triples };
 };
+withTriples("tetrahedral", { face: tetFaceIds, vert: tetVertIds, edge: tetEdgeIds });
 withTriples("octahedral", { face: octaFace, vert: octaVert, edge: octaEdge });
 withTriples("icosahedral", { face: icoFace, vert: icoVert, edge: icoEdge });
 
-// Per-scheme: the plain face/vert/edge groups plus derived faceTint/vertTint/edgeTint
-// tints and `<a>+<b>` equal blends. Tint keys end in "Tint"; equal-blend keys contain
-// "+" (their name doubles as the swatch name); plain keys have neither.
-const augmentedSchemes: Record<string, Record<string, Group>> = {};
-for (const [name, groups] of Object.entries(resolvedSchemes)) {
+// The scheme lookup runs entirely in the collapsed 3D provenance space (see `collapse`):
+// each group's many 14-D IDs collapse to just a handful of distinct 3D triples, so the
+// synthesized cross-products below stay tiny rather than enumerating millions of 14-D
+// combinations. `collapse(color)` at lookup time lands on exactly these, so the resolved
+// swatch is identical to the full-enumeration result.
+const collapsedSchemes: Record<string, Record<string, Group>> = {};
+for (const [name, groups] of Object.entries(resolvedSchemes))
+  collapsedSchemes[name] = Object.fromEntries(
+    Object.entries(groups).map(([k, grp]) => [
+      k,
+      { swatch: grp.swatch, triples: dedupeTriples(grp.triples.map(collapse)) },
+    ]),
+  );
+
+// Per-scheme: the plain face/vert/edge groups plus the synthesized equal-average /
+// nested-average / tint groups. Each augmented group carries its precedence `tier` (lower
+// wins):
+//   0 = plain, 1 = avg(<a>,<b>), 2 = avg(<base>,avg(<n1>,<n2>)), 3 = tint(<base>).
+type AugGroup = Group & { tier: number };
+const augmentedSchemes: Record<string, AugGroup[]> = {};
+for (const [name, groups] of Object.entries(collapsedSchemes)) {
   const g = groups as Record<string, Group>;
   const keys = Object.keys(g);
-  const aug: Record<string, Group> = { ...g };
+  const aug: AugGroup[] = keys.map((k) => ({ ...g[k], tier: 0 }));
   for (let i = 0; i < keys.length; i++) {
     for (let j = i + 1; j < keys.length; j++) {
       const a = g[keys[i]], b = g[keys[j]];
-      const swatch = ensurePairSwatch(a.swatch, b.swatch);
-      aug[`${keys[i]}+${keys[j]}`] = { swatch, triples: combinedTriples(a, b) };
+      // avg(<a>,<b>): equal 0.5/0.5 blend.
+      aug.push({ swatch: ensurePairSwatch(a.swatch, b.swatch), triples: combinedTriples(a, b), tier: 1 });
       for (let k = 0; k < keys.length; k++) {
         if (k == i || k == j) continue;
         const c = g[keys[k]];
-        aug[`${keys[k]}Tint`] = {
-          swatch: ensureTintSwatch(c.swatch, a.swatch, b.swatch),
-          triples: tintedTriples(c, a, b),
-        };
+        // avg(<c>,avg(<a>,<b>)): 0.5 c + 0.25 a + 0.25 b.
+        aug.push({
+          swatch: ensureNestedAvgSwatch(c.swatch, a.swatch, b.swatch),
+          triples: nestedAvgTriples(c, a, b),
+          tier: 2,
+        });
       }
     }
+    // tint(<base>): base·0.75 + 0.25 of any other group (a single one or an average pair).
+    const base = g[keys[i]];
+    const others = keys.filter((_, k) => k !== i).map((k) => g[k]);
+    aug.push({ swatch: ensureTintSwatch(base.swatch), triples: tintTriples(base, others), tier: 3 });
   }
   augmentedSchemes[name] = aug;
 }
 
 // Per-scheme lookup: rounded-triple key → the swatch name of its group. Inserted in
-// precedence tiers, highest first, so a key claimed by an earlier tier is never
-// overwritten: plain groups, then tint (`<base>Tint`), then equal-blend (`<a>+<b>`).
+// ascending precedence tier so a key claimed by a higher-precedence (lower-tier) group is
+// never overwritten by a synthesized one: plain, then equal average, then nested average,
+// then tint.
 const schemeLookup: Record<string, Map<string, string>> = {};
 for (const [name, aug] of Object.entries(augmentedSchemes)) {
   const map = new Map<string, string>();
-  const tier = (key: string): number =>
-    key.includes("+") ? 2 : key.endsWith("Tint") ? 1 : 0;
-  const entries = Object.entries(aug);
-  for (const t of [0, 1, 2])
-    for (const [key, grp] of entries)
-      if (tier(key) === t)
+  for (const tier of [0, 1, 2, 3])
+    for (const grp of aug)
+      if (grp.tier === tier)
         for (const tr of grp.triples) {
           const k = colorKey(tr);
           if (!map.has(k)) map.set(k, grp.swatch);
@@ -302,10 +422,12 @@ for (const [name, aug] of Object.entries(augmentedSchemes)) {
 }
 
 /** Palette swatch name for a geometric color under the active scheme (a color that
- *  matches no scheme group — or is missing — falls back to the default swatch). */
+ *  matches no scheme group — or is missing — falls back to the default swatch). The ID
+ *  vector is collapsed to its 3D provenance triple first (see `collapse`), which is what
+ *  the scheme lookup is keyed on. */
 function paletteSwatch(geom: GeomColor | undefined): string {
   if (!geom) return defaultSwatch;
-  return schemeLookup[currentScheme].get(colorKey(geom)) ?? defaultSwatch;
+  return schemeLookup[currentScheme].get(colorKey(collapse(geom))) ?? defaultSwatch;
 }
 
 /** Undirected edge key from two vertex indices. */
@@ -428,14 +550,30 @@ export function schemeForMesh(mesh: Mesh): SchemeName | null {
 }
 
 /**
- * Initial colors for a freshly-loaded seed: each face / vertex / edge takes the
- * representative (first) triple of the matching group in the scheme the seed's
- * topology fits (see `schemeForMesh`), so a directly-loaded solid is colored like
- * the one built from the tetrahedron. The operations then layer the combination
+ * Initial colors for a freshly-loaded seed.
+ *
+ * The tetrahedron is the identity root, so a loaded tetrahedron gets its per-element
+ * one-hot IDs (every element distinct — the same starting point operations propagate
+ * from, keeping IDs unique; see tests/colorIds). Any other directly-loaded seed takes
+ * the representative (first) triple of each matching orbit in the scheme its topology
+ * fits (see `schemeForMesh`) — enough to color it like the built-from-tetra one, though
+ * its elements aren't individually unique (their canonical unique IDs come from actually
+ * building the solid out of the tetrahedron). Operations then layer the combination
  * rules on top, and the chosen scheme decides how all of them display.
  */
 export function seedColors(mesh: Mesh): ColorSet {
   const scheme = schemeForMesh(mesh) ?? (config.colors.defaultScheme as SchemeName);
+  // A loaded tetrahedron: give each element its own one-hot ID (assigned by element
+  // index / edge-key order, matching the block layout the derivation used).
+  if (scheme === "tetrahedral" && mesh.faces.length === N_TET_FACE && mesh.vertices.length === N_TET_VERT) {
+    const edge = new Map<string, GeomColor>();
+    meshEdgeKeys(mesh).forEach((k, i) => edge.set(k, tetEdgeIds[i] ?? tetEdgeIds[0]));
+    return {
+      vertex: mesh.vertices.map((_, i) => tetVertIds[i]),
+      face: mesh.faces.map((_, i) => tetFaceIds[i]),
+      edge,
+    };
+  }
   const g = resolvedSchemes[scheme];
   return uniformColors(
     mesh,

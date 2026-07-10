@@ -277,12 +277,25 @@ export function buildSubdivide(
         faces.push(outgoingHalfEdges(v).map((h) => midOf(v.id, h.next.origin.id)));
         rFaceColor.push(combine(C.truncate.newFace, { oldVertex: old.vertex[v.id] }, "truncate.newFace"));
       }
+      // Rectify edges ← rectify.newEdge (oldFace + oldVertex)/2, exactly as truncate's
+      // Rectify path colors them — subdivide-welded IS the rectification, so its edges
+      // must match. Each rectify edge is a central-polygon edge of one original face `f`
+      // flanking one original vertex (the corner its two midpoints straddle); that
+      // (face, vertex) pair is its source. (Copying an endpoint vertex's own color here
+      // instead would make every edge collide with that vertex — see tests/colorIds.)
       const rEdgeColor = new Map<string, GeomColor>();
-      for (const loop of faces) {
-        for (let i = 0; i < loop.length; i++) {
-          // Rectify edge: the color of one endpoint midpoint (its source old edge).
-          rEdgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]), midCol[loop[i]] ?? BLACK);
-        }
+      for (const f of dcel.faces) {
+        let h = f.halfedge;
+        const start = h;
+        do {
+          const m1 = midOf(h.origin.id, h.next.origin.id);
+          const m2 = midOf(h.next.origin.id, h.next.next.origin.id);
+          rEdgeColor.set(edgeKey(m1, m2), combine(C.rectify.newEdge, {
+            oldVertex: old.vertex[h.next.origin.id], // the corner the two midpoints flank
+            oldFace: old.face[f.id],
+          }, "rectify.newEdge"));
+          h = h.next;
+        } while (h !== start);
       }
       return {
         mesh: { vertices: verts, faces },

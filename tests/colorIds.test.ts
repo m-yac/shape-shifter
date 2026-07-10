@@ -1,0 +1,272 @@
+import { describe, it, expect } from "vitest";
+import { getSeed } from "../src/geometry/seeds";
+import { Polyhedron } from "../src/geometry/polyhedron";
+import { type Mesh } from "../src/geometry/HalfEdge";
+import {
+  type ColorSet,
+  type GeomColor,
+  meshEdgeKeys,
+} from "../src/geometry/colors";
+import { buildTruncate } from "../src/operations/truncate";
+import { buildKis } from "../src/operations/kis";
+import { buildSubdivide } from "../src/operations/subdivide";
+import { buildChamfer } from "../src/operations/chamfer";
+import { buildSnub } from "../src/operations/snub";
+import { buildGyro } from "../src/operations/gyro";
+
+/**
+ * PROBE: does "every element has a unique ID going IN" imply "every element has a
+ * unique ID coming OUT" for the color-combination rules in config.colors.operations?
+ *
+ * The rules are LINEAR (each new element's color is a weighted sum of old-element
+ * colors — see operations/colorUtil.ts `combine`). So if we give every element of the
+ * input shape a DISTINCT, generic (random) color vector, two OUTPUT elements land on
+ * the same vector iff their rules are the *same linear combination of the same input
+ * elements* — i.e. a genuine, structural collision that would happen for ANY unique
+ * assignment of input IDs (the real "two different elements always get the same ID").
+ *
+ * A merely accidental numeric coincidence would not survive a *different* random
+ * assignment, so we run several independent trials and keep only collisions that
+ * PERSIST across all of them. That makes length-3 random vectors sufficient to detect
+ * the structural collisions we care about, without needing the length-14 IDs yet.
+ *
+ * "Unique among ALL elements" is checked across vertices, edges AND faces together
+ * (the eventual one-hot IDs make a face, an edge and a vertex mutually distinguishable),
+ * so a face color equal to an edge color counts as a collision too.
+ */
+
+// ---- deterministic RNG (mulberry32) so a reported collision is reproducible. ----
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A Polyhedron over `mesh` whose every vertex / edge / face has a DISTINCT random
+ *  color vector (so all input IDs are unique and in general position). */
+function freshlyIdentified(mesh: Mesh, seed: number): Polyhedron {
+  const rand = rng(seed);
+  const vec = (): GeomColor => [rand(), rand(), rand()];
+  const edge = new Map<string, GeomColor>();
+  for (const k of meshEdgeKeys(mesh)) edge.set(k, vec());
+  const colors: ColorSet = {
+    vertex: mesh.vertices.map(vec),
+    face: mesh.faces.map(vec),
+    edge,
+  };
+  return new Polyhedron(mesh, colors);
+}
+
+/** A stable label per element of a ColorSet (independent of the color VALUES, so it is
+ *  the same across trials on the same topology). */
+function elementLabels(colors: ColorSet): Array<{ id: string; vec: GeomColor }> {
+  const out: Array<{ id: string; vec: GeomColor }> = [];
+  colors.vertex.forEach((v, i) => out.push({ id: `V${i}`, vec: v }));
+  colors.face.forEach((f, i) => out.push({ id: `F${i}`, vec: f }));
+  for (const [k, e] of colors.edge) out.push({ id: `E${k}`, vec: e });
+  return out;
+}
+
+const bucketKey = (v: GeomColor) => v.map((x) => Math.round(x * 1e6)).join(",");
+
+/** Intersection of a running set (null = "first trial, take all") with a new set. */
+function intersect(running: Set<string> | null, next: Set<string>): Set<string> {
+  if (running === null) return next;
+  const out = new Set<string>();
+  for (const p of running) if (next.has(p)) out.add(p);
+  return out;
+}
+
+/** The set of colliding unordered element-pairs ("idA|idB") in one ColorSet. */
+function collidingPairs(colors: ColorSet): Set<string> {
+  const buckets = new Map<string, string[]>();
+  for (const { id, vec } of elementLabels(colors)) {
+    const k = bucketKey(vec);
+    (buckets.get(k) ?? buckets.set(k, []).get(k)!).push(id);
+  }
+  const pairs = new Set<string>();
+  for (const ids of buckets.values()) {
+    if (ids.length < 2) continue;
+    ids.sort();
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++) pairs.add(`${ids[i]}|${ids[j]}`);
+  }
+  return pairs;
+}
+
+/**
+ * Run `produce` (input topology → committed ColorSet) over several independent random
+ * ID assignments and return only the collisions that PERSIST across every trial — the
+ * structural ones. `produce` receives a per-trial random seed to identify its input.
+ */
+function structuralCollisions(
+  produce: (seed: number) => ColorSet,
+  trials = 4,
+): string[] {
+  let persistent: Set<string> | null = null;
+  for (let t = 0; t < trials; t++) {
+    persistent = intersect(persistent, collidingPairs(produce(1000 + t * 97)));
+    if (persistent.size === 0) break; // nothing structural can survive
+  }
+  return [...(persistent ?? [])].sort();
+}
+
+const wrap = (r: { mesh: Mesh; colors: ColorSet }) => new Polyhedron(r.mesh, r.colors);
+
+// An arbitrary but valid edge / face / vertex handle for each operation.
+const firstEdge = (p: Polyhedron): [number, number] => {
+  const f = p.faces[0];
+  return [f[0], f[1]];
+};
+
+const SEEDS = ["tetrahedron", "cube", "octahedron", "dodecahedron", "icosahedron"];
+
+// ---------------------------------------------------------------------------
+// SINGLE STEP: give the INPUT shape fresh unique IDs, apply one operation, and
+// check the output. This isolates each operation's rules with generic unique input.
+// ---------------------------------------------------------------------------
+describe("single operation: unique input IDs → unique output IDs", () => {
+  // (op label) → produce a committed ColorSet from a freshly-identified input.
+  type Case = (mesh: Mesh, seed: number) => ColorSet;
+  const cases: Record<string, Case> = {
+    truncate: (m, s) => buildTruncate(freshlyIdentified(m, s), 0, null).commit(0.3, false).colors,
+    rectify: (m, s) => buildTruncate(freshlyIdentified(m, s), 0, null).commit(1, true).colors,
+    kis: (m, s) => buildKis(freshlyIdentified(m, s), 0, null).commit(0.3, false).colors,
+    join: (m, s) => buildKis(freshlyIdentified(m, s), 0, null).commit(1, true).colors,
+    subdivide: (m, s) => {
+      const p = freshlyIdentified(m, s);
+      return buildSubdivide(p, firstEdge(p)).commit(0.5, false).colors;
+    },
+    "subdivide→rectify": (m, s) => {
+      const p = freshlyIdentified(m, s);
+      return buildSubdivide(p, firstEdge(p)).commit(1, true).colors;
+    },
+    chamfer: (m, s) => {
+      const p = freshlyIdentified(m, s);
+      return buildChamfer(p, firstEdge(p), 0).commit(0.3, false).colors;
+    },
+    "chamfer→join": (m, s) => {
+      const p = freshlyIdentified(m, s);
+      return buildChamfer(p, firstEdge(p), 0).commit(1, true).colors;
+    },
+  };
+
+  for (const name of SEEDS) {
+    for (const [op, produce] of Object.entries(cases)) {
+      it(`${op} on ${name}`, () => {
+        const mesh = getSeed(name);
+        const collisions = structuralCollisions((s) => produce(mesh, s));
+        expect(collisions, `${op}(${name}) collisions: ${collisions.join(", ")}`).toEqual([]);
+      });
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SNUB / GYRO: these are twists of a rectification / join, so their input is that
+// rectified / joined solid. Give THAT solid fresh unique IDs and twist it.
+// ---------------------------------------------------------------------------
+describe("snub / gyro: unique input IDs → unique output IDs", () => {
+  const rectifiedMesh = (name: string) =>
+    buildTruncate(new Polyhedron(getSeed(name)), 0, null).commit(1, true).mesh;
+  const joinedMesh = (name: string) =>
+    buildKis(new Polyhedron(getSeed(name)), 0, null).commit(1, true).mesh;
+
+  for (const name of SEEDS) {
+    it(`snub on rectify(${name})`, () => {
+      const mesh = rectifiedMesh(name);
+      const collisions = structuralCollisions((s) => {
+        const p = freshlyIdentified(mesh, s);
+        return buildSnub(p, 0, p.vertices[0].clone()).commit(1, true).colors;
+      });
+      expect(collisions, `snub collisions: ${collisions.join(", ")}`).toEqual([]);
+    });
+
+    it(`gyro on join(${name})`, () => {
+      const mesh = joinedMesh(name);
+      const collisions = structuralCollisions((s) => {
+        const p = freshlyIdentified(mesh, s);
+        return buildGyro(p, 0, p.vertices[0].clone()).commit(1, true).colors;
+      });
+      expect(collisions, `gyro collisions: ${collisions.join(", ")}`).toEqual([]);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CHAINS: identify the SEED uniquely, then apply a sequence of operations, letting the
+// derived IDs (now dependent averages of the seed IDs) flow from one step to the next.
+// A structural collision here is one that persists across random seed assignments — a
+// genuine "two elements of the final shape always share an ID given a unique start".
+// This is where averaging can bite: two DIFFERENT pairs of already-averaged inputs can
+// have equal sums even though every input is distinct.
+// ---------------------------------------------------------------------------
+describe("operation chains from a uniquely-identified seed", () => {
+  type Step = { label: string; run: (p: Polyhedron) => { mesh: Mesh; colors: ColorSet } };
+  const S = {
+    truncate: { label: "truncate", run: (p: Polyhedron) => buildTruncate(p, 0, null).commit(0.3, false) },
+    rectify: { label: "rectify", run: (p: Polyhedron) => buildTruncate(p, 0, null).commit(1, true) },
+    kis: { label: "kis", run: (p: Polyhedron) => buildKis(p, 0, null).commit(0.3, false) },
+    join: { label: "join", run: (p: Polyhedron) => buildKis(p, 0, null).commit(1, true) },
+    subdivide: { label: "subdivide", run: (p: Polyhedron) => buildSubdivide(p, firstEdge(p)).commit(0.5, false) },
+    chamfer: { label: "chamfer", run: (p: Polyhedron) => buildChamfer(p, firstEdge(p), 0).commit(0.3, false) },
+    snub: { label: "snub", run: (p: Polyhedron) => buildSnub(p, 0, p.vertices[0].clone()).commit(1, true) },
+    gyro: { label: "gyro", run: (p: Polyhedron) => buildGyro(p, 0, p.vertices[0].clone()).commit(1, true) },
+  } satisfies Record<string, Step>;
+
+  const chains: Step[][] = [
+    [S.rectify, S.snub], // → icosahedron
+    [S.join, S.gyro], // → dodecahedron
+    [S.truncate, S.subdivide],
+    [S.subdivide, S.subdivide],
+    [S.chamfer, S.chamfer],
+    [S.rectify, S.truncate],
+    [S.rectify, S.subdivide],
+    [S.join, S.chamfer],
+    [S.subdivide, S.chamfer],
+    [S.rectify, S.snub, S.truncate],
+  ];
+
+  const MAX_ELEMENTS = 4000; // stop a chain before it explodes
+
+  for (const name of ["tetrahedron", "cube"]) {
+    for (const chain of chains) {
+      const label = `${name}: ` + chain.map((s) => s.label).join(" → ");
+      it(label, () => {
+        // Run the chain once per trial; collect per-step collision pairs and keep
+        // those persisting across trials (structural), per step.
+        const perStepPersistent: Array<Set<string> | null> = chain.map(() => null);
+        let skipped = false;
+        for (let t = 0; t < 4 && !skipped; t++) {
+          let poly = freshlyIdentified(getSeed(name), 5000 + t * 131);
+          for (let i = 0; i < chain.length; i++) {
+            let out: { mesh: Mesh; colors: ColorSet };
+            try {
+              out = chain[i].run(poly);
+            } catch (e) {
+              // Some chains form shapes an operation can't act on (e.g. snub needs a
+              // rectification). Skip rather than fail — that's a topology limit, not a
+              // color-uniqueness result.
+              skipped = true;
+              break;
+            }
+            perStepPersistent[i] = intersect(perStepPersistent[i], collidingPairs(out.colors));
+            poly = wrap(out);
+            const n = poly.colors.vertex.length + poly.colors.face.length + poly.colors.edge.size;
+            if (n > MAX_ELEMENTS) break;
+          }
+        }
+        if (skipped) return;
+        const report = perStepPersistent
+          .map((set, i) => (set && set.size ? `after ${chain[i].label}: ${[...set].sort().join(", ")}` : null))
+          .filter(Boolean);
+        expect(report, report.join(" | ")).toEqual([]);
+      });
+    }
+  }
+});

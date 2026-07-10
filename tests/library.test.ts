@@ -8,6 +8,7 @@ import {
 } from "../src/data/libraryDiagram";
 import { libraryShapeFor } from "../src/data/libraryShapes";
 import { identify } from "../src/identify/identify";
+import { paletteRGB, setColorScheme, type SchemeName } from "../src/geometry/colors";
 
 const diagramNames = (config.library.diagram as unknown as [number, number, number, string, string[]][]).map(
   (e) => e[3],
@@ -133,12 +134,20 @@ describe("library shapes (rooted at the tetrahedron)", () => {
     }
   });
 
-  it("colors the cube the way the game makes it: join(tetrahedron) → all faces one color", () => {
+  it("colors the cube the way the game makes it: join(tetrahedron) → all faces one swatch", () => {
     const cube = libraryShapeFor("Cube")!;
     expect(cube.scheme).toBe("octahedral");
-    // join() colors its rhombi by the parent's edge color (the tetrahedron's edge
-    // triple [0,0,1]), NOT the bare-seed face color — so every face is that one color.
-    expect(new Set(cube.poly.colors.face.map((c) => c.join(",")))).toEqual(new Set(["0,0,1"]));
+    // join() colors its 6 rhombi from the tetrahedron's 6 EDGES — so each face now
+    // carries its own distinct edge ID (6 unique vectors), but under the octahedral
+    // scheme all 6 still render as the one edge swatch, so the cube reads as one color.
+    expect(new Set(cube.poly.colors.face.map((c) => c.join(",")))).toHaveProperty("size", 6);
+    setColorScheme(cube.scheme as SchemeName);
+    try {
+      const hexes = new Set(cube.poly.colors.face.map((c) => paletteRGB(c).getHex()));
+      expect(hexes.size).toBe(1);
+    } finally {
+      setColorScheme(config.colors.defaultScheme as SchemeName);
+    }
   });
 
   it("gives each Platonic solid its own symmetry color scheme", () => {
