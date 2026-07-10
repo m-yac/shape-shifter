@@ -1,38 +1,30 @@
 import { Vector3, Ray, Color } from "three";
-import {
-  type Mesh,
-  type HEFace,
-  outgoingHalfEdges,
-} from "../geometry/HalfEdge";
-import {
-  type Polyhedron,
-  faceCentroidHE,
-  faceNormalHE,
-} from "../geometry/polyhedron";
+import { type Mesh, outgoingHalfEdges } from "../geometry/HalfEdge";
+import { type Polyhedron, newellNormal } from "../geometry/polyhedron";
 import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 import { type MorphPlan } from "./types";
-import { type InViewTest } from "./truncate";
+import { type InViewTest, computeCollapseFractions } from "./truncate";
 import { combine, stagedFaceColors } from "./colorUtil";
 import { config } from "../config";
 import { closestLineParam } from "../util/lines";
 
 const BLACK: GeomColor = [0, 0, 0];
 
-/** Outward unit normal of a face (centroid-oriented, like SceneView). */
-function outwardNormal(f: HEFace): Vector3 {
-  const n = faceNormalHE(f);
-  if (n.dot(faceCentroidHE(f)) < 0) n.negate();
-  return n;
+/** Best-fit plane of a ring of points, as a point + unit normal. */
+function ringPlane(ring: Vector3[]): { c: Vector3; n: Vector3 } {
+  const c = new Vector3();
+  for (const p of ring) c.add(p);
+  c.multiplyScalar(1 / ring.length);
+  return { c, n: newellNormal(ring) };
 }
 
 /**
- * Subdivide, driven by dragging an edge midpoint outward along the edge normal
- * (the mean of its two bordering face normals). Like truncate/kis the gesture is
- * global: dragging ONE edge subdivides EVERY edge. A new vertex is placed in the
- * middle of each edge (raised along the normal), every original vertex is kept (as
- * the apex of its vertex figure), each original face becomes the polygon of its
- * edge midpoints, and each original vertex grows a fan of triangles to its
- * surrounding midpoints.
+ * Subdivide, driven by dragging an edge's new vertex outward. Like truncate/kis the
+ * gesture is global: dragging ONE edge subdivides EVERY edge. A new vertex is placed
+ * on each edge (at truncate's collapse point — see the note in the body), every
+ * original vertex is kept (as the apex of its vertex figure), each original face
+ * becomes the polygon of its edge vertices, and each original vertex grows a fan of
+ * triangles to its surrounding edge vertices.
  *
  *   t = 0 → coplanar with the original (midpoints flat, looks unchanged).
  *   0 < t < 1 → the subdivided solid (e.g. cube → 6 quads + 24 triangles).
@@ -50,70 +42,100 @@ export function buildSubdivide(
   const dcel = poly.dcel;
   const old = poly.colors;
 
-  // ---- Index a vertex at every edge midpoint, plus an apex at every vertex. ----
-  const edgeIndex = new Map<string, number>(); // edgeKey -> midpoint vertex index
-  const midData: Array<{ index: number; mid: Vector3; normal: Vector3; key: string }> = [];
+  // ---- Index a vertex on every edge, plus an apex at every vertex. ------------
+  //
+  // Subdivide is the exact DUAL of chamfer, and its geometry follows the same rule:
+  // reuse the weld limit's solver rather than inventing a heuristic. Chamfer shrinks
+  // each face toward kis's join apex; dually, subdivide's new vertex on edge (p,q)
+  // sits at truncate's COLLAPSE POINT `p + s·(q−p)` — the point where a Rectify's two
+  // cut ends meet (`computeCollapseFractions` solves the s that keeps every vertex
+  // n-gon planar). Two properties fall out, both of which a raised edge MIDPOINT
+  // lacks:
+  //
+  //   * the new vertices of a face lie ON that face's edges, hence in its plane, so
+  //     the central polygon is exactly planar AND convex (a convex polygon's edge
+  //     points always are) — a lifted midpoint polygon is neither;
+  //   * the ring around a vertex is planar, so the corner fan flattens cleanly and
+  //     the weld is truncate's Rectify exactly, not an approximation of it.
+  //
+  // The drag then plays out on the OTHER end: the apex sinks from v to the plane of
+  // its ring (where the fan flattens and it welds away), and we rescale the solid
+  // each frame to hold the apexes at their original mean radius. That rescale is
+  // free — the shape is scale-invariant — and it is what puts the motion back where
+  // the gesture expects it: the edge vertices sweep outward as you drag, while the
+  // apexes stay put (exactly, on a symmetric solid) or drift slightly (on an
+  // irregular one, where that drift IS the correction).
+  const collapse = computeCollapseFractions(poly);
+  const edgeIndex = new Map<string, number>(); // edgeKey -> edge vertex index
+  const midData: Array<{ index: number; rest: Vector3; key: string }> = [];
   let idx = 0;
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue; // once per undirected edge
-    const p = he.origin.position;
-    const q = he.next.origin.position;
     const key = edgeKey(he.origin.id, he.next.origin.id);
-    const normal = outwardNormal(he.face).add(outwardNormal(he.twin.face)).normalize();
+    const s = collapse.get(he.id) ?? 0.5;
     edgeIndex.set(key, idx);
-    midData.push({ index: idx, mid: p.clone().add(q).multiplyScalar(0.5), normal, key });
+    midData.push({
+      index: idx,
+      rest: he.origin.position.clone().lerp(he.next.origin.position, s),
+      key,
+    });
     idx++;
   }
   const E = idx;
   const apexOf = (vid: number) => E + vid;
   const vertexCount = E + dcel.vertices.length;
 
-  // The limit (hMax) is the lift at which every vertex's corner fan becomes
-  // coplanar: there its triangles merge into the vertex-figure polygon and the
-  // apex welds away, so the solid becomes its RECTIFICATION. For a vertex v with
-  // axis a (its mean face normal), an incident edge midpoint m raised by s along
-  // its normal n lies level with the apex when (v − m)·a = s (n·a), so the lift
-  // that flattens the fan is s = (v − m)·a / (n·a). This differs per vertex on an
-  // irregular solid; the mean is exact for the vertex/edge-transitive Platonic
-  // solids and a good heuristic otherwise (the post-release solver refines it).
-  const midByKey = new Map<string, { mid: Vector3; normal: Vector3 }>();
-  for (const m of midData) midByKey.set(m.key, m);
-  let hSum = 0;
-  let hCount = 0;
+  const restOf = new Map<string, Vector3>();
+  for (const m of midData) restOf.set(m.key, m.rest);
+  const ringOf = (v: (typeof dcel.vertices)[number]) =>
+    outgoingHalfEdges(v).map((h) => restOf.get(edgeKey(h.origin.id, h.next.origin.id))!);
+
+  // Where each apex lands at t=1: the foot of v on the plane of its ring, i.e. the
+  // lift at which its corner fan goes flat.
+  const foot = new Map<number, Vector3>();
   for (const v of dcel.vertices) {
-    const ring = outgoingHalfEdges(v);
-    const axis = new Vector3();
-    for (const h of ring) axis.add(outwardNormal(h.face));
-    if (axis.lengthSq() < 1e-18) continue;
-    axis.normalize();
-    let s = 0;
-    let n = 0;
-    for (const h of ring) {
-      const md = midByKey.get(edgeKey(h.origin.id, h.next.origin.id));
-      if (!md) continue;
-      const denom = md.normal.dot(axis);
-      if (Math.abs(denom) < 1e-6) continue;
-      s += v.position.clone().sub(md.mid).dot(axis) / denom;
-      n++;
+    const ring = ringOf(v);
+    if (ring.length < 3) {
+      foot.set(v.id, v.position.clone());
+      continue;
     }
-    if (n > 0) {
-      hSum += s / n;
-      hCount++;
-    }
+    const { c, n } = ringPlane(ring);
+    foot.set(v.id, v.position.clone().addScaledVector(n, -v.position.clone().sub(c).dot(n)));
   }
-  // Fall back to a fraction of the average edge length if the heuristic degenerates.
-  let avgLen = 0;
-  for (const m of midData) {
-    const [a, b] = m.key.split("_").map(Number);
-    avgLen += dcel.vertices[a].position.distanceTo(dcel.vertices[b].position);
+
+  const meanRadius = (pts: Vector3[]) =>
+    pts.reduce((s, p) => s + p.length(), 0) / Math.max(1, pts.length);
+  const R0 = meanRadius(dcel.vertices.map((v) => v.position));
+  const R1 = meanRadius(dcel.vertices.map((v) => foot.get(v.id)!));
+
+  /** Apex positions at `t`, before the rescale. */
+  const sunkApexes = (t: number): Vector3[] =>
+    dcel.vertices.map((v) => v.position.clone().lerp(foot.get(v.id)!, t));
+
+  // The rescale that holds the apexes at their original mean radius. Note it
+  // interpolates the mean radius rather than averaging the interpolated radii: both
+  // agree at t=0 and t=1 (and everywhere, whenever a vertex sinks along its own
+  // radial — every symmetric solid), but only this form INVERTS IN CLOSED FORM. A
+  // mean of norms does not, and inverting it numerically would leave `snap` unable to
+  // return exactly t=1 — which is the only value the drag controller welds on.
+  const denom = (t: number) => R0 + t * (R1 - R0);
+  const scaleAt = (t: number) => (denom(t) > 1e-9 ? R0 / denom(t) : 1);
+  const kMax = scaleAt(1);
+
+  /** Exact inverse of `scaleAt`. */
+  function tForScale(k: number): number {
+    if (Math.abs(R1 - R0) < 1e-12 || k <= 1) return 0;
+    return Math.max(0, Math.min(1, (R0 * (1 / k - 1)) / (R1 - R0)));
   }
-  avgLen /= Math.max(1, midData.length);
-  const hMax = hCount > 0 && hSum > 0 ? hSum / hCount : 0.5 * avgLen;
 
   function positions(t: number): Vector3[] {
+    const k = scaleAt(t);
     const out: Vector3[] = new Array(vertexCount);
-    for (const m of midData) out[m.index] = m.mid.clone().addScaledVector(m.normal, t * hMax);
-    for (const v of dcel.vertices) out[apexOf(v.id)] = v.position.clone();
+    for (const m of midData) out[m.index] = m.rest.clone().multiplyScalar(k);
+    const apex = sunkApexes(t);
+    dcel.vertices.forEach((v, i) => {
+      out[apexOf(v.id)] = apex[i].multiplyScalar(k);
+    });
     return out;
   }
 
@@ -148,9 +170,15 @@ export function buildSubdivide(
     faceEnd.push(old.face[f.id]);
   }
   // (b) one triangle per (vertex, consecutive incident-edge pair): the corner fan.
+  // At the Rectify weld the fan goes flat and merges into v's vertex figure, so its
+  // spokes (edge vertex → apex) dissolve — the dual of the original edges that kis
+  // dissolves when its pyramid triangles merge into a Join quad. Hiding them at t=1
+  // makes the fan read as the single vertex-figure polygon before the geometry welds.
+  const fanDissolve: Array<[number, number]> = [];
   const cornerTriangles: number[][] = [];
   for (const v of dcel.vertices) {
     const ring = outgoingHalfEdges(v);
+    for (const h of ring) fanDissolve.push([midOf(v.id, h.next.origin.id), apexOf(v.id)]);
     for (let i = 0; i < ring.length; i++) {
       const mi = midOf(v.id, ring[i].next.origin.id);
       const mj = midOf(v.id, ring[(i + 1) % ring.length].next.origin.id);
@@ -223,23 +251,25 @@ export function buildSubdivide(
     return stagedFaceColors(faceOrig, faceMid, faceEnd, t, weld);
   }
 
-  // ---- Snap: project the cursor onto the edge-normal line from its midpoint. ---
-  const eMid = dcel.vertices[edge[0]].position
-    .clone()
-    .add(dcel.vertices[edge[1]].position)
-    .multiplyScalar(0.5);
-  const eNormal =
-    midData.find((m) => m.key === edgeKey(edge[0], edge[1]))?.normal.clone() ??
-    new Vector3(0, 1, 0);
+  // ---- Snap: the dragged edge's vertex sweeps outward along its own radial, from its
+  //  rest point to where the Rectify weld leaves it. The cursor's travel `s` fixes the
+  //  scale, which `tForScale` inverts exactly — so dragging to the far end yields t=1
+  //  on the nose, and the drag controller welds.
+  const eRest =
+    midData.find((m) => m.key === edgeKey(edge[0], edge[1]))?.rest.clone() ??
+    dcel.vertices[edge[0]].position.clone();
+  const eDir = eRest.clone().normalize();
+  const eLen = eRest.length();
+  const sMax = eLen * (kMax - 1); // outward travel over the whole drag
+
   function snap(ray: Ray): { t: number; point: Vector3; highlight?: { a: Vector3; b: Vector3 } } {
-    let s = closestLineParam(eMid, eNormal, ray.origin, ray.direction);
-    s = Math.max(0, Math.min(hMax, s));
-    const point = eMid.clone().addScaledVector(eNormal, s);
-    const t = hMax > 1e-9 ? s / hMax : 0;
+    let s = closestLineParam(eRest, eDir, ray.origin, ray.direction);
+    s = Math.max(0, Math.min(sMax, s));
+    const t = sMax > 1e-9 ? (s >= sMax ? 1 : tForScale(1 + s / eLen)) : 0;
     return {
       t,
-      point,
-      highlight: { a: point.clone(), b: eMid.clone().addScaledVector(eNormal, hMax) },
+      point: eRest.clone().addScaledVector(eDir, s),
+      highlight: { a: eRest.clone().addScaledVector(eDir, s), b: eRest.clone().multiplyScalar(kMax) },
     };
   }
 
@@ -251,7 +281,7 @@ export function buildSubdivide(
       const verts: Vector3[] = new Array(E);
       const midCol: GeomColor[] = new Array(E);
       for (const m of midData) {
-        verts[m.index] = m.mid.clone().addScaledVector(m.normal, hMax);
+        verts[m.index] = m.rest.clone().multiplyScalar(kMax);
         const [a, b] = m.key.split("_").map(Number);
         // Rectify vertex ← its source edge (subdivide.newVertex).
         midCol[m.index] = combine(C.subdivide.newVertex, { oldEdge: midColor(a, b) });
@@ -318,7 +348,7 @@ export function buildSubdivide(
     positions,
     previewFaceColors,
     previewEdgeColors: edgeColor,
-    vanishingEdges: [],
+    vanishingEdges: fanDissolve,
     snap,
     commit,
   };
