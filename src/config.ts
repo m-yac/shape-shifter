@@ -660,6 +660,11 @@ export const config = {
     snapSmoothing: 0.18,
     // The on-screen display radius each little solid is scaled to (world units, <1)
     shapeRadius: 0.62,
+    // Colored-edge tube radius for the little library solids (see
+    // render.coloredEdgeTubeRadius). Separate from the main view's so the two can be
+    // tuned independently; both calibrate against `camera.startDistance`, so equal
+    // values look the same thickness in each view.
+    coloredEdgeTubeRadius: 0.00175,
     // Arrows start / end this many `shapeRadius` out from a solid's center, so
     // they run between the solids rather than through them.
     arrowGapFactor: 1,
@@ -962,12 +967,9 @@ export const config = {
     // (l≈0..1 lightness, a green↔red, b blue↔yellow) — the perceptual space the
     // synthesized tint/blend swatches are mixed in (see geometry/colors.ts), so no
     // sRGB↔OKLab round-tripping is needed to blend them. `face` is the on-screen (dark
-    // backlight) color; `l_face` its light-export variant. The matching EDGE colors are
-    // NOT stored — they are derived on the spot as a uniform OKLab darken of the face
-    // (× config.render.edgeDarken; see geometry/colors.ts `darken`).
+    // backlight) color; `l_face` its light-export variant.
     // These were generated from the original sRGB face hexes (white #ffffff, l_face
     // #e6e6e6; yellow #ffd24a/#f2c230; red #e0524a; blue #4a78e0).
-    edgeDarken: 0.5, // edge OKLab = face OKLab × this (all channels)
     palette: {
       white:   { face: { l: 1, a: 0, b: 0 }, l_face: { l: 0.92494, a: 0, b: 0 } }, // fallback color
       yellow:  { face: { l: 0.87967, a: -0.00016, b: 0.15541 }, l_face: { l: 0.83396, a: 0.00287, b: 0.15841 } },
@@ -1025,6 +1027,19 @@ export const config = {
     colorFadeSeconds: 0.4,
 
     showEdges: true,
+
+    // COLORED EDGE TUBES. An edge whose color is NOT the default swatch (i.e. one of
+    // the distinctly-colored symmetry orbits) is hard to make out as a thin line, so
+    // it is drawn as a small tube instead — both in the main view and the library
+    // browser. This `coloredEdgeTubeRadius` is the MAIN VIEW's tube radius (the library
+    // has its own, `library.coloredEdgeTubeRadius`); it is the tube's world radius at the
+    // default camera distance (`camera.startDistance`). Like the drag line + markers it
+    // rescales with distance so the tube keeps a constant apparent thickness on screen at
+    // any zoom. Both views calibrate against that same distance, so equal radii look the
+    // same thickness in each. `coloredEdgeTubeSegments` is how many sides the tube's
+    // cross-section has (higher = rounder, more triangles).
+    coloredEdgeTubeRadius: 0.00175,
+    coloredEdgeTubeSegments: 6,
 
     // Pickable handle markers. Radii are the on-screen size at the default
     // camera distance; markers auto-rescale with zoom to keep that apparent size.

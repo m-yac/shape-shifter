@@ -435,18 +435,16 @@ export function edgeKey(a: number, b: number): string {
   return a < b ? `${a}_${b}` : `${b}_${a}`;
 }
 
-/** The EDGE color of a swatch, derived from its face as a uniform OKLab darken (all
- *  channels × config.render.edgeDarken) — edges aren't stored. Because both the darken
+/** The EDGE color of a swatch, derived from its face as an OKLab transformation. Because both the darken
  *  and the tint/blend swatch mixes are linear in OKLab, darkening the (already-blended)
  *  face here is identical to blending pre-darkened edges. Memoized per source OKLab
  *  object so each stable palette/synthesized face maps to one stable darkened object,
  *  which then hits `hexCache` on conversion. */
-const edgeDarken = config.render.edgeDarken;
 const darkCache = new Map<OKLab, OKLab>();
 function darken(face: OKLab): OKLab {
   let d = darkCache.get(face);
   if (d === undefined) {
-    d = { l: face.l * edgeDarken, a: face.a * edgeDarken, b: face.b * edgeDarken };
+    d = { l: 1.0 - face.l, a: face.a, b: face.b };
     darkCache.set(face, d);
   }
   return d;

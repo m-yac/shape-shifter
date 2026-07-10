@@ -35,7 +35,8 @@ import { makeActionButton } from "./controls";
 import { libraryShapeFor } from "../data/libraryShapes";
 import { computeSignature, describeSignature } from "../identify/configurations";
 import { clearAllProgress } from "../history/historyStore";
-import { faceColorsRGB, getColorScheme, setColorScheme } from "../geometry/colors";
+import { faceColorsRGB, darkRGB, getColorScheme, setColorScheme } from "../geometry/colors";
+import { EdgeTubes, type EdgeTubeSpec } from "../render/edgeTubes";
 import { Polyhedron, cloneMesh } from "../geometry/polyhedron";
 import { type Mesh } from "../geometry/HalfEdge";
 import { RelaxSolver } from "../solver/solver";
@@ -59,6 +60,7 @@ interface RenderNode {
   group: Group;
   faceMat: MeshStandardMaterial | null;
   edgeMat: LineBasicMaterial | null;
+  edgeTubes: EdgeTubes | null; // colored-edge tubes (only shown when discovered)
 }
 
 /**
@@ -258,6 +260,7 @@ export class LibraryBrowser {
         group,
         faceMat: null,
         edgeMat: null,
+        edgeTubes: null,
       };
 
       if (entry) {
@@ -266,6 +269,7 @@ export class LibraryBrowser {
         group.add(built.group);
         node.faceMat = built.faceMat;
         node.edgeMat = built.edgeMat;
+        node.edgeTubes = built.edgeTubes;
       } else if (config.features.logToConsole) {
         console.warn(`[library] no shape found for diagram node "${info.name}"`);
       }
@@ -308,6 +312,10 @@ export class LibraryBrowser {
       const show = visible.has(i);
       node.group.visible = show;
       if (!show || !node.faceMat || !node.edgeMat) return;
+      // Colored-edge tubes carry their own baked colors, so they only make sense on a
+      // discovered (fully-colored) node — a ghost recolors its edges a flat grey.
+      node.edgeTubes?.setVisible(discovered.has(i));
+      node.edgeTubes?.setOpacity(1); // restore after any hover dim
       if (discovered.has(i)) {
         // Full default colors at default opacity.
         node.faceMat.vertexColors = true;
@@ -556,6 +564,7 @@ export class LibraryBrowser {
       node.edgeMat.opacity = 0.15;
       node.edgeMat.transparent = true;
       node.edgeMat.needsUpdate = true;
+      node.edgeTubes?.setOpacity(0.15);
     });
   }
 
@@ -721,6 +730,18 @@ export class LibraryBrowser {
       this.stepSnap();
       this.controls.update();
       this.updateArrowheads();
+      // Keep every visible node's colored-edge tubes at a constant on-screen
+      // thickness (calibrated to the library's default viewing distance). The tube
+      // endpoints live in each node group's local frame, so pass the node position.
+      for (const node of this.nodes) {
+        if (node.edgeTubes && node.group.visible)
+          node.edgeTubes.updateScales(
+            this.camera,
+            config.camera.startDistance,
+            config.library.coloredEdgeTubeRadius,
+            node.pos,
+          );
+      }
       this.composer.render();
       this.raf = requestAnimationFrame(loop);
     };
@@ -783,6 +804,7 @@ interface BuiltShape {
   group: Group;
   faceMat: MeshStandardMaterial;
   edgeMat: LineBasicMaterial;
+  edgeTubes: EdgeTubes;
 }
 
 /**
@@ -848,16 +870,20 @@ function buildShapeGroup(poly: Polyhedron): BuiltShape {
   });
   const faceMesh = new ThreeMesh(fg, faceMat);
 
-  const ea = edgeGeometryArrays(mesh, poly.colors.edge);
+  const tubeSpecs: EdgeTubeSpec[] = [];
+  const ea = edgeGeometryArrays(mesh, poly.colors.edge, undefined, darkRGB, tubeSpecs);
   const eg = new BufferGeometry();
   eg.setAttribute("position", new Float32BufferAttribute(ea.positions, 3));
   eg.setAttribute("color", new Float32BufferAttribute(ea.colors, 3));
   const edgeMat = new LineBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true });
   const edges = new LineSegments(eg, edgeMat);
 
+  const edgeTubes = new EdgeTubes(config.render.coloredEdgeTubeSegments);
+  edgeTubes.setEdges(tubeSpecs);
+
   const group = new Group();
-  group.add(faceMesh, edges);
-  return { group, faceMat, edgeMat };
+  group.add(faceMesh, edges, edgeTubes.object);
+  return { group, faceMat, edgeMat, edgeTubes };
 }
 
 /** Dispose a Line / Mesh's geometry + material(s). */

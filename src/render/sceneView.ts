@@ -31,6 +31,7 @@ import {
   faceColorsRGBLight,
   darkRGBLight,
 } from "../geometry/colors";
+import { EdgeTubes, type EdgeTubeSpec } from "./edgeTubes";
 import { config } from "../config";
 
 /** Options for a live preview render (drag / solve frames). */
@@ -119,20 +120,29 @@ export function faceGeometryArrays(
 
 /** Wireframe positions + per-edge color (from `edgeColors` palette indices). The
  *  resolver maps an index to RGB; defaults to the dark palette (the screen look),
- *  but the _light.png export passes `darkRGBLight`. */
+ *  but the _light.png export passes `darkRGBLight`. When a `tubes` array is passed,
+ *  every edge whose color is NOT the default swatch is instead pushed onto it (as a
+ *  tube spec) and omitted from the line geometry, so those edges can be drawn as
+ *  thicker, more-visible tubes; without it every edge goes into the lines. */
 export function edgeGeometryArrays(
   mesh: Mesh,
   edgeColors: Map<string, GeomColor>,
   hidden?: Set<string>,
   resolve: (c: GeomColor | undefined) => Color = darkRGB,
+  tubes?: EdgeTubeSpec[],
 ): { positions: number[]; colors: number[] } {
   const positions: number[] = [];
   const colors: number[] = [];
   for (const [a, b] of meshEdges(mesh, hidden)) {
     const pa = mesh.vertices[a];
     const pb = mesh.vertices[b];
+    const geom = edgeColors.get(edgeKey(a, b));
+    const c = resolve(geom);
+    if (tubes) {
+      tubes.push({ a: pa.clone(), b: pb.clone(), color: c });
+      continue;
+    }
     positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
-    const c = resolve(edgeColors.get(edgeKey(a, b)));
     colors.push(c.r, c.g, c.b, c.r, c.g, c.b);
   }
   return { positions, colors };
@@ -172,6 +182,9 @@ export class SceneView {
   private group = new Group();
   private faceMesh: ThreeMesh;
   private edges: LineSegments;
+  // Colored edges (non-default swatch) drawn as distance-scaled tubes instead of
+  // thin lines; the plain lines above only carry the default-swatch edges.
+  private edgeTubes = new EdgeTubes(config.render.coloredEdgeTubeSegments);
   private markerGroup = new Group();
   private dragTube: ThreeMesh;
   private dragA = new Vector3();
@@ -238,6 +251,7 @@ export class SceneView {
       new LineBasicMaterial({ color: 0xffffff, vertexColors: true }),
     );
     this.edges.visible = config.render.showEdges;
+    this.edgeTubes.setVisible(config.render.showEdges);
 
     // White tube for the drag "range" line (current point → max). Unit cylinder
     // (radius 1, height 1 along +Y); positioned/scaled per drag and per frame.
@@ -308,6 +322,7 @@ export class SceneView {
     this.group.add(
       this.faceMesh,
       this.edges,
+      this.edgeTubes.object,
       this.markerGroup,
       this.dragTube,
       this.dragMarker,
@@ -355,6 +370,7 @@ export class SceneView {
     const oldTransparent = this.faceMat.transparent;
     const oldEmissive = this.faceMat.emissiveIntensity;
     const oldMarkers = this.markerGroup.visible;
+    const oldTubes = this.edgeTubes.object.visible;
 
     const fa = faceGeometryArrays(poly.mesh, faceColorsRGBLight(poly.colors.face));
     const fg = new BufferGeometry();
@@ -373,6 +389,9 @@ export class SceneView {
     this.faceMat.transparent = config.render.light.faceOpacity < 1;
     this.faceMat.emissiveIntensity = 0;
     this.markerGroup.visible = false;
+    // The export draws every edge (colored included) as a plain line, so hide the
+    // live colored-edge tubes for the duration.
+    this.edgeTubes.setVisible(false);
 
     return () => {
       this.faceMesh.geometry.dispose();
@@ -383,6 +402,7 @@ export class SceneView {
       this.faceMat.transparent = oldTransparent;
       this.faceMat.emissiveIntensity = oldEmissive;
       this.markerGroup.visible = oldMarkers;
+      this.edgeTubes.setVisible(oldTubes);
     };
   }
 
@@ -463,12 +483,14 @@ export class SceneView {
     this.faceMesh.geometry.dispose();
     this.faceMesh.geometry = fg;
 
-    const edge = edgeGeometryArrays(mesh, edgeColors, hiddenEdges);
+    const tubes: EdgeTubeSpec[] = [];
+    const edge = edgeGeometryArrays(mesh, edgeColors, hiddenEdges, darkRGB, tubes);
     const eg = new BufferGeometry();
     eg.setAttribute("position", new Float32BufferAttribute(edge.positions, 3));
     eg.setAttribute("color", new Float32BufferAttribute(edge.colors, 3));
     this.edges.geometry.dispose();
     this.edges.geometry = eg;
+    this.edgeTubes.setEdges(tubes);
   }
 
   /** Rewrite just the color attribute in place from `displayFaceColors`. */
@@ -587,6 +609,9 @@ export class SceneView {
 
   /** Rescale markers + the drag tube so their apparent on-screen size is stable. */
   updateMarkerScales(camera: Camera, refDistance: number): void {
+    // Colored-edge tubes: same distance-based radius scaling (the group is at the
+    // origin, so their endpoints are already world-space).
+    this.edgeTubes.updateScales(camera, refDistance, config.render.coloredEdgeTubeRadius);
     for (const m of [...this.vertexMarkers, ...this.faceMarkers, ...this.edgeMarkers]) {
       const d = camera.position.distanceTo(m.mesh.position);
       m.mesh.scale.setScalar(Math.max(d / refDistance, 0.05));
