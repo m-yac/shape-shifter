@@ -1,11 +1,12 @@
 import { Vector3, Ray, Color } from "three";
 import { type Mesh, type HEFace, faceVertices } from "../geometry/HalfEdge";
-import { type Polyhedron, faceCentroidHE } from "../geometry/polyhedron";
+import { type Polyhedron, faceCentroidHE, faceNormalHE } from "../geometry/polyhedron";
 import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
 import { weldVertexPairs } from "./weld";
 import { combine, dualRule, lerpFaceColors } from "./colorUtil";
+import { computeJoinHeights } from "./kis";
 import { config } from "../config";
 import { closestLineParam } from "../util/lines";
 
@@ -16,34 +17,45 @@ function faceLoopIds(f: HEFace): number[] {
   return faceVertices(f).map((v) => v.id);
 }
 
-/** Invert a symmetric 3x3 matrix given as 9 row-major numbers, or null if it is
- *  (near-)singular. Used to least-squares-fit a chamfer vertex onto the planes of
- *  its incident hexagons. */
-function invert3(m: number[]): number[] | null {
-  const [a, b, c, d, e, f, g, h, i] = m;
-  const A = e * i - f * h;
-  const B = -(d * i - f * g);
-  const C = d * h - e * g;
-  const det = a * A + b * B + c * C;
-  if (Math.abs(det) < 1e-9) return null;
-  const inv = 1 / det;
-  return [
-    A * inv, (c * h - b * i) * inv, (b * f - c * e) * inv,
-    B * inv, (a * i - c * g) * inv, (c * d - a * f) * inv,
-    C * inv, (b * g - a * h) * inv, (a * e - b * d) * inv,
-  ];
+/**
+ * The point every face shrinks toward, one per face.
+ *
+ * Each original edge (p,q) becomes a hexagon `[p, A_p, A_q, q, B_q, B_p]`, where
+ * `A_p = lerp(p, target_A, t)`. Since the hexagon must contain p, q and the two
+ * inset corners of face A — all four of which lie in A's plane when the target is
+ * A's centroid — a centroid-targeted hexagon can only be planar by accident. So
+ * the target must leave the face plane.
+ *
+ * Writing the planarity condition out, the hexagon is planar exactly when
+ * `det[q−p, target_A−p, target_B−p] = 0`, i.e. when p, q and the two targets are
+ * coplanar — a condition on the targets alone, INDEPENDENT of t. That is precisely
+ * the condition kis solves for when it places a pyramid apex per face such that the
+ * Join quads `[p, apex_A, q, apex_B]` are planar. So the chamfer targets ARE the
+ * join apexes, and reusing them makes every hexagon planar at every t with the
+ * original vertices held fixed. (It also makes chamfer→Join geometrically identical
+ * to joining directly, which the color rules already assumed.)
+ *
+ * For a non-canonical solid `computeJoinHeights` is a least-squares fit, so the
+ * hexagons inherit its (small) residual rather than being exactly planar.
+ */
+function insetTargets(poly: Polyhedron): Map<number, Vector3> {
+  const heights = computeJoinHeights(poly);
+  const targets = new Map<number, Vector3>();
+  for (const f of poly.dcel.faces)
+    targets.set(f.id, faceCentroidHE(f).addScaledVector(faceNormalHE(f), heights.get(f.id)!));
+  return targets;
 }
 
 /**
  * Chamfer ↔ Join, driven by dragging an edge midpoint sideways along a bordering
  * face. Like truncate/kis the gesture is global: dragging ONE edge chamfers EVERY
  * edge (the handle just sets the global inset). Each original face shrinks toward
- * its centroid, each original edge is replaced by a hexagon spanning the gap, and
- * every original vertex is kept.
+ * its join apex (see `insetTargets`), each original edge is replaced by a hexagon
+ * spanning the gap, and every original vertex is kept, fixed in place.
  *
  *   t = 0 → coincident with the original (zero inset, hexagons collapsed).
  *   0 < t < 1 → the chamfered solid (n-gons + hexagons).
- *   t = 1 → Join: every face has shrunk to its centroid; welding the collapsed
+ *   t = 1 → Join: every face has shrunk to its apex; welding the collapsed
  *           perimeters deletes the original faces and merges each hexagon into a
  *           rhombus (e.g. chamfer-join of the cube → rhombic dodecahedron).
  *
@@ -64,17 +76,18 @@ export function buildChamfer(
   // ---- Index the inset ("new") vertices: one per (face, vertex) corner. -------
   const cornerIndex = new Map<string, number>(); // `${faceId}_${vId}` -> new index
   const cornerOf = (fid: number, vid: number) => cornerIndex.get(`${fid}_${vid}`)!;
-  // Per inset vertex, cache its original vertex position and its face centroid so
+  // Per inset vertex, cache its original vertex position and its face's inset target so
   // positions(t) is a cheap lerp.
   // Chamfer is the exact DUAL of subdivide, so its rules are the dualized (vertex↔
   // face) subdivide rules (see colorUtil.dualRule). An inset corner (a new vertex) ←
   // dual(subdivide.newFace), from this vertex and face. (At the Join weld a face's
   // insets collapse to its centre, which recolors to the join apex — see commit.)
   const C = config.colors.operations;
+  const targets = insetTargets(poly);
   const insets: Array<{ index: number; v: Vector3; c: Vector3; color: GeomColor }> = [];
   let idx = V;
   for (const f of dcel.faces) {
-    const centroid = faceCentroidHE(f);
+    const target = targets.get(f.id)!;
     const loop = faceVertices(f);
     for (let i = 0; i < loop.length; i++) {
       const v = loop[i];
@@ -82,7 +95,7 @@ export function buildChamfer(
       insets.push({
         index: idx,
         v: v.position,
-        c: centroid,
+        c: target,
         color: combine(dualRule(C.subdivide.newFace), {
           oldVertex: old.vertex[v.id],
           oldFace: old.face[f.id],
@@ -93,69 +106,11 @@ export function buildChamfer(
   }
   const vertexCount = idx;
 
-  // ---- Move the original vertices so the new hexagons stay planar. -------------
-  // Each undirected edge's hexagon is `[p, A_p, A_q, q, B_q, B_p]`. Its four inset
-  // corners always form a parallelogram (so they're coplanar) whose plane has
-  // normal N = (q−p)×(c_B−c_A) through the parallelogram center C(t) = lerp(m, k, t)
-  // (m = edge midpoint, k = mean of the two face centroids). The hexagon is planar
-  // exactly when p and q also lie in that plane. Each original vertex sits on one
-  // such plane per incident edge; we least-squares fit it to all of them (exact for
-  // symmetric solids, and continuous from the identity since every vertex already
-  // lies on all its planes at t = 0). The shrunk faces stay planar regardless, so
-  // moving the originals doesn't disturb them.
-  interface PlaneRef { N: Vector3; m: Vector3; k: Vector3; }
-  const vPlanes: PlaneRef[][] = Array.from({ length: V }, () => []);
-  for (const he of dcel.halfedges) {
-    if (!he.twin || he.id >= he.twin.id) continue; // once per undirected edge
-    const p = he.origin.position;
-    const q = he.next.origin.position;
-    const cA = faceCentroidHE(he.face);
-    const cB = faceCentroidHE(he.twin.face);
-    const N = q.clone().sub(p).cross(cB.clone().sub(cA));
-    if (N.lengthSq() < 1e-18) continue;
-    N.normalize();
-    const m = p.clone().add(q).multiplyScalar(0.5);
-    const k = cA.clone().add(cB).multiplyScalar(0.5);
-    const ref: PlaneRef = { N, m, k };
-    vPlanes[he.origin.id].push(ref);
-    vPlanes[he.next.origin.id].push(ref);
-  }
-  // Per vertex: the inverse normal-matrix (Σ N Nᵀ), or null when under-determined
-  // (then the vertex doesn't move). Constant across t, so precompute once.
-  const vInv: (number[] | null)[] = new Array(V);
-  for (let v = 0; v < V; v++) {
-    const M = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (const { N } of vPlanes[v]) {
-      M[0] += N.x * N.x; M[1] += N.x * N.y; M[2] += N.x * N.z;
-      M[3] += N.y * N.x; M[4] += N.y * N.y; M[5] += N.y * N.z;
-      M[6] += N.z * N.x; M[7] += N.z * N.y; M[8] += N.z * N.z;
-    }
-    vInv[v] = invert3(M);
-  }
-
-  /** The planarizing position of original vertex `v` at parameter `t`. */
-  function movedVertex(v: number, t: number): Vector3 {
-    const inv = vInv[v];
-    if (!inv) return dcel.vertices[v].position.clone();
-    let bx = 0, by = 0, bz = 0;
-    for (const { N, m, k } of vPlanes[v]) {
-      // plane point C(t) = lerp(m, k, t); residual basis Σ N (N·C)
-      const cx = m.x + (k.x - m.x) * t;
-      const cy = m.y + (k.y - m.y) * t;
-      const cz = m.z + (k.z - m.z) * t;
-      const d = N.x * cx + N.y * cy + N.z * cz;
-      bx += N.x * d; by += N.y * d; bz += N.z * d;
-    }
-    return new Vector3(
-      inv[0] * bx + inv[1] * by + inv[2] * bz,
-      inv[3] * bx + inv[4] * by + inv[5] * bz,
-      inv[6] * bx + inv[7] * by + inv[8] * bz,
-    );
-  }
-
+  // The original vertices are fixed: `insetTargets` already guarantees planar
+  // hexagons around them.
   function positions(t: number): Vector3[] {
     const out: Vector3[] = new Array(vertexCount);
-    for (let i = 0; i < V; i++) out[i] = movedVertex(i, t);
+    for (let i = 0; i < V; i++) out[i] = dcel.vertices[i].position.clone();
     for (const n of insets) out[n.index] = n.v.clone().lerp(n.c, t);
     return out;
   }
@@ -165,7 +120,8 @@ export function buildChamfer(
   const faceColor: GeomColor[] = [];
   const faceStart: GeomColor[] = [];
 
-  // (a) one shrunk polygon per original face (same arity, inset toward centroid).
+  // (a) one shrunk polygon per original face (same arity, inset toward its target).
+  //     A homothety about the target, so the shrunk face stays planar.
   for (const f of dcel.faces) {
     previewFaces.push(faceLoopIds(f).map((vid) => cornerOf(f.id, vid)));
     faceColor.push(old.face[f.id]); // shrunk face keeps its original color
@@ -200,7 +156,7 @@ export function buildChamfer(
     const vids = faceLoopIds(f);
     const loop = vids.map((vid) => cornerOf(f.id, vid));
     for (let i = 0; i < loop.length; i++) {
-      // Shrunk-face perimeter edges collapse when the face shrinks to its centroid at
+      // Shrunk-face perimeter edges collapse when the face shrinks to its apex at
       // the Join — the dual of subdivide's fan edges (which vanish at the Rectify) —
       // so ← dual(subdivEdgeEdge), from the original edge it insets from and this face.
       edgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]),
@@ -227,7 +183,7 @@ export function buildChamfer(
     edgeColor.set(edgeKey(q, cornerOf(he.twin.face.id, q)), spoke(he.twin.face.id, q));
   }
 
-  // ---- Weld: each face collapses to its centroid at the Join end. -------------
+  // ---- Weld: each face collapses to its apex at the Join end. ----------------
   const weldPairs: Array<[number, number]> = [];
   const vanishing: Array<[number, number]> = [];
   for (const f of dcel.faces) {
@@ -241,11 +197,11 @@ export function buildChamfer(
   }
 
   // ---- Snap: project the cursor onto the seam line from the edge midpoint to the
-  //  tracked face's centroid. s = how far the inset seam has swept across the face. -
+  //  tracked face's inset target. s = how far the inset seam has swept across the face.
   const a = dcel.vertices[edge[0]].position;
   const b = dcel.vertices[edge[1]].position;
   const mid = a.clone().add(b).multiplyScalar(0.5);
-  const trackC = faceCentroidHE(dcel.faces[trackFaceId]);
+  const trackC = targets.get(trackFaceId)!;
   function snap(ray: Ray): { t: number; point: Vector3; highlight?: { a: Vector3; b: Vector3 } } {
     const dir = trackC.clone().sub(mid);
     let s = closestLineParam(mid, dir, ray.origin, ray.direction);
@@ -258,7 +214,7 @@ export function buildChamfer(
     const mesh: Mesh = { vertices: positions(t), faces: previewFaces.map((f) => f.slice()) };
     const vertex = vertexColor.slice();
     if (weld) {
-      // At the Join each face's insets collapse to its centroid, becoming the join
+      // At the Join each face's insets collapse to its apex, becoming the join
       // apex vertex — which (like a kis apex, the dual) is the old FACE color, NOT the
       // inset's old-vertex tint. Recolor them so a chamfer→Join matches joining
       // directly (e.g. cube → rhombic dodecahedron identically).

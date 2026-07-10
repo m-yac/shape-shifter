@@ -267,7 +267,7 @@ window.addEventListener("keydown", (e) => {
     if (k === d.relaxKey) return void controller.relax();
     if (k === d.facesKey) return void controller.selectStrategy("faces");
     if (k === d.edgesKey) return void controller.selectStrategy("edges");
-    if (k === d.verticesKey) return void controller.selectStrategy("vertices");
+    if (k === d.jumbledKey) return void controller.selectStrategy("jumbled");
   }
 
   if (e.key.toLowerCase() === config.seeds.resetKey) {

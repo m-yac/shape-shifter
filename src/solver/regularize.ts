@@ -73,7 +73,10 @@ export function regularizeFacesStep(
 }
 
 /**
- * Strategy "vertices" — REGULARIZE VERTEX FIGURES (the dual of regularize-faces).
+ * Strategy "jumbled" — REGULARIZE VERTEX FIGURES (the dual of regularize-faces).
+ *
+ * NOTE: as written this does not converge — the shape wanders and its faces never
+ * flatten. It is kept for the look, which is why the UI calls the strategy "Jumbled".
  * Where face-regularization makes every FACE a regular polygon, this makes every
  * VERTEX FIGURE regular: it treats each vertex's cyclic ring of neighbours as a
  * polygon and nudges those neighbours toward a regular one.

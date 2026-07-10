@@ -170,6 +170,10 @@ export class DragController {
   private holdDown = false;
   private holdMinUntil = 0;
   private solveStartMs = 0; // when the current relaxation began (for the planarity warning)
+  // "Jumbled" only: set once the button has been held long enough for the planarity
+  // warning to appear, which leaves the solve running after the button is released
+  // (see `update`). Cleared by starting any new solve.
+  private solveLatched = false;
   // Rendered vertices, eased toward the solver's live vertices so the morph reads
   // smoothly. `solveStopping` = stepping is done; we're only letting the display
   // catch up before finalizing.
@@ -495,7 +499,8 @@ export class DragController {
     this.startSolve(this.current, true);
   }
 
-  /** The held strategy button was released — let the current step finish. */
+  /** The held strategy button was released — let the current step finish, unless the
+   *  hold latched (see `solveLatched`), in which case it keeps running. */
   endStrategy(): void {
     this.holdDown = false;
   }
@@ -522,9 +527,19 @@ export class DragController {
     this.shapes.setSolving(true);
     this.manualHold = hold;
     this.holdDown = hold;
+    this.solveLatched = false;
     this.holdMinUntil = performance.now() + config.solver.holdMinMs;
     this.solveStartMs = performance.now();
     this.readout.setHint(this.solveHint());
+  }
+
+  /** Whether the faces have stayed non-planar long enough for the SHAPE panel to be
+   *  showing `planarity.warnText` — the cue the user holds a Jumbled press until. */
+  private planarityWarned(): boolean {
+    const s = this.solver;
+    return (
+      !!s && !s.planar && performance.now() - this.solveStartMs > config.solver.planarity.warnAfterMs
+    );
   }
 
   /** The SHAPE-panel hint while relaxing: the usual status, or — once the faces
@@ -533,10 +548,7 @@ export class DragController {
   private solveHint(): string {
     const s = this.solver;
     if (!s) return "";
-    const P = config.solver.planarity;
-    if (!s.planar && performance.now() - this.solveStartMs > P.warnAfterMs) {
-      return `⚠ ${P.warnText}`;
-    }
+    if (this.planarityWarned()) return `⚠ ${config.solver.planarity.warnText}`;
     return `● relaxing: ${s.statusLabel}`;
   }
 
@@ -567,9 +579,18 @@ export class DragController {
     // step is running), so flick the activity LED.
     led.pulse();
 
-    // While a button is physically held, keep the solver in sustain mode so it
-    // doesn't damp itself to a premature stop.
-    this.solver.sustain = this.holdDown;
+    // Hold the Jumbled button until the planarity warning appears and the solve
+    // LATCHES: releasing then leaves it jumbling instead of stopping. (A shorter
+    // press just gives the shape one jumbled and settles.) Only "jumbled" latches —
+    // the other strategies planarize, so they'd never reach the warning anyway, and
+    // a latch there could only strand a shape mid-relaxation.
+    if (this.holdDown && this.strategy === "jumbled" && this.planarityWarned()) {
+      this.solveLatched = true;
+    }
+
+    // While a button is physically held — or the solve has latched — keep the solver
+    // in sustain mode so it doesn't damp itself to a premature stop.
+    this.solver.sustain = this.holdDown || this.solveLatched;
 
     // Step the relaxation (unless we've already decided to stop), then render the
     // SMOOTHED display rather than the solver's raw vertices.
@@ -583,10 +604,11 @@ export class DragController {
       this.readout.setHint(this.solveHint());
     }
 
-    // Decide when to STOP stepping: a held button keeps going until released AND
-    // past the click minimum (or fully converged); an auto solve runs to converge.
+    // Decide when to STOP stepping: a held button keeps going until released AND past
+    // the click minimum (or fully converged); a latched one ignores the release and
+    // only stops when the solver itself finishes; an auto solve runs to converge.
     if (!this.solveStopping) {
-      if (this.manualHold) {
+      if (this.manualHold && !this.solveLatched) {
         const pastMin = performance.now() >= this.holdMinUntil;
         if (!working || (!this.holdDown && pastMin)) this.solveStopping = true;
       } else if (!working) {
@@ -597,6 +619,7 @@ export class DragController {
     if (this.solveStopping && caughtUp) {
       this.manualHold = false;
       this.holdDown = false;
+      this.solveLatched = false;
       this.solveStopping = false;
       this.finishSolve();
     }

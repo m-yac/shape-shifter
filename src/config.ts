@@ -100,11 +100,11 @@ export const config = {
   solver: {
     enabled: true,
 
-    // The regularization objective used for newly-committed shapes until the user
-    // picks another via the OPTIONS panel. "edges" = canonical / midsphere form,
-    // which stays convex and never collapses a face. ("faces" / "vertices" make
-    // faces / vertex figures regular instead — see solver/solver.ts.)
-    defaultStrategy: "edges" as "vertices" | "edges" | "faces",
+    // The form newly-committed shapes relax toward until the user picks another via
+    // the OPTIONS panel. "edges" = canonical / midsphere form, which stays convex and
+    // never collapses a face. ("faces" makes every face a regular polygon; "jumbled"
+    // wanders and never planarizes — see solver/solver.ts.)
+    defaultStrategy: "edges" as "jumbled" | "edges" | "faces",
 
     // Holding an OPTIONS strategy button keeps stepping the relaxation until you
     // release; a single click still runs for at least this long so it does
@@ -369,7 +369,7 @@ export const config = {
     relaxKey: "g", // re-relax the current shape with the active strategy
     facesKey: "f", // switch to regular-faces regularization + re-solve
     edgesKey: "c", // switch to canonical / midsphere (edges) + re-solve
-    verticesKey: "v", // switch to regular vertex figures + re-solve
+    jumbledKey: "v", // switch to the jumbled relaxation + re-solve
   },
 
   // ---------------------------------------------------------------------------
@@ -597,9 +597,9 @@ export const config = {
         // the decay and pins the hover color). The "(N new)" resets when opened.
         newFlashSeconds: 1.2,
       },
-      regularLine: {
-        label: "Regular",
-        radios: { edges: "Canonical", faces: "Faces", vertices: "Vertices" },
+      formLine: {
+        label: "Form",
+        radios: { edges: "Canonical", faces: "Regular", jumbled: "Jumbled" },
       },
       colorsLine: {
         label: "Colors",

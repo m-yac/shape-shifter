@@ -91,6 +91,13 @@ export function serializeHistory(
   };
 }
 
+/** Timelines saved before the "vertices" strategy was renamed to "jumbled" still name
+ *  the old value; map it forward so an old save doesn't restore an unknown strategy. */
+function migrateOptions(options: HistoryOptions): HistoryOptions {
+  const strategy = (options.strategy as string) === "vertices" ? "jumbled" : options.strategy;
+  return { ...options, strategy };
+}
+
 /** Rebuild live history entries (with real Polyhedron objects) from saved data. */
 export function deserializeHistory(saved: SavedHistory): {
   entries: HistoryEntry[];
@@ -104,7 +111,7 @@ export function deserializeHistory(saved: SavedHistory): {
     op: e.op,
     invalid: e.invalid,
     isSeed: e.isSeed,
-    options: { ...e.options },
+    options: migrateOptions(e.options),
   }));
   return { entries, seedLabel: saved.seedLabel };
 }

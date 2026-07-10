@@ -14,12 +14,19 @@ import { type SolverTopology } from "./topology";
 export type SolverPhase = "planarize" | "regularize" | "done";
 
 /**
- * The regularization objective, chosen by the user (the OPTIONS panel buttons):
- *   - "faces"    make every face a regular polygon       (regularizeFacesStep)
- *   - "edges"    canonical / midsphere form              (canonicalStep)   [default]
- *   - "vertices" make every vertex figure regular        (regularizeVerticesStep)
+ * The form the relaxation drives the solid toward, chosen by the user (the OPTIONS
+ * panel's "Form" buttons):
+ *   - "faces"  make every face a regular polygon       (regularizeFacesStep)
+ *   - "edges"  canonical / midsphere form              (canonicalStep)   [default]
+ *   - "jumbled" (regularizeVerticesStep)
+ *
+ * "jumbled" runs the vertex-figure regularizer, which does NOT actually converge on
+ * regular vertex figures — it wanders, and its faces never flatten. That is kept
+ * deliberately: the wandering is the point, so it is presented as "Jumbled" rather
+ * than as a regularization objective. See dragController's hold-to-latch handling,
+ * which lets a long press leave it jumbling after the button is released.
  */
-export type Strategy = "vertices" | "edges" | "faces";
+export type Strategy = "jumbled" | "edges" | "faces";
 
 /**
  * Relaxation solver, run incrementally across frames so the shape visibly
@@ -78,8 +85,8 @@ export class RelaxSolver {
         const fn =
           this.strategy === "faces"
             ? "regularizeFacesStep() — regular faces"
-            : this.strategy === "vertices"
-              ? "regularizeVerticesStep() — regular vertex figures"
+            : this.strategy === "jumbled"
+              ? "regularizeVerticesStep() — jumbled"
               : "canonicalStep() — midsphere / canonical";
         return `${fn} + normalizeStep() · iter ${this.iter}`;
       }
@@ -103,7 +110,8 @@ export class RelaxSolver {
         ) {
           // Hand off to the canonical/regularize step either way: if it didn't
           // flatten in time, that step keeps trying (it never marks the shape
-          // invalid), just at full strength until the faces finally planarize.
+          // invalid) — its planarize substeps run at full strength while its own
+          // damping ramp decays, so the faces do eventually flatten.
           this.phase = "regularize";
           this.iter = 0;
           this.damping = Rg.dampingStart;
@@ -120,19 +128,23 @@ export class RelaxSolver {
     planarStep: number,
   ): void {
     // Step strength: while a button is held use the fixed contractive strength;
-    // while the faces are NOT yet planar, hold the strength at full (no decay) so
-    // the canonical step keeps working to flatten them; otherwise use the decaying
-    // ramp that lets a settled shape come to rest.
-    const damp = this.sustain
-      ? Rg.holdDamping
-      : this.planar
-        ? this.damping
-        : Rg.dampingStart;
+    // otherwise use the decaying ramp that lets the shape come to rest.
+    //
+    // The ramp must keep decaying even while the faces are NOT yet planar. The
+    // regularity step pulls vertices off their face planes and the planarize
+    // substeps below pull them back, so the two settle at an equilibrium whose
+    // residual out-of-plane error is PROPORTIONAL to `step`. Holding the step at
+    // full strength therefore pins that residual at its largest — for shapes whose
+    // residual coefficient lands near `planarity.tolerance` the faces can never
+    // flatten, the shape never reaches `done`, and the SHAPE panel shows
+    // `planarity.warnText` forever. Letting the ramp decay shrinks the residual
+    // until it crosses the tolerance.
+    const damp = this.sustain ? Rg.holdDamping : this.damping;
     const step = Rg.stepFactor * damp;
     let move: number;
     if (this.strategy === "faces") {
       move = regularizeFacesStep(this.mesh, step, this.radius);
-    } else if (this.strategy === "vertices") {
+    } else if (this.strategy === "jumbled") {
       move = regularizeVerticesStep(this.mesh, this.topo.neighbors, step, this.radius);
     } else {
       move = canonicalStep(this.mesh, this.topo.edges, step, this.radius);
@@ -146,17 +158,22 @@ export class RelaxSolver {
     }
     const avg = normalizeStep(this.mesh, Rg.targetAverageRadius, Rg.rescaleRate);
 
-    // Only decay the ramp once the faces are flat; while non-planar we keep
-    // pushing at full strength.
-    if (!this.sustain && this.planar) this.damping *= Rg.dampingRate;
+    if (!this.sustain) this.damping *= Rg.dampingRate;
     this.iter++;
-    // Finish once the shape has settled (and the rescale reached target) — but
-    // NEVER while faces are still non-planar (we keep running until they flatten).
-    // While held we never quit on the iteration cap, only on genuine settling.
+    // Finish once the shape has settled (and the rescale reached target). While
+    // held we never quit on the iteration cap, only on genuine settling.
     const sizeSettled = Math.abs(avg - Rg.targetAverageRadius) < 0.005;
     const tol = this.sustain ? Rg.holdConvergeTolerance : Rg.convergeTolerance;
+    const settled = move < tol && sizeSettled;
     const cappedOut = !this.sustain && this.iter >= Rg.iterations;
-    if (this.planar && ((move < tol && sizeSettled) || cappedOut)) {
+    if (this.planar) {
+      if (settled || cappedOut) this.phase = "done";
+    } else if (!this.sustain && settled) {
+      // The faces still aren't flat, but the decaying ramp has run the shape to a
+      // standstill, so no further iteration can flatten them ("jumbled" never does).
+      // Stop rather than spinning forever — the SHAPE panel keeps showing
+      // `planarity.warnText`, and a held button (sustain) is exempt so it can go on
+      // jumbling for as long as the user wants.
       this.phase = "done";
     }
   }

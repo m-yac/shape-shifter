@@ -10,7 +10,7 @@
  *      by default, the 3D-selection accent while held, fires on click. The "["
  *      and "]" are added automatically.
  *    makeRadioGroup   — a mutually-exclusive selector backed by real
- *      <input type="radio"> elements (Regular / Colors). Plain (un-bracketed)
+ *      <input type="radio"> elements (Form / Colors). Plain (un-bracketed)
  *      captions; the chosen option shows the inverted "lit block", and a held
  *      option shows that same block in the selection accent (and can be
  *      press-and-held, e.g. to keep the solver relaxing).
@@ -69,7 +69,7 @@ export interface RadioOpts {
   /** value → caption (bare; brackets are added automatically). */
   options: Record<string, string>;
   /** Fired on press (pointerdown) of an option — used to select and, for the
-   *  press-and-hold Regular line, to start relaxing. The option is marked
+   *  press-and-hold Form line, to start relaxing. The option is marked
    *  checked before this runs. */
   onPress?: (value: string) => void;
   /** Fired when the press ends (pointerup / cancel anywhere). */

@@ -40,6 +40,17 @@ up; they run only under `vitest.investigations.config.ts`.
 - **`gyro_lift_magnitude.investigate.ts`** — the companion study of the lift
   *magnitude* (the FACE_LIFT constant): how high a q vertex sits above its home
   join face, vs. the join's dihedral / angle deficit.
+- **`faces_planarity.investigate.ts`** — why the `"faces"` strategy used to report
+  `planarity.warnText` on a fresh commit. The regularity step pulls vertices off
+  their face planes while the planarize substeps pull them back; they reach an
+  equilibrium whose residual out-of-plane error is **linear in the step size**, so
+  iterating longer never helps — only a smaller step does. The auto path used to
+  pin the step at full strength (`stepFactor * dampingStart` = 2) whenever the
+  faces were non-planar, which pinned the residual at its largest and, since
+  `done` requires planar, meant such shapes never finished relaxing at all.
+  Holding an OPTIONS button ran at half that (`holdDamping`), which is why a click
+  "fixed" the warning without visibly moving the shape. Also compares the auto
+  (`sustain = false`) and held (`sustain = true`) drive paths per shape.
 - **`truncate_planarity.investigate.ts`** — non-planarity of the faces created
   by truncating / rectifying a non-canonical solid (e.g. the triakis
   tetrahedron), and a per-edge cut-speed adjustment that flattens them.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getSeed } from "../src/geometry/seeds";
-import { Polyhedron } from "../src/geometry/polyhedron";
+import { Polyhedron, faceCentroidOf, newellNormal } from "../src/geometry/polyhedron";
 import { buildDCEL } from "../src/geometry/HalfEdge";
 import { buildChamfer } from "../src/operations/chamfer";
 import { buildSubdivide } from "../src/operations/subdivide";
@@ -48,6 +48,52 @@ describe("chamfer", () => {
     expect(sig).toMatchObject({ V: 14, E: 24, F: 12 });
     expect(sig.faceConfigs).toEqual({ "3.4.3.4": 12 });
   });
+});
+
+// A chamfer whose hexagons bow out of plane self-intersects visibly around small
+// faces (the truncated dodecahedron's triangles used to blow their hexagons up by
+// several edge lengths). Both invariants below break together when that regresses.
+describe("chamfer stays planar on solids with mixed face sizes", () => {
+  const cases = [
+    "Cube", "Truncated dodecahedron", "Truncated cube",
+    "Truncated tetrahedron", "Truncated icosahedron",
+  ];
+
+  for (const name of cases) {
+    it(`${name}: hexagons stay planar and original vertices hold still`, () => {
+      const poly = NAMED.find((n) => n.name === name)!.poly;
+      const { edge, face } = anyEdge(poly);
+      const plan = buildChamfer(poly, edge, face);
+      const V = poly.dcel.vertices.length;
+
+      // Scale-free tolerance: a fraction of the mean original edge length. 5% is the
+      // worst residual `computeJoinHeights` leaves on these (the truncated
+      // icosahedron); the bug this guards against bowed hexagons by >500%.
+      let sum = 0, count = 0;
+      for (const he of poly.dcel.halfedges) {
+        if (!he.twin || he.id >= he.twin.id) continue;
+        sum += he.origin.position.distanceTo(he.next.origin.position);
+        count++;
+      }
+      const meanEdge = sum / count;
+
+      for (const t of [0.25, 0.5, 0.75, 1]) {
+        const pos = plan.positions(t);
+
+        for (let i = 0; i < V; i++)
+          expect(pos[i].distanceTo(poly.dcel.vertices[i].position)).toBeLessThan(1e-9);
+
+        for (const f of plan.previewFaces) {
+          if (f.length <= 3) continue;
+          const pts = f.map((i) => pos[i]);
+          const c = faceCentroidOf(pts, f.map((_, i) => i));
+          const n = newellNormal(pts);
+          for (const p of pts)
+            expect(Math.abs(p.clone().sub(c).dot(n))).toBeLessThan(0.05 * meanEdge);
+        }
+      }
+    });
+  }
 });
 
 describe("subdivide", () => {

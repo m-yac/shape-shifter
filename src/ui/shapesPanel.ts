@@ -7,7 +7,7 @@ import { makeActionButton, makeRadioGroup, type RadioGroup } from "./controls";
 // purpose here; the DOM + width generation below is otherwise generic over
 // whatever lines the config holds.
 const LIBRARY_KEY = "libraryLine";
-const REGULAR_KEY = "regularLine";
+const FORM_KEY = "formLine";
 const COLORS_KEY = "colorsLine";
 
 type RGB = [number, number, number];
@@ -34,7 +34,7 @@ const rgbCss = ([r, g, b]: RGB): string => `rgb(${r}, ${g}, ${b})`;
  * Top-left OPTIONS panel: a small box-drawing popup pinned to the top-left
  * corner. Its lines come from `config.ui.optionsPanel`:
  *   Library: N/99 shapes [Browse]   — count + the browse action button
- *   Regular: [Canonical] [Faces] …    — solver-strategy radio group (press-and-hold)
+ *   Form:    [Canonical] [Regular] …  — solver-strategy radio group (press-and-hold)
  *   Colors:  [Tetra] [Octa] …         — color-scheme radio group (instant select)
  * The widgets themselves (action buttons + radio groups) come from ui/controls.
  */
@@ -126,17 +126,17 @@ export class ShapesPanel {
     this.popup.body.style.overflow = "visible";
     this.popup.mount();
     this.popup.el.style.display = "none"; // hidden until the first operation
-    this.radios[REGULAR_KEY]?.setChecked(this.strategy);
+    this.radios[FORM_KEY]?.setChecked(this.strategy);
     this.radios[COLORS_KEY]?.setChecked(this.colorScheme);
     this.render();
     screen.onLayout(() => this.popup.placeAt(0, 0));
   }
 
-  // What a control press *means*, dispatched by line. The Regular radios drive
+  // What a control press *means*, dispatched by line. The Form radios drive
   // the solver strategy (press-and-hold: keep relaxing until release); the
   // Colors radios pick a scheme (instant); the Library button opens the diagram.
   private onRadioPress(lineKey: string, value: string): void {
-    if (lineKey === REGULAR_KEY) {
+    if (lineKey === FORM_KEY) {
       this.strategy = value as Strategy;
       this.onPress(value as Strategy);
     } else if (lineKey === COLORS_KEY) {
@@ -146,7 +146,7 @@ export class ShapesPanel {
   }
 
   private onRadioRelease(lineKey: string): void {
-    if (lineKey === REGULAR_KEY) this.onRelease();
+    if (lineKey === FORM_KEY) this.onRelease();
   }
 
   private onButton(lineKey: string, btnKey: string): void {
@@ -247,14 +247,14 @@ export class ShapesPanel {
   setActiveStrategy(s: Strategy): void {
     if (s === this.strategy) return;
     this.strategy = s;
-    this.radios[REGULAR_KEY]?.setChecked(s);
+    this.radios[FORM_KEY]?.setChecked(s);
   }
 
   /** Toggle the "half-pressed" (solve-in-progress) state on the active strategy. */
   setSolving(solving: boolean): void {
     if (solving === this.solving) return;
     this.solving = solving;
-    this.radios[REGULAR_KEY]?.setRunning(solving);
+    this.radios[FORM_KEY]?.setRunning(solving);
   }
 
   /** Re-fill the templated library line and re-fit the frame (width follows the
