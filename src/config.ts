@@ -968,10 +968,14 @@ export const config = {
     // `l_face` is its light-export variant. These come from the sRGB face hexes: white
     // #ffffff / #e6e6e6, yellow #ffd24a / #f2c230, red #e0524a, blue #4a78e0.
     palette: {
-      white:   { face: { l: 1, a: 0, b: 0 }, l_face: { l: 0.92494, a: 0, b: 0 } }, // fallback color
-      yellow:  { face: { l: 0.87967, a: -0.00016, b: 0.15541 }, l_face: { l: 0.83396, a: 0.00287, b: 0.15841 } },
-      red:     { face: { l: 0.62816, a: 0.15962, b: 0.08035 }, l_face: { l: 0.62816, a: 0.15962, b: 0.08035 } },
-      blue:    { face: { l: 0.59351, a: -0.01719, b: -0.1653 }, l_face: { l: 0.59351, a: -0.01719, b: -0.1653 } },
+      white:   {   face: { l: 1, a: 0, b: 0 },
+                 l_face: { l: 0.92494, a: 0, b: 0 } }, // fallback color
+      yellow:  {   face: { l: 0.87967, a: -0.00016, b:  0.15541 },
+                 l_face: { l: 0.83396, a:  0.00287, b:  0.15841 } },
+      red:     {   face: { l: 0.62816, a:  0.15962, b:  0.08035 },
+                 l_face: { l: 0.62816, a:  0.15962, b:  0.08035 } },
+      blue:    {   face: { l: 0.59351, a: -0.01719, b: -0.16530 },
+                 l_face: { l: 0.59351, a: -0.01719, b: -0.16530 } },
     },
 
     // Color schemes: the swatch each symmetry orbit renders as, holding color

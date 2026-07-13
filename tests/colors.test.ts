@@ -34,7 +34,7 @@ const join = (p: Polyhedron) => wrap(buildKis(p, 0, null).commit(1, true));
 const swatchByHex = new Map<number, string>();
 for (const [name, entry] of Object.entries(config.render.palette)) {
   const { l, a, b } = entry.face;
-  swatchByHex.set(parseInt(formatHex({ mode: "oklab", l, a, b })!.slice(1), 16), name);
+  swatchByHex.set(parseInt(formatHex({ l, a, b, mode: "oklab" })!.slice(1), 16), name);
 }
 
 /** Count of each swatch name across a geometric-color list, under the active scheme.

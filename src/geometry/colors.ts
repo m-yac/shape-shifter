@@ -2,6 +2,7 @@ import { Color } from "three";
 import { formatHex } from "culori";
 import { type Mesh } from "./HalfEdge";
 import { getSeed } from "./seeds";
+import { OKLab } from "../util/oklab";
 import { config } from "../config";
 
 /**
@@ -32,8 +33,6 @@ export interface ColorSet {
 
 export type SchemeName = keyof typeof config.render.schemes;
 type SwatchName = keyof typeof config.render.palette;
-/** A color in the OKLab perceptual space, the form the palette is stored in. */
-type OKLab = { readonly l: number; readonly a: number; readonly b: number };
 type PaletteEntry = { face: OKLab; l_face: OKLab };
 type Group = { swatch: string; triples: ReadonlyArray<GeomColor> };
 
@@ -110,29 +109,33 @@ const palette: Record<string, PaletteEntry> = { ...config.render.palette };
  *  halfway, rather than the muddy midtone of an sRGB byte lerp or the brightened one of a
  *  linear-space lerp. Since the swatches are already OKLab, no conversion is needed. */
 function blendOklab(base: OKLab, toward: OKLab, t: number): OKLab {
-  return {
-    l: base.l + (toward.l - base.l) * t,
-    a: base.a + (toward.a - base.a) * t,
-    b: base.b + (toward.b - base.b) * t,
-  };
+  return ({
+    l: base.l * (1 - t) + toward.l * t,
+    a: base.a * (1 - t) + toward.a * t,
+    b: base.b * (1 - t) + toward.b * t,
+  });
 }
 
 /** The equal mix of OKLab colors: their componentwise mean, which in this perceptually
  *  uniform space is the color the eye reads as evenly between them. */
 function meanOklab(cs: ReadonlyArray<OKLab>): OKLab {
   const n = cs.length;
-  return {
+  return ({
     l: cs.reduce((s, c) => s + c.l, 0) / n,
     a: cs.reduce((s, c) => s + c.a, 0) / n,
     b: cs.reduce((s, c) => s + c.b, 0) / n,
-  };
+  });
 }
 
 /** 0.5 `base` + 0.25 `n1` + 0.25 `n2` in OKLab: blending base toward the midpoint of the
  *  two neighbors at 0.5 weights base 0.5 and each neighbor 0.25, matching the weights
  *  `nestedAvgTriples` uses. */
-function tint3Oklab(base: OKLab, n1: OKLab, n2: OKLab): OKLab {
-  return blendOklab(base, meanOklab([n1, n2]), 0.5);
+function tintOklab(base: OKLab, n1: OKLab, n2: OKLab): OKLab {
+  return ({
+    l: base.l / 2 + n1.l / 4 + n2.l / 4,
+    a: base.a / 2 + n1.a / 4 + n2.a / 4,
+    b: base.b / 2 + n1.b / 4 + n2.b / 4,
+  });
 }
 
 /** Ensure a `tint(<base>)` swatch exists and return its name: the base swatch mixed
@@ -163,8 +166,8 @@ function ensureNestedAvgSwatch(base: string, n1: string, n2: string): string {
     const p = config.render.palette[x as SwatchName];
     const q = config.render.palette[y as SwatchName];
     palette[name] = {
-      face: tint3Oklab(b.face, p.face, q.face),
-      l_face: tint3Oklab(b.l_face, p.l_face, q.l_face),
+      face: tintOklab(b.face, p.face, q.face),
+      l_face: tintOklab(b.l_face, p.l_face, q.l_face),
     };
   }
   return name;
@@ -491,7 +494,7 @@ const hexCache = new Map<OKLab, number>();
 function oklabHex(c: OKLab): number {
   let h = hexCache.get(c);
   if (h === undefined) {
-    h = parseInt(formatHex({ mode: "oklab", l: c.l, a: c.a, b: c.b }).slice(1), 16);
+    h = parseInt(formatHex({ l: c.l, a: c.a, b: c.b, mode: "oklab" }).slice(1), 16);
     hexCache.set(c, h);
   }
   return h;
