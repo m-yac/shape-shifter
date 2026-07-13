@@ -3,11 +3,10 @@ import { type Mesh } from "../geometry/HalfEdge";
 import { faceCentroidOf, newellNormal } from "../geometry/polyhedron";
 
 /**
- * Nudge one cyclic RING of vertices toward a regular polygon inscribed in its own
- * best-fit circle (equal radii + equal angular spacing) using the best-fitting
- * rotation, accumulating the per-vertex targets into `disp`/`count`. Used for
- * face-regularization (a face is such a ring). Vertex-regularization needs an
- * extra global-scale coupling, so it has its own variant below.
+ * Nudge one cyclic ring of vertices toward a regular polygon inscribed in its own
+ * best-fit circle (equal radii, equal angular spacing) at the best-fitting rotation,
+ * accumulating the per-vertex targets into `disp`/`count`. A face is such a ring;
+ * vertex figures need their own variant below.
  */
 function accumulateRegularRing(
   vertices: Vector3[],
@@ -54,10 +53,9 @@ function accumulateRegularRing(
 }
 
 /**
- * Strategy "faces" — REGULARIZE FACES.
- * Nudge every face toward a regular polygon inscribed in its own best-fit circle.
- * Shared vertices get the average of their faces' targets. Returns the largest
- * per-vertex move this pass, relative to `radius`.
+ * Strategy "faces": nudge every face toward a regular polygon inscribed in its own
+ * best-fit circle. Shared vertices get the average of their faces' targets. Returns
+ * the largest per-vertex move this pass, relative to `radius`.
  */
 export function regularizeFacesStep(
   mesh: Mesh,
@@ -73,25 +71,23 @@ export function regularizeFacesStep(
 }
 
 /**
- * Strategy "jumbled" — REGULARIZE VERTEX FIGURES (the dual of regularize-faces).
+ * Strategy "jumbled": regularize vertex figures, the dual of regularize-faces. Where
+ * that makes every face a regular polygon, this makes every vertex figure regular,
+ * treating each vertex's cyclic ring of neighbours as a polygon.
  *
- * NOTE: as written this does not converge — the shape wanders and its faces never
- * flatten. It is kept for the look, which is why the UI calls the strategy "Jumbled".
- * Where face-regularization makes every FACE a regular polygon, this makes every
- * VERTEX FIGURE regular: it treats each vertex's cyclic ring of neighbours as a
- * polygon and nudges those neighbours toward a regular one.
+ * This does not converge — the shape wanders and its faces never flatten. The look
+ * is the point, hence the strategy's name.
  *
- * The subtlety that makes this a FAITHFUL dual: a regular polygon face forces its
- * edges to be equal, but a vertex figure is about the DIRECTIONS the edges leave
- * the vertex, NOT the neighbour positions — the incident edges may well have
- * different lengths (e.g. the kite edges of a Catalan solid). So we regularize the
- * unit edge DIRECTIONS (making them an evenly-spaced cone) and keep each edge's own
- * length, rather than forcing the neighbours onto one circle. That lets duals with
- * two edge lengths (rhombic dodecahedron has one, the deltoidal icositetrahedron
- * has two) both relax to their proper, un-spiky form instead of being distorted.
+ * What makes it a faithful dual: a regular face forces its edges to be equal, but a
+ * vertex figure is about the directions the edges leave the vertex, not the neighbour
+ * positions, and the incident edges may have different lengths (the kite edges of a
+ * Catalan solid). So the unit edge directions are regularized into an evenly-spaced
+ * cone while each edge keeps its own length, rather than the neighbours being forced
+ * onto one circle. Duals with two edge lengths (the deltoidal icositetrahedron; the
+ * rhombic dodecahedron has one) then relax to their proper, un-spiky form.
  *
- * Note a regular vertex figure does not pin the cone's opening angle, so this
- * refines the CURRENT shape toward regular figures rather than to a unique form.
+ * A regular vertex figure does not pin the cone's opening angle, so this refines the
+ * current shape toward regular figures rather than toward a unique form.
  *
  * `neighbors[v]` must list v's neighbours in cyclic order. Returns the largest
  * per-vertex move this pass, relative to `radius`.
@@ -113,7 +109,7 @@ export function regularizeVerticesStep(
     if (m < 3) continue;
     const apex = verts[v];
 
-    // Unit edge directions + their current lengths. Lengths are preserved, so
+    // Unit edge directions and their current lengths. Lengths are preserved, so
     // unequal incident edges survive; only the directions get regularized.
     const dir: Vector3[] = [];
     const len: number[] = [];
@@ -174,13 +170,12 @@ export function regularizeVerticesStep(
 }
 
 /**
- * Strategy "edges" — CANONICAL / DUAL (midsphere).
- * Push every edge so the point on it nearest the origin is the same distance
- * from the center (i.e. all edges tangent to a common sphere). This is the
- * classic canonical form: it makes both the polyhedron AND its dual well-shaped
- * (regular vertex figures), and — crucially — it is convex by construction, so
- * unlike face-regularization it never lets a face fall coplanar with a neighbour.
- * This is the right objective for Catalan-like solids whose faces are not regular.
+ * Strategy "edges": the canonical / midsphere form. Push every edge so the point on
+ * it nearest the origin is the same distance from the center, i.e. all edges tangent
+ * to a common sphere. This shapes the polyhedron and its dual alike (regular vertex
+ * figures) and is convex by construction, so unlike face-regularization it never lets
+ * a face fall coplanar with a neighbour — the right objective for Catalan-like solids
+ * whose faces are not regular.
  */
 export function canonicalStep(
   mesh: Mesh,
@@ -223,9 +218,9 @@ export function canonicalStep(
 }
 
 /**
- * SPHERIZE — pull every vertex toward the mean radius so they sit roughly evenly on
- * a sphere around the origin, inflating a near-flat shape back to a convex blob.
- * No longer wired into the solver's strategy set, but kept as a reusable rescue step.
+ * Pull every vertex toward the mean radius so they sit roughly evenly on a sphere
+ * around the origin, inflating a near-flat shape back to a convex blob. Not part of
+ * the solver's strategy set; a standalone rescue step.
  */
 export function spherizeStep(mesh: Mesh, stepFactor: number, radius: number): number {
   let meanR = 0;
@@ -259,11 +254,11 @@ export function minAdjacentFaceAngle(
 }
 
 /**
- * Recenter the shape at the origin and EASE its scale so the average vertex
- * distance from the origin approaches `target` (by fraction `rate` each call).
- * This keeps the apparent size stable across edits — truncating no longer keeps
- * shrinking the solid, and kissing no longer keeps growing it. Returns the
- * average distance after this step (for the convergence check).
+ * Recenter the shape at the origin and ease its scale so the average vertex distance
+ * from the origin approaches `target`, by fraction `rate` each call. This is what
+ * keeps the apparent size stable across edits, so truncating doesn't shrink the solid
+ * and kis-ing doesn't grow it. Returns the average distance after this step, for the
+ * convergence check.
  */
 export function normalizeStep(mesh: Mesh, target: number, rate: number): number {
   const c = new Vector3();

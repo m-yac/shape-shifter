@@ -5,14 +5,14 @@ import { config } from "../config";
  *  THE SCREEN — a centered vintage monitor and its character grid.
  * =============================================================================
  *
- *  The app draws onto a "screen" (the glass of the monitor) that is smaller than the
- *  browser window and wrapped in a plastic "bezel". The screen interior is
- *  always sized to a whole number of character cells from the AST PremiumExec
- *  font drawn at 2x — one cell is `colW` x `rowH` px (16 x 38). Because the
- *  interior is an exact multiple of the cell size and every text element uses a
- *  cell-sized font (line-height = rowH, advance = colW), anything positioned
- *  with the helpers here lands on the same grid as the text, giving the illusion
- *  of a uniform grid of characters even though we use ordinary CSS divs.
+ *  The app draws onto a screen (the monitor's glass) smaller than the browser
+ *  window and wrapped in a plastic bezel. The screen interior is always sized to
+ *  a whole number of character cells from the AST PremiumExec font drawn at 2x:
+ *  one cell is `colW` x `rowH` px (16 x 38). Because the interior is an exact
+ *  multiple of the cell size and every text element uses a cell-sized font
+ *  (line-height = rowH, advance = colW), anything positioned with the helpers
+ *  here lands on the same grid as the text, so ordinary CSS divs still read as a
+ *  uniform grid of characters.
  *
  *  Helpers:
  *    - place / placeAnchored        position an element on the grid
@@ -43,7 +43,8 @@ export function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
-/** Like "hexToRgb" but adds the inverse of the second string */
+/** Like `hexToRgb`, but adds the inverse of `hexToInv` to each channel (clamped
+ *  to 255). */
 export function hexToRgbAddInv(hex: string, hexToInv: string): string {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -58,11 +59,11 @@ export function hexToRgbAddInv(hex: string, hexToInv: string): string {
 }
 
 /**
- * A layered text-shadow that fakes the glass bloom on selectable text: a tight
- * bright core plus a wide soft halo. Both scale with `intensity` — the same knob
- * that drives the 3D UnrealBloom (config.theme.bloom.intensity) — so the text and
- * the 3D view glow by the same amount. `rgb` is "r, g, b" and is the TEXT's own
- * color, so darker text yields a dimmer, smaller-looking bloom automatically.
+ * A layered text-shadow that fakes the glass bloom on text: a tight bright core
+ * plus a wide soft halo. Both scale with `intensity`, the same knob that drives
+ * the 3D UnrealBloom (config.theme.bloom.intensity), so the text and the 3D view
+ * glow by the same amount. `rgb` is an "r, g, b" string, and is the text's own
+ * color, so darker text yields a dimmer, smaller-looking bloom.
  */
 export function textGlow(intensity: number, rgb: string): string {
   if (intensity <= 0) return "none";
@@ -73,8 +74,7 @@ export function textGlow(intensity: number, rgb: string): string {
 
 // --- fade helpers ------------------------------------------------------------
 
-/** Fade an element in from transparent: snap to opacity 0, then transition to 1.
- *  (Used for the popups appearing at the end of the intro.) */
+/** Fade an element in from transparent: snap to opacity 0, then transition to 1. */
 export function fadeIn(el: HTMLElement, seconds = 0.5): void {
   el.style.transition = "none";
   el.style.opacity = "0";
@@ -233,9 +233,9 @@ export class Screen {
     root.setProperty("--text-bright", t.textBright);
     root.setProperty("--text-dim", t.textDim);
     root.setProperty("--text-warn", t.textWarn);
-    // Each text tone glows in its OWN color, so the bloom tracks the text instead
-    // of a single fixed tint (darker tones bloom less). The matching --text-* var
-    // is paired with each --text* color in style.css.
+    // Each text tone glows in its own color, so the bloom tracks the text rather
+    // than a single fixed tint (darker tones bloom less). style.css pairs each
+    // --text* color with its matching --glow* var.
     const i = t.bloom.intensity;
     // Raw "r, g, b" tones too, for effects that build their own rgba() (e.g. the
     // OPTIONS buttons' inner glow on their dark glyphs).
@@ -251,8 +251,8 @@ export class Screen {
     root.setProperty("--select", selectHex);
     root.setProperty("--glow-select", textGlow(i, hexToRgb(selectHex)));
     root.setProperty("--glow-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.text)));
-    // The select-colored variant of --glow-inv, for a held radio's inverted
-    // "lit block" rendered in the selection accent (same shift trick, vs --select).
+    // The select-colored variant of --glow-inv, for a held radio's inverted lit
+    // block rendered in the selection accent.
     root.setProperty("--glow-select-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, selectHex)));
     root.setProperty("--glow-dim-inv", textGlow(2*i, hexToRgbAddInv(t.backlight, t.textDim)));
     root.setProperty("--glitch-color", config.glitch.color);
@@ -286,18 +286,17 @@ export interface PopupOpts {
   rows: number;
   title?: string;
   style?: BoxStyle;
-  /** Fill the box with the scene's background colour, so whatever is behind it
-   *  (the 3D view, other panels) is masked out rather than showing through.
-   *  `true` is fully opaque; a number is the fill's alpha (0..1), letting the
-   *  scene show through faintly. */
+  /** Fill the box with the scene's background color, masking out whatever is
+   *  behind it (the 3D view, other panels). `true` is fully opaque; a number is
+   *  the fill's alpha (0..1), letting the scene show through faintly. */
   opaque?: boolean | number;
 }
 
 /**
- * A bordered box positioned on the grid. The border is a `<pre>` of box-drawing
- * characters (one per cell), and the interior is a separate, inset content area
- * that scrolls if it overflows — so the frame stays crisp on the grid while the
- * contents behave like normal HTML. Use for dialogs and panels.
+ * A bordered box positioned on the grid, for dialogs and panels. The border is a
+ * `<pre>` of box-drawing characters (one per cell); the interior is a separate,
+ * inset content area that scrolls if it overflows, so the frame stays on the grid
+ * while the contents behave like normal HTML.
  */
 export class Popup {
   readonly el: HTMLElement; // outer, grid-positioned

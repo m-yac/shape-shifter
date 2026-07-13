@@ -1,13 +1,10 @@
 import { config } from "./config";
 
 /**
- * Tracks which named shapes the user has MADE for the first time. The set is
- * pre-seeded with `config.discovery.preDiscovered` (the shapes the boot story
- * says you start with) and, when `config.discovery.persist` is on, restored
- * from / saved to localStorage so discoveries survive a reload.
- *
- * `add` returns whether the name was new and whether it was the very first real
- * discovery of the run (so the celebration can be made extra strong).
+ * Which named shapes the user has made for the first time. The set is pre-seeded with
+ * `config.discovery.preDiscovered`, the shapes the boot story says you start with, and
+ * when `config.discovery.persist` is on it is restored from and saved to localStorage
+ * so discoveries survive a reload.
  */
 export class Discoveries {
   private readonly set = new Set<string>();
@@ -34,20 +31,20 @@ export class Discoveries {
     return this.set.has(name);
   }
 
-  /** Total shapes known (pre-discovered + made), for the "N/99" readout. */
+  /** Total shapes known, pre-discovered and made, for the N/99 readout. */
   get count(): number {
     return this.set.size;
   }
 
-  /** Snapshot of every known shape name (pre-discovered + made), for the LIBRARY
-   *  browse diagram, which decides which nodes render in color. */
+  /** Every known shape name, for the LIBRARY browse diagram, which uses it to decide
+   *  which nodes render in color. */
   snapshot(): string[] {
     return [...this.set];
   }
 
   /**
-   * Record a (possibly new) discovery. Returns `isNew` (false if already known
-   * or pre-discovered) and `first` (true only for the first real discovery).
+   * Record a discovery. Returns `isNew` (false if already known or pre-discovered) and
+   * `first` (true only for the run's first real discovery, which is celebrated harder).
    */
   add(name: string): { isNew: boolean; first: boolean } {
     if (this.set.has(name)) return { isNew: false, first: false };

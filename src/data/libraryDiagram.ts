@@ -1,10 +1,10 @@
 import { config } from "../config";
 
 /**
- * The LIBRARY browse diagram as a pure graph — no THREE.js, no DOM — so the
- * layout (coordinates), the arrow notation, and the discovery-driven visibility
- * rule can be unit-tested in isolation. `ui/libraryBrowser.ts` consumes this to
- * place + reveal the 3D solids.
+ * The LIBRARY browse diagram as a plain graph, free of Three.js and the DOM, so the
+ * layout coordinates, the arrow notation and the discovery-driven visibility rule can
+ * be tested in isolation. `ui/libraryBrowser.ts` consumes this to place and reveal the
+ * 3D solids.
  */
 
 // Direction letters → unit grid step (y up, x right, z toward the viewer).
@@ -27,16 +27,15 @@ export interface ParsedArrow {
 }
 
 /**
- * Parse one arrow token group into its arrows. Grammar: an optional leading ":"
- * (dashed) then a run of (direction letter + per-axis span) pairs, optionally
- * wrapped in ">". Every line carries one arrowhead pointing in its forward
- * direction; the ">" says WHERE that head sits — ">u2" at the START, "u2" (bare)
- * in the MIDDLE, "u2>" at the END. A leading ":" (before the ">") makes the line
- * DASHED, e.g. ":>fl" — a chamfer/subdivide branch that reveals its target but
- * does not chain onward into a middle arrow (see `computeVisible`). Each letter
- * carries its OWN span — so "d3r2" steps (+2 x, −3 y), allowing non-45° lines —
- * and a missing number means 1 (">u" = up one, head at the start). One config
- * string may bundle several arrows, e.g. "f4r4, b2r2".
+ * Parse one arrow token group into its arrows. Grammar: an optional leading ":" for
+ * dashed, then a run of (direction letter, span) pairs, optionally wrapped in ">".
+ * Every line carries one arrowhead pointing forward along it; the ">" places that
+ * head: ">u2" at the start, bare "u2" in the middle, "u2>" at the end. A leading ":"
+ * (before the ">") makes the line dashed, e.g. ":>fl", a chamfer/subdivide branch that
+ * reveals its target but does not chain onward (see `walk`). Each letter carries its
+ * own span, so "d3r2" steps (+2 x, -3 y), allowing non-45° lines; a missing number
+ * means 1 (">u" is up one, head at the start). One config string may bundle several
+ * arrows, e.g. "f4r4, b2r2".
  */
 export function parseArrow(tokenGroup: string): ParsedArrow[] {
   const out: ParsedArrow[] = [];
@@ -75,8 +74,8 @@ export interface DiagramEdgeInfo {
 export interface DiagramGraph {
   nodes: DiagramNodeInfo[];
   edges: DiagramEdgeInfo[];
-  /** node index → indices of the edges leaving it (arrows it is the SOURCE of).
-   *  Edges are directed (from → to), so a node's descendants are `edges[..].to`. */
+  /** node index -> indices of the edges leaving it. Edges are directed (from -> to),
+   *  so a node's descendants are `edges[..].to`. */
   outgoing: number[][];
 }
 
@@ -84,9 +83,9 @@ type RawEntry = readonly [number, number, number, string, readonly string[]];
 
 const coordKey = (x: number, y: number, z: number): string => `${x},${y},${z}`;
 
-/** Build the diagram graph from `config.library.diagram`: place each named solid
- *  at its coordinate and resolve every arrow to a DIRECTED edge (the arrow points
- *  from the node it is declared on to the node at its target coordinate). */
+/** Build the diagram graph from `config.library.diagram`: place each named solid at
+ *  its coordinate and resolve every arrow to a directed edge, pointing from the node
+ *  it is declared on to the node at its target coordinate. */
 export function buildDiagramGraph(): DiagramGraph {
   const diagram = config.library.diagram as unknown as RawEntry[];
   const nodes: DiagramNodeInfo[] = [];
@@ -115,45 +114,42 @@ export function buildDiagramGraph(): DiagramGraph {
   return { nodes, edges, outgoing };
 }
 
-// The three head styles ordered along a compound arrow: a truncate/kis (start)
-// welds into a rectify/join (middle) which twists into a snub/gyro (end). Once
-// you've followed a hop of one style, only a LATER style can continue the chain.
+// The three head styles ordered along a compound arrow: a truncate/kis (start) welds
+// into a rectify/join (middle) which twists into a snub/gyro (end). Once a hop of one
+// style has been followed, only a later style can continue the chain.
 const HEAD_RANK: Record<ArrowHead, number> = { start: 0, middle: 1, end: 2 };
 
 interface Walk {
-  /** Node indices to show (discovered + everything the walk reveals). */
+  /** Node indices to show: discovered, plus everything the walk reveals. */
   visible: Set<number>;
-  /** Indices of the edges the walk actually traversed (the ones to DRAW). */
+  /** Indices of the edges the walk traversed, the ones to draw. */
   edges: Set<number>;
 }
 
 /**
- * The reveal walk shared by `computeVisible` and `drawableEdges`. Starting from
- * each discovered solid we follow the compound-arrow chain, revealing every
- * shape along the way. A node only counts as a "neighbour" if an arrow points TO
- * it, so we only ever follow edges in their arrow direction. The rule:
- *   • discovered solids;
- *   • a chain may only BEGIN at a start (>…) arrow — never partway along a
- *     compound arrow. So the Subdivided Cube, which a dashed branch reveals and
- *     which only carries a middle arrow onward (its rectification, the Deltoidal
- *     Icositetrahedron), reveals nothing: the ">…" hop that middle arrow
- *     continues (Cuboctahedron → Subdivided Octahedron) was never traversed.
- *   • from a node the chain has reached, following a SOLID arrow whose head
- *     style comes strictly LATER than the one we arrived by reveals its target
- *     and continues the chain from there. So a start (>…) leads into a middle
- *     (…) which leads into an end (…>): truncate → rectify → snub. (With only
- *     the Tetrahedron made you thus see its truncation + kis, their
- *     rectification + join — the Octahedron + Cube — and one further hop, the
- *     snub + gyro — the Icosahedron + Dodecahedron.)
- *   • DASHED arrows (:>…, the chamfer/subdivide branches) are followed only from
- *     a discovered solid and are leaves: they reveal their target but never chain
- *     onward into a middle arrow.
+ * The reveal walk shared by `computeVisible` and `drawableEdges`. Starting from each
+ * discovered solid, follow the compound-arrow chain, revealing every shape along the
+ * way. Edges are only ever followed in their arrow direction. The rules:
+ *   - discovered solids are always visible;
+ *   - a chain may only begin at a start (>…) arrow, never partway along a compound
+ *     arrow. So the Subdivided Cube, revealed by a dashed branch and carrying only a
+ *     middle arrow onward (to its rectification, the Deltoidal Icositetrahedron),
+ *     reveals nothing: the ">…" hop that middle arrow continues (Cuboctahedron ->
+ *     Subdivided Octahedron) was never traversed.
+ *   - from a node the chain has reached, a solid arrow whose head style is strictly
+ *     later than the one arrived by reveals its target and continues the chain. A
+ *     start (>…) leads into a middle (…) into an end (…>): truncate, rectify, snub.
+ *     With only the Tetrahedron made you therefore see its truncation and kis, their
+ *     rectification and join (Octahedron, Cube), and one hop further, the snub and
+ *     gyro (Icosahedron, Dodecahedron).
+ *   - dashed arrows (:>…, the chamfer/subdivide branches) are followed only from a
+ *     discovered solid and are leaves: they reveal their target but never chain on.
  */
 function walk(graph: DiagramGraph, discovered: Set<number>): Walk {
   const visible = new Set<number>(discovered);
   const edges = new Set<number>();
-  // BFS over (node, phase) states; `phase` is the rank of the head we arrived
-  // by, or -1 for a discovered root (which may only OPEN a chain, at a start head).
+  // BFS over (node, phase) states; `phase` is the rank of the head arrived by, or -1
+  // for a discovered root, which may only open a chain at a start head.
   const seen = new Set<string>();
   const queue: { node: number; phase: number }[] = [];
   for (const d of discovered) {
@@ -194,12 +190,11 @@ export function computeVisible(graph: DiagramGraph, discovered: Set<number>): Se
 }
 
 /**
- * Indices of the edges to actually DRAW, given the discovered set. These are
- * exactly the edges the reveal walk traversed — the arrows leading INTO each
- * revealed shape — so a shape at the tip of the chain shows the arrows that
- * reach it but not the ones leading FROM it toward shapes you can't get to yet.
- * (`visible` is accepted for API symmetry with `computeVisible`; the walk
- * recomputes the same reachability.)
+ * Indices of the edges to draw, given the discovered set: exactly the edges the reveal
+ * walk traversed, the arrows leading into each revealed shape. A shape at the tip of
+ * the chain thus shows the arrows that reach it, but not the ones leading from it
+ * toward shapes still out of reach. `_visible` is taken for API symmetry with
+ * `computeVisible`; the walk recomputes the same reachability.
  */
 export function drawableEdges(
   graph: DiagramGraph,

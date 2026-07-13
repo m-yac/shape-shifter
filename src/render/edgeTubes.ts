@@ -8,7 +8,8 @@ import {
   type Camera,
 } from "three";
 
-/** A single colored edge to draw as a tube: its two world-ish endpoints + color. */
+/** A colored edge to draw as a tube: its two endpoints (in the parent group's
+ *  frame) and its color. */
 export interface EdgeTubeSpec {
   a: Vector3;
   b: Vector3;
@@ -22,15 +23,14 @@ const _mid = new Vector3();
 const _world = new Vector3();
 
 /**
- * Draws a set of edges as thin tubes instead of line segments, so a colored edge
- * reads clearly rather than as a barely-visible one-pixel line. Each tube is a
- * shared unit cylinder (radius 1, height 1 along +Y) scaled per frame so its
- * on-screen thickness stays constant regardless of camera distance — the radius
- * grows with distance exactly like the drag range line + the pickable markers.
+ * Draws a set of edges as thin tubes rather than line segments, so a colored edge
+ * reads clearly instead of as a one-pixel line. Each tube is a shared unit cylinder
+ * (radius 1, height 1 along +Y) scaled per frame so its on-screen thickness stays
+ * constant with camera distance, like the drag range line and the pickable markers.
  *
- * A pool of meshes is reused across `setEdges` calls (grown / shrunk to fit) so
- * live previews and solve frames don't churn Three objects. `object` is the Group
- * to add to a parent (the polyhedron group, or a library node's shape group).
+ * A pool of meshes is grown / shrunk to fit across `setEdges` calls, so live
+ * previews and solve frames don't churn Three objects. `object` is the Group to add
+ * to a parent: the polyhedron group, or a library node's shape group.
  */
 export class EdgeTubes {
   readonly object = new Group();
@@ -42,12 +42,12 @@ export class EdgeTubes {
     this.geo = new CylinderGeometry(1, 1, 1, Math.max(3, radialSegments));
   }
 
-  /** Whether the whole set is drawn (edges hidden / ghosted nodes turn it off). */
+  /** Whether the whole set is drawn (hidden edges / ghosted nodes turn it off). */
   setVisible(v: boolean): void {
     this.object.visible = v;
   }
 
-  /** Fade every tube to `o` (the library dims non-hovered solids). Applied to any
+  /** Fade every tube to `o` (the library dims non-hovered solids). Applies to
    *  later-created meshes too. */
   setOpacity(o: number): void {
     this.opacity = o;
@@ -83,12 +83,11 @@ export class EdgeTubes {
   }
 
   /**
-   * Orient + scale every tube so it spans its edge with a radius that keeps its
-   * apparent on-screen width constant: `baseRadius` is the world radius at
-   * `refDistance`, scaled by (distance / refDistance). `worldOffset` is the
-   * position of the parent this group lives under (the tube endpoints are stored
-   * in that parent's local frame), so the camera distance is measured in world
-   * space; pass the origin when the parent is at the origin.
+   * Orient + scale every tube to span its edge at a radius that keeps its apparent
+   * on-screen width constant: `baseRadius` is the world radius at `refDistance`,
+   * scaled by (distance / refDistance). Endpoints are stored in the parent group's
+   * local frame, so `worldOffset` (that parent's position) is added to measure the
+   * camera distance in world space; pass the origin for a parent at the origin.
    */
   updateScales(
     camera: Camera,

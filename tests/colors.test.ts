@@ -16,9 +16,9 @@ import { buildKis } from "../src/operations/kis";
 import { buildSnub } from "../src/operations/snub";
 import { buildGyro } from "../src/operations/gyro";
 
-// Colors propagate through a chain of operations exactly as they do during live
-// editing: each committed shape is re-wrapped as a colored Polyhedron and fed to the
-// next operation. These helpers mirror that threading.
+// Colors propagate through a chain of operations as they do during live editing: each
+// committed shape is re-wrapped as a colored Polyhedron and fed to the next operation.
+// These helpers mirror that threading.
 const seed = (n: string) => new Polyhedron(getSeed(n));
 const wrap = (r: { mesh: Mesh; colors: ColorSet }) => new Polyhedron(r.mesh, r.colors);
 const rectify = (p: Polyhedron) => wrap(buildTruncate(p, 0, null).commit(1, true));
@@ -26,20 +26,19 @@ const snub = (p: Polyhedron) => buildSnub(p, 0, p.vertices[0].clone()).commit(1,
 const gyro = (p: Polyhedron) => buildGyro(p, 0, p.vertices[0].clone()).commit(1, true).colors;
 const join = (p: Polyhedron) => wrap(buildKis(p, 0, null).commit(1, true));
 
-// Reverse map from a swatch's rendered FACE hex back to its name, so a resolved
-// geometric color can be checked by the swatch a viewer actually SEES. Only the base
-// swatches are indexed: a color that falls through to an `<x>Adj` blend or the default
-// swatch won't match any name here, which is exactly the mis-color we want to catch.
-// The palette stores OKLab, so convert each base face color to its sRGB hex to match
-// `paletteRGB(...).getHex()`.
+// Reverse map from a swatch's rendered face hex back to its name, so a resolved
+// geometric color can be checked by the swatch a viewer sees. Only the base swatches
+// are indexed: a color falling through to a blend or to the default swatch matches no
+// name here, which is the mis-color these tests catch. The palette stores OKLab, so
+// each base face color is converted to sRGB hex to match `paletteRGB(...).getHex()`.
 const swatchByHex = new Map<number, string>();
 for (const [name, entry] of Object.entries(config.render.palette)) {
   const { l, a, b } = entry.face;
   swatchByHex.set(parseInt(formatHex({ mode: "oklab", l, a, b })!.slice(1), 16), name);
 }
 
-/** Count of each swatch NAME across a geometric-color list, under the active scheme.
- *  An unrecognised (Adj / default) resolution is surfaced as `?<hex>` so it fails loudly. */
+/** Count of each swatch name across a geometric-color list, under the active scheme.
+ *  An unrecognised resolution is surfaced as `?<hex>`, so it fails loudly. */
 const swatchCounts = (colors: Iterable<GeomColor>): Record<string, number> => {
   const out: Record<string, number> = {};
   for (const c of colors) {
@@ -62,9 +61,8 @@ const withScheme = <T>(scheme: SchemeName, fn: () => T): T => {
 describe("snub / gyro geometric colors", () => {
   it("snub(rectify(tetra)) = icosahedron: 20 faces / 12 vertices / 30 edges", () => {
     const c = snub(rectify(seed("tetrahedron")));
-    // Every element now carries its own distinct ID (uniqueness is checked in
-    // tests/colorIds); here we just pin the element counts. 20 faces = 4 tetra faces +
-    // 4 tetra-vertex faces + 12 new snub triangles; 12 vertices; 30 edges.
+    // Element counts only; ID uniqueness is checked in tests/colorIds. The 20 faces are
+    // 4 tetra faces + 4 tetra-vertex faces + 12 new snub triangles.
     expect(c.face.length).toBe(20);
     expect(c.vertex.length).toBe(12);
     expect(c.edge.size).toBe(30);
@@ -79,11 +77,10 @@ describe("snub / gyro geometric colors", () => {
   });
 });
 
-// Specific-swatch regression tests: pin the actual color a viewer sees for the
-// classic solids, so a broken propagation rule (e.g. a new element landing on the
-// wrong swatch, or falling through to the default) is caught rather than passing a
-// size-only check. See the octahedral / icosahedral schemes in config.ts for why
-// each element resolves to the swatch asserted.
+// Pin the color a viewer actually sees for the classic solids, so a broken propagation
+// rule — a new element landing on the wrong swatch, or falling through to the default —
+// is caught rather than passing a size-only check. See the octahedral / icosahedral
+// schemes in config.ts for why each element resolves to the swatch asserted.
 describe("swatch colors of the built solids", () => {
   it("octahedron (rectify tetra) and its dual cube", () =>
     withScheme("octahedral", () => {
@@ -107,18 +104,18 @@ describe("swatch colors of the built solids", () => {
       expect(swatchCounts(ico.edge.values())).toEqual({ blue: 30 });
 
       const dod = gyro(join(seed("tetrahedron")));
-      // Dual of the icosahedron: face↔vertex swatches swap, edges stay blue. (The
+      // Dual of the icosahedron: face/vertex swatches swap, edges stay blue. The
       // dodecahedron's 12 non-cube vertices are the dual of the icosahedron's 12 snub
-      // gap triangles — they must land on `yellow`, not fall through to another swatch.)
+      // gap triangles, so they land on yellow rather than another swatch.
       expect(swatchCounts(dod.face)).toEqual({ red: 12 });
       expect(swatchCounts(dod.vertex)).toEqual({ yellow: 20 });
       expect(swatchCounts(dod.edge.values())).toEqual({ blue: 30 });
     }));
 });
 
-// The dodecahedron IS the dual of the icosahedron, so — since gyro is the dual of snub
-// — the two solids must carry mirror-image colors: every icosahedron FACE color must
-// reappear as a dodecahedron VERTEX color (and vice-versa), with edges identical.
+// The dodecahedron is the dual of the icosahedron, and gyro is the dual of snub, so the
+// two solids carry mirror-image colors: every icosahedron face color reappears as a
+// dodecahedron vertex color and vice versa, with edges identical.
 describe("gyro is the color-dual of snub", () => {
   it("icosahedron ↔ dodecahedron colors are swapped face/vertex, equal on edges", () => {
     const ico = snub(rectify(seed("tetrahedron")));

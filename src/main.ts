@@ -47,17 +47,16 @@ const screen = new Screen(
 screen.layout();
 
 // --- glitch overlay ---------------------------------------------------------
-// A single corruption overlay on top of the grid, shared by the boot sequence
-// (which choreographs it) and the new-shape discovery flash. Ticked every frame.
+// One corruption overlay on top of the grid, shared by the boot sequence (which
+// choreographs it) and the new-shape discovery flash. Ticked every frame.
 const glitch = new GlitchOverlay(screen, document.getElementById("grid")!);
 
 // --- renderer ---------------------------------------------------------------
-// When pixelateRender is on, the buffer is rendered at one texel per font pixel
-// (pixel ratio 1/pixelSize) and the canvas is nearest-neighbor upscaled, so the
-// 3D shares the text's chunky pixel grid. Otherwise it renders crisp at full
-// device resolution.
-// preserveDrawingBuffer lets the PNG save read the canvas reliably regardless of
-// when the click lands relative to the render loop.
+// With pixelateRender on, the buffer is rendered at one texel per font pixel
+// (pixel ratio 1/pixelSize) and the canvas nearest-neighbor upscaled, so the 3D
+// shares the text's chunky pixel grid. Otherwise it renders crisp at full device
+// resolution. preserveDrawingBuffer lets the PNG save read the canvas whenever the
+// click lands relative to the render loop.
 const renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(
   config.theme.pixelateRender
@@ -89,18 +88,18 @@ let shapesPanel: ShapesPanel | null = null;
 const readout = new Readout(screen, () => shapesPanel?.reservedRows() ?? 0);
 
 // --- post-processing: glass bloom over the 3D view --------------------------
-// UnrealBloom gives the polyhedra the same soft halo the text gets from its
-// layered text-shadow; both are scaled by config.theme.bloom.intensity so they
-// glow by the same amount (see Screen.textGlow).
-// A multisampled HDR target keeps the polyhedra edges antialiased (the default
-// composer target has no MSAA) and gives the bloom highlights headroom.
+// UnrealBloom gives the polyhedra the same soft halo the text gets from its layered
+// text-shadow; both are scaled by config.theme.bloom.intensity so they glow by the
+// same amount (see Screen.textGlow). The multisampled HDR target keeps the polyhedra
+// edges antialiased (the default composer target has no MSAA) and gives the bloom
+// highlights headroom.
 const composerTarget = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: 4 });
 const composer = new EffectComposer(renderer, composerTarget);
 composer.setPixelRatio(renderer.getPixelRatio());
 composer.addPass(new RenderPass(scene, rig.camera));
-// UnrealBloom's strength runs hotter than the CSS text glow at the same number,
-// so the shared intensity is scaled down here to keep the 3D bloom visually in
-// step with the text (tune this if you change the look of one but not the other).
+// UnrealBloom's strength runs hotter than the CSS text glow at the same number, so
+// the shared intensity is scaled down here to keep the 3D bloom in step with the
+// text. Tune it if you change the look of one but not the other.
 const bloomPass = new UnrealBloomPass(
   new Vector2(1, 1), // sized on first layout
   config.theme.bloom.intensity * config.theme.bloom.scale_3d,
@@ -116,8 +115,6 @@ screen.onLayout((s) => {
   composer.setSize(s.width, s.height);
   rig.setAspect(s.width / s.height);
 });
-// The status readout (a box-framed popup) self-places into the bottom-left
-// corner on every layout; see ui/readout.ts.
 
 /** A fresh seed polyhedron with its initial element colors. */
 function seedPoly(name: string): Polyhedron {
@@ -133,9 +130,9 @@ let controller: DragController | null = null;
 let intro: IntroCutscene | null = null;
 
 // --- bottom-bezel controls (LED + Help/Info + PNG/STL save) -----------------
-// Save buttons act on the current shape; they no-op until the controller exists
-// (i.e. once the intro hands off). The filename is the shape name, lower-cased
-// with spaces → underscores.
+// The save buttons act on the current shape and no-op until the controller exists,
+// i.e. until the intro hands off. The filename is the shape name, lower-cased with
+// spaces turned into underscores.
 const helpDialog = new HelpDialog(screen);
 const bezelControls = new BezelControls(screen.bezel, {
   onHelp: () => helpDialog.toggle(controller?.isLibraryOpen() ? "library" : "main"),
@@ -155,7 +152,7 @@ const bezelControls = new BezelControls(screen.bezel, {
 helpDialog.setToggleButton(bezelControls.helpButton);
 
 // Flick the activity LED while the user drags (orbiting the shape or a handle):
-// any pointer move with a button down counts as "working".
+// any pointer move with a button down counts as working.
 let pointerDown = false;
 window.addEventListener("pointerdown", () => (pointerDown = true));
 window.addEventListener("pointerup", () => (pointerDown = false));
@@ -163,9 +160,9 @@ window.addEventListener("pointermove", () => {
   if (pointerDown) led.pulse();
 });
 
-// The program (the faux-BIOS boot + the shape fading in) does NOT start on load:
-// the letter rises first and the program only boots once the reader puts the
-// letter away. `startProgram` is the handoff; it's safe to call more than once.
+// The program (the faux-BIOS boot + the shape fading in) doesn't start on load: the
+// letter rises first, and the program boots only once the reader puts it away.
+// `startProgram` is the handoff, and is safe to call more than once.
 function startProgram(): void {
   if (intro) return;
   intro = new IntroCutscene(
@@ -178,8 +175,8 @@ function startProgram(): void {
     () => {
       intro = null;
       rig.frame(new Vector3());
-      // The bottom-left readout appears now (via the controller). The top-left
-      // SHAPES panel and the HISTORY panel stay hidden until the first edit.
+      // The bottom-left readout appears now, via the controller. The top-left SHAPES
+      // panel and the HISTORY panel stay hidden until the first edit.
       shapesPanel = new ShapesPanel(screen);
       controller = new DragController(
         initialPoly,
@@ -203,8 +200,8 @@ function startProgram(): void {
 }
 
 // The worn typewritten letter rises in on load and starts the program when the
-// reader puts it away (clicks the center / off the side). With the letter off,
-// the program boots immediately as before.
+// reader puts it away (clicks the center, or off to the side). With the letter
+// disabled, the program boots immediately.
 if (config.letter.enabled) {
   new LetterIntro(screen, config.letterText, startProgram);
 } else {
@@ -217,7 +214,7 @@ if (config.letter.enabled) {
 /** Skip the boot intro and reveal every panel immediately. */
 function jumpToApp() {
   if (!intro) return;
-  intro.skip(); // synchronously runs the whenFinished above (creates the panels)
+  intro.skip(); // runs the whenFinished above synchronously, creating the panels
   shapesPanel?.show();
   controller?.revealHistory();
   readout.enableSelection();
@@ -230,10 +227,10 @@ function skipIntro(e: Event) {
   jumpToApp();
 }
 
-// Any key or click skips the intro and jumps straight to the app, revealing every panel
-// immediately (no first edit needed). Registered before the main keyboard
-// handler and stops the event there, so the skipping keystroke isn't also
-// interpreted as an app shortcut.
+// Any key or click skips the intro and jumps straight to the app, revealing every
+// panel without waiting for a first edit. Registered before the main keyboard handler
+// and stops the event there, so the skipping keystroke isn't also read as an app
+// shortcut.
 window.addEventListener("keyup", (e) => {
   if (e.key.length == 1 || e.key == "Escape")
     skipIntro(e);
@@ -245,8 +242,8 @@ window.addEventListener("pointerup", (e) => {
 // --- undo / redo + seed loading via keyboard --------------------------------
 window.addEventListener("keydown", (e) => {
   if (!controller) return;
-  // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y. (Camera is kept;
-  // shapes are normalized to ~unit so no reframe is needed.)
+  // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y. The camera is kept —
+  // shapes are normalized to ~unit, so no reframe is needed.
   const mod = IS_MAC ? e.metaKey : e.ctrlKey;
   if (mod && e.key.toLowerCase() === "z") {
     e.preventDefault();
@@ -271,8 +268,8 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (e.key.toLowerCase() === config.seeds.resetKey) {
-    // Same as clicking the first HISTORY entry: jump back to the seed root,
-    // keeping the timeline intact (rather than wiping it with a fresh load).
+    // Same as clicking the first HISTORY entry: jump back to the seed root, keeping
+    // the timeline intact rather than wiping it with a fresh load.
     controller.jumpTo(0);
     rig.frame(new Vector3());
   }

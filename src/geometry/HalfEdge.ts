@@ -1,10 +1,9 @@
 import { Vector3 } from "three";
 
 /**
- * The plain, serializable representation of a polyhedron and the SOURCE OF TRUTH
- * for the committed shape: a list of vertex positions plus faces, where each face
- * is a loop of vertex indices. (Operations and the solver work on this form; the
- * half-edge structure below is read-only derived data used for topology queries.)
+ * The plain, serializable representation of a committed polyhedron: vertex positions plus
+ * faces, where each face is a loop of vertex indices. Operations and the solver work on
+ * this form; the half-edge structure below is read-only derived data for topology queries.
  */
 export interface Mesh {
   vertices: Vector3[];
@@ -45,8 +44,8 @@ export interface DCEL {
 }
 
 // ---------------------------------------------------------------------------
-//  Orientation: make all face windings consistent and outward-facing.
-//  Required so twin-matching works and so normals point outward.
+//  Orientation: make all face windings consistent and outward-facing. Required for
+//  twin-matching to work and for normals to point outward.
 // ---------------------------------------------------------------------------
 
 function undirectedKey(a: number, b: number): string {

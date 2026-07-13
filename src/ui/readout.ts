@@ -5,10 +5,9 @@ import { config } from "../config";
 import { Polyhedron } from "../geometry/polyhedron";
 import { Screen, Popup, fadeIn } from "./screen";
 
-// Columns by which the wrapped (continuation) lines of a readout box hang-indent.
-// A long faces/vertices configuration list that overflows the screen wraps and
-// the continuation lines sit indented under their label. Whole cells keep the
-// indent on the character grid (see setupWrap below).
+// Columns by which a readout box's continuation lines hang-indent under their
+// label when a long configuration list wraps. Whole cells, so the indent stays on
+// the character grid (see setupWrap).
 const READOUT_INDENT_COLS = config.ui.readoutIndentCols;
 
 /** "vertex"/"vertices" or "face"/"faces" agreeing with `n`. */
@@ -31,11 +30,11 @@ function joinAnd(parts: string[]): string {
 }
 
 /**
- * Describe a homogeneous set of elements (a selection, or the participants of an
- * in-progress operation) — where "arity" is a face's side count or a vertex's
- * degree. When every element of the kind is included it reads simply "all faces"
- * / "all vertices". Otherwise an arity all of whose elements are included reads as
- * one group ("all 3-gon faces" / "all degree-4 vertices"); everything left over is
+ * Describe a set of elements (a selection, or the participants of an in-progress
+ * operation), where an element's arity is a face's side count or a vertex's
+ * degree. When every element of the kind is included it reads "all faces" / "all
+ * vertices". Otherwise an arity all of whose elements are included reads as one
+ * group ("all 3-gon faces" / "all degree-4 vertices"), and everything left over is
  * summed into a trailing count. `ids === null` means the whole solid. Examples:
  *   "all vertices"                  (every vertex)
  *   "all degree-4 vertices"
@@ -102,8 +101,7 @@ function sameSet(a: Set<number>, b: Set<number>): boolean {
 
 /**
  * The present-participle verb shown while a drag is in progress, keyed by the
- * operation and whether the drag has reached its welded max end (for snub, that's
- * the fully-extended skew; for gyro it's inherited from the base level).
+ * operation and whether the drag has reached its welded max end.
  */
 const DRAG_VERB = config.ui.dragVerbs as Record<
   OperationKind,
@@ -111,13 +109,14 @@ const DRAG_VERB = config.ui.dragVerbs as Record<
 >;
 
 /**
- * Minimal bottom-left text overlay: the polyhedron's name, a ✓ when verified by
- * isomorphism, validity, and the configuration signature. (Visuals are deferred,
- * so identification surfaces here and in the console rather than as real UI.)
+ * The two text overlays: the polyhedron's name and configuration signature
+ * (bottom-left), and what the selection or in-progress drag affects (top-left).
+ * Each lives in its own box-drawing popup that hugs its content and re-fits into
+ * its corner on every layout.
  */
 export class Readout {
-  private readonly polyBox: Popup; // "POLYHEDRON" frame, bottom-left
-  private readonly selBox: Popup; //  "SELECTION" frame, top-left (only while selecting)
+  private readonly polyBox: Popup; // POLYHEDRON frame, bottom-left
+  private readonly selBox: Popup; //  SELECTION frame, top-left (only while selecting)
   private polyRows = 0; //            current height of the POLYHEDRON box, in rows
   private polyEl: HTMLElement | null;
   private selEl: HTMLElement | null;
@@ -138,8 +137,8 @@ export class Readout {
   } | null = null;
   // private verified: boolean = false;
   private solving: boolean = false;
-  // The top-left SELECTION box stays hidden until the first edit (like the SHAPES
-  // and HISTORY panels), so a fresh launch isn't cluttered before you've acted.
+  // The top-left SELECTION box stays hidden until the first edit, like the SHAPES
+  // and HISTORY panels.
   private selectionEnabled: boolean = false;
 
   constructor(
@@ -148,9 +147,6 @@ export class Readout {
     // below it rather than overlapping it.
     private readonly reservedTopRows: () => number = () => 0,
   ) {
-    // Each readout block lives in the body of its own box-drawing popup (matching
-    // the HISTORY panel). Each frame hugs its content and re-fits into its corner
-    // on every layout: the polyhedron info bottom-left, the selection info top-left.
     this.polyBox = new Popup(screen, { cols: 12, rows: 5, title: config.ui.titles.polyhedron });
     this.polyBox.mount();
     this.polyEl = document.createElement("div");
@@ -197,11 +193,10 @@ export class Readout {
     }
   }
 
-  /** Let a readout body wrap once it would overflow the screen, with a hanging
-   *  indent so continuation lines sit under their label. A negative text-indent
-   *  cancels the padding on the first line (flush left), and both are whole cells
-   *  so the wrapped text stays on the character grid. The actual wrap width is the
-   *  max-width set per-layout in fit(). */
+  /** Let a readout body wrap, with a hanging indent so continuation lines sit under
+   *  their label. A negative text-indent cancels the padding on the first line
+   *  (flush left); both are whole cells, so the wrapped text stays on the character
+   *  grid. The wrap width itself is the max-width set per-layout in fit(). */
   private setupWrap(el: HTMLElement): void {
     const indent = READOUT_INDENT_COLS * this.screen.colW;
     el.style.whiteSpace = "pre-wrap";
@@ -255,9 +250,8 @@ export class Readout {
     this.polyBox.el.style.display = "";
 
     if (this.selectionEnabled && (this.drag || this.selection.size > 0)) {
-      // The affected set is summarized by arity group ("all 3-gon faces, and 2
-      // faces" / "all degree-4 vertices" / "all faces"). During a live operation
-      // drag the operation verb leads; otherwise it's a static "Selected …".
+      // The affected set is summarized by arity group (see describeSet). During a
+      // live drag the operation verb leads; otherwise the line reads "Selected …".
       let line: string;
       if (this.drag) {
         const verb =

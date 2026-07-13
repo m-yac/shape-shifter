@@ -16,8 +16,8 @@ export function faceCentroidOf(vertices: Vector3[], loop: number[]): Vector3 {
 }
 
 /**
- * Newell's method normal for a (possibly non-planar) polygon — robust and
- * area-weighted. Returns a unit vector.
+ * Newell's method normal for a possibly non-planar polygon: area-weighted, and
+ * well-defined for any polygon. Returns a unit vector.
  */
 export function newellNormal(points: Vector3[]): Vector3 {
   const n = new Vector3();
@@ -43,8 +43,8 @@ export function faceNormalHE(f: HEFace): Vector3 {
   return newellNormal(faceVertices(f).map((v) => v.position));
 }
 
-/** Approximate "radius" (max distance from centroid) — used for scale-relative
- *  tolerances and to keep the overall size stable through edits. */
+/** Max distance from the centroid, used for scale-relative tolerances and to keep the
+ *  overall size stable through edits. */
 export function meshRadius(mesh: Mesh): number {
   const c = new Vector3();
   for (const p of mesh.vertices) c.add(p);
@@ -62,20 +62,18 @@ export function cloneMesh(mesh: Mesh): Mesh {
 }
 
 /**
- * A committed polyhedron: the plain Mesh plus its lazily-built half-edge view.
- * Treat it as immutable — operations and the solver produce new meshes which
- * are wrapped in a new Polyhedron.
+ * A committed polyhedron: the plain Mesh plus its lazily-built half-edge view. Treat it as
+ * immutable; operations and the solver produce new meshes, wrapped in a new Polyhedron.
  */
 export class Polyhedron {
   readonly mesh: Mesh;
-  /** Per-vertex/edge/face palette colors (see geometry/colors.ts). Defaults to
-   *  the generic seed coloring (faces 0, vertices 1, edges 2) when not supplied. */
+  /** Per-vertex/edge/face geometric colors (see geometry/colors.ts). Defaults to the
+   *  seed coloring when not supplied. */
   readonly colors: ColorSet;
-  /** The operation's direct, never-regularized output — a pristine copy of the
-   *  geometry as committed, with a 1:1 vertex-index correspondence to `mesh`.
-   *  `mesh.vertices` get mutated in place by the relaxation solver, but `raw` is
-   *  left untouched so a re-solve (strategy switch, big drift) can always rebuild
-   *  the solver's base from a clean, well-defined starting form. */
+  /** The operation's direct, never-regularized output: a copy of the geometry as
+   *  committed, with a 1:1 vertex-index correspondence to `mesh`. `mesh.vertices` get
+   *  mutated in place by the relaxation solver, but `raw` is left untouched, so a re-solve
+   *  (strategy switch, big drift) can rebuild the solver's base from a clean start. */
   readonly raw: Mesh;
   private _dcel: DCEL | null = null;
 

@@ -10,35 +10,35 @@ export interface HistoryOptions {
 }
 
 /**
- * One committed state in the edit history. The seed (root) entry has `isSeed`
- * set and uses its polyhedron name directly as the label; operation entries use
- * an action label (e.g. "Truncate", "Kis 1 face") with the resulting polyhedron
- * name shown parenthetically once identification finishes.
+ * One committed state in the edit history. The seed (root) entry has `isSeed` set and
+ * uses its polyhedron name as the label; operation entries use an action label
+ * ("Truncate", "Kis 1 face") with the resulting polyhedron name shown parenthetically
+ * once identification finishes.
  */
 export interface HistoryEntry {
   poly: Polyhedron;
   label: string;
   /** Identified name of the resulting shape (filled in after the solve). */
   name: string | null;
-  /** The display name: the identified `name` when known, otherwise a name derived
-   *  by prepending this operation's modifier to the nearest named ancestor (e.g.
-   *  "Augmented Truncated Cube"). Null while unresolved / for invalid states. */
+  /** The identified `name` when known, otherwise a name derived by prepending this
+   *  operation's modifier to the nearest named ancestor ("Augmented Truncated Cube").
+   *  Null while unresolved, and for invalid states. */
   displayName: string | null;
   /** The operation that produced this entry (null for the seed root). */
   op: OpDescriptor | null;
   /** True when the solver couldn't planarize this state. */
   invalid: boolean;
   isSeed: boolean;
-  /** The color scheme + regularization strategy in effect at this entry. These are
-   *  restored when jumping here, and can be changed in place without branching. */
+  /** The color scheme and strategy in effect at this entry. Restored when jumping
+   *  here, and changeable in place without branching. */
   options: HistoryOptions;
 }
 
 /**
- * A linear undo/redo timeline. `index` points at the current entry; entries
- * after it are the "redo" tail (kept until a new push overwrites them). Jumping
- * or undoing/redoing only moves `index`; pushing a new operation truncates the
- * tail first, so branching from an earlier state discards the abandoned future.
+ * A linear undo/redo timeline. `index` points at the current entry; entries after it
+ * are the redo tail, kept until a new push overwrites them. Jumping and undo/redo only
+ * move `index`; pushing a new operation truncates the tail first, so branching from an
+ * earlier state discards the abandoned future.
  */
 export class History {
   private entries: HistoryEntry[] = [];
@@ -63,8 +63,8 @@ export class History {
     return this.index;
   }
 
-  /** Replace the whole timeline with a previously-saved one (the LIBRARY reopening a
-   *  shape with its construction history). `index` becomes the current entry. */
+  /** Replace the whole timeline with a saved one, as the LIBRARY does when reopening a
+   *  shape with its construction history. `index` becomes the current entry. */
   replaceAll(entries: HistoryEntry[], index: number): void {
     this.entries = entries;
     this.index = Math.max(0, Math.min(index, entries.length - 1));

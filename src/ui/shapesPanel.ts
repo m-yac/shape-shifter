@@ -3,9 +3,9 @@ import { type Strategy } from "../solver/solver";
 import { Screen, Popup, fadeIn } from "./screen";
 import { makeActionButton, makeRadioGroup, type RadioGroup } from "./controls";
 
-// Keys into `config.ui.optionsPanel`. Each named line is wired to a specific
-// purpose here; the DOM + width generation below is otherwise generic over
-// whatever lines the config holds.
+// Keys into `config.ui.optionsPanel`. Only these three lines are wired to a
+// behaviour; the DOM + width generation below is generic over whatever lines the
+// config holds.
 const LIBRARY_KEY = "libraryLine";
 const FORM_KEY = "formLine";
 const COLORS_KEY = "colorsLine";
@@ -91,8 +91,8 @@ export class ShapesPanel {
           const btn = makeActionButton(caption, () => this.onButton(key, btnKey));
           if (key === LIBRARY_KEY && btnKey === "browse") {
             this.browseBtn = btn.el;
-            // Hovering cancels the "new shape" flash and pins the hover color (the
-            // CSS :hover rule takes over once our inline color is cleared).
+            // Hovering cancels the new-shape flash and pins the hover color: the
+            // CSS :hover rule takes over once the inline color is cleared.
             btn.el.addEventListener("mouseenter", () => {
               this.flashHovered = true;
               cancelAnimationFrame(this.flashRaf);
@@ -132,9 +132,9 @@ export class ShapesPanel {
     screen.onLayout(() => this.popup.placeAt(0, 0));
   }
 
-  // What a control press *means*, dispatched by line. The Form radios drive
-  // the solver strategy (press-and-hold: keep relaxing until release); the
-  // Colors radios pick a scheme (instant); the Library button opens the diagram.
+  // What a control press does, dispatched by line: the Form radios drive the
+  // solver strategy (press-and-hold keeps relaxing until release), the Colors
+  // radios pick a scheme, and the Library button opens the diagram.
   private onRadioPress(lineKey: string, value: string): void {
     if (lineKey === FORM_KEY) {
       this.strategy = value as Strategy;

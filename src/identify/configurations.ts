@@ -7,9 +7,9 @@ import {
 } from "../geometry/HalfEdge";
 
 /**
- * Canonical form of a cyclic sequence: the lexicographically smallest string
- * over all rotations AND the reversal (so orientation/handedness doesn't matter).
- * e.g. [4,3,4,3] and [3,4,3,4] both canonicalize to "3.4.3.4".
+ * Canonical form of a cyclic sequence: the lexicographically smallest string over all
+ * rotations and the reversal, so orientation and handedness don't matter. [4,3,4,3]
+ * and [3,4,3,4] both canonicalize to "3.4.3.4".
  */
 export function canonicalSequence(seq: number[]): string {
   if (seq.length === 0) return "";
@@ -85,9 +85,7 @@ export function signaturesEqual(a: Signature, b: Signature): boolean {
   );
 }
 
-/**
- * Formats a number as a unicode superscript
- */
+/** Format a number as unicode superscript digits. */
 function superscript(num: number): string {
   let result = "";
   num = Math.floor(num);
@@ -99,9 +97,9 @@ function superscript(num: number): string {
 }
 
 /**
- * Pretty configuration string using exponents for runs: the internal canonical
- * key "4.4.4.4.4" becomes "4^5", "3.3.3.3.5" becomes "3^4.5", and alternating
- * configs like "3.4.3.4" are left as-is.
+ * Display form of a canonical key, using superscripts for runs: "4.4.4.4.4" becomes
+ * "4^5", "3.3.3.3.5" becomes "3^4.5", and alternating configs like "3.4.3.4" are
+ * left as they are.
  */
 export function formatConfig(canonical: string): string {
   const vals = canonical.split(".");

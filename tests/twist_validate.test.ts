@@ -55,8 +55,8 @@ describe("gyro twist (extends a join)", () => {
   });
 });
 
-// Max distance (in units of the face's mean edge length) of a face's vertices from
-// their best-fit plane — 0 for a planar face. Newell normal + centroid.
+// Max distance of a face's vertices from their best-fit (Newell normal + centroid)
+// plane, in units of the face's mean edge length. 0 for a planar face.
 function nonPlanarity(verts: Vector3[], face: number[]): number {
   const c = new Vector3();
   for (const i of face) c.add(verts[i]);
@@ -79,10 +79,9 @@ function nonPlanarity(verts: Vector3[], face: number[]): number {
   return edge > 1e-9 ? maxd / edge : 0;
 }
 
-// The gyro splits each join quad into pentagons; only the t=1 end is truly planar, but
-// the drag schedule (gyro.ts `liftExponent`) advances the lift ahead of the slide so
-// the INTERMEDIATE faces stay approximately planar too (rather than creasing along the
-// old join edges). Assert the worst crease over the whole drag is small.
+// The gyro splits each join quad into pentagons; only the t=1 end is exactly planar,
+// but gyro.ts's `liftExponent` schedule advances the lift ahead of the slide so the
+// intermediate faces stay near-planar rather than creasing along the old join edges.
 describe("gyro faces stay ~planar through the drag", () => {
   const join = (s: string) => new Polyhedron(buildKis(seed(s), 0, null).commit(1, true).mesh);
   for (const s of ["tetrahedron", "cube", "octahedron", "dodecahedron", "icosahedron"]) {
@@ -95,7 +94,7 @@ describe("gyro faces stay ~planar through the drag", () => {
         const P = plan.positions(t);
         for (const f of faces) if (f.length > 3) worst = Math.max(worst, nonPlanarity(P, f));
       }
-      // < 2% of edge length everywhere; a naive linear (lift ∝ t) drag creases the
+      // Under 2% of edge length everywhere. A linear lift (∝ t) instead creases the
       // sharp cube join at ~4.4%.
       expect(worst).toBeLessThan(0.02);
     });

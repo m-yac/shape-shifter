@@ -1,8 +1,8 @@
 /**
- * Labeled graph isomorphism by backtracking, pruned heavily by vertex labels
- * (the canonical vertex configuration). Pure — no Three.js — so it can run
- * inside a Web Worker. Used to VERIFY a name match: if a configuration- and
- * connectivity-preserving bijection exists, the polyhedron really is that one.
+ * Labeled graph isomorphism by backtracking, pruned by vertex labels (the canonical
+ * vertex configuration). Free of Three.js, so it can run inside a Web Worker. This
+ * verifies a name match: if a configuration- and connectivity-preserving bijection
+ * exists, the polyhedron really is that one.
  */
 export interface GraphData {
   n: number;
@@ -32,8 +32,8 @@ export function areIsomorphic(a: GraphData, b: GraphData): boolean {
   if (ta.size !== tb.size) return false;
   for (const [k, v] of ta) if (tb.get(k) !== v) return false;
 
-  // Order A's vertices so each new one is adjacent to an already-placed vertex
-  // (BFS order) — this makes the adjacency constraints bite early and prunes.
+  // Order A's vertices in BFS order, so each new one is adjacent to an
+  // already-placed vertex and the adjacency constraints prune early.
   const order: number[] = [];
   const seen = new Array<boolean>(a.n).fill(false);
   for (let s = 0; s < a.n; s++) {

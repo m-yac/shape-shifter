@@ -19,12 +19,12 @@ function ringPlane(ring: Vector3[]): { c: Vector3; n: Vector3 } {
 }
 
 /**
- * Subdivide, driven by dragging an edge's new vertex outward. Like truncate/kis the
- * gesture is global: dragging ONE edge subdivides EVERY edge. A new vertex is placed
- * on each edge (at truncate's collapse point — see the note in the body), every
- * original vertex is kept (as the apex of its vertex figure), each original face
- * becomes the polygon of its edge vertices, and each original vertex grows a fan of
- * triangles to its surrounding edge vertices.
+ * Subdivide, driven by dragging an edge's new vertex outward. Like truncate and kis the
+ * gesture is global: dragging one edge subdivides every edge. A new vertex is placed on
+ * each edge (at truncate's collapse point, see the note in the body), every original
+ * vertex is kept (as the apex of its vertex figure), each original face becomes the
+ * polygon of its edge vertices, and each original vertex grows a fan of triangles to its
+ * surrounding edge vertices.
  *
  *   t = 0 → coplanar with the original (midpoints flat, looks unchanged).
  *   0 < t < 1 → the subdivided solid (e.g. cube → 6 quads + 24 triangles).
@@ -44,27 +44,26 @@ export function buildSubdivide(
 
   // ---- Index a vertex on every edge, plus an apex at every vertex. ------------
   //
-  // Subdivide is the exact DUAL of chamfer, and its geometry follows the same rule:
-  // reuse the weld limit's solver rather than inventing a heuristic. Chamfer shrinks
-  // each face toward kis's join apex; dually, subdivide's new vertex on edge (p,q)
-  // sits at truncate's COLLAPSE POINT `p + s·(q−p)` — the point where a Rectify's two
-  // cut ends meet (`computeCollapseFractions` solves the s that keeps every vertex
-  // n-gon planar). Two properties fall out, both of which a raised edge MIDPOINT
-  // lacks:
+  // Subdivide is the dual of chamfer, and its geometry follows the same rule: reuse the
+  // weld limit's solver rather than a heuristic. Chamfer shrinks each face toward kis's
+  // join apex; dually, subdivide's new vertex on edge (p,q) sits at truncate's collapse
+  // point `p + s·(q−p)`, where a Rectify's two cut ends meet (`computeCollapseFractions`
+  // solves the s that keeps every vertex n-gon planar). Two properties follow, both of
+  // which a raised edge midpoint lacks:
   //
-  //   * the new vertices of a face lie ON that face's edges, hence in its plane, so
-  //     the central polygon is exactly planar AND convex (a convex polygon's edge
-  //     points always are) — a lifted midpoint polygon is neither;
-  //   * the ring around a vertex is planar, so the corner fan flattens cleanly and
-  //     the weld is truncate's Rectify exactly, not an approximation of it.
+  //   * the new vertices of a face lie on that face's edges, hence in its plane, so the
+  //     central polygon is exactly planar and convex (the edge points of a convex polygon
+  //     always are); a lifted midpoint polygon is neither;
+  //   * the ring around a vertex is planar, so the corner fan flattens cleanly and the
+  //     weld is truncate's Rectify exactly, not an approximation of it.
   //
-  // The drag then plays out on the OTHER end: the apex sinks from v to the plane of
-  // its ring (where the fan flattens and it welds away), and we rescale the solid
-  // each frame to hold the apexes at their original mean radius. That rescale is
-  // free — the shape is scale-invariant — and it is what puts the motion back where
-  // the gesture expects it: the edge vertices sweep outward as you drag, while the
-  // apexes stay put (exactly, on a symmetric solid) or drift slightly (on an
-  // irregular one, where that drift IS the correction).
+  // The drag then plays out on the other end: the apex sinks from v to the plane of its
+  // ring (where the fan flattens and it welds away), and the solid is rescaled each frame
+  // to hold the apexes at their original mean radius. The rescale is free, as the shape
+  // is scale-invariant, and it puts the motion where the gesture expects it: the edge
+  // vertices sweep outward as you drag, while the apexes stay put (exactly so on a
+  // symmetric solid) or drift slightly on an irregular one, where that drift is the
+  // correction.
   const collapse = computeCollapseFractions(poly);
   const edgeIndex = new Map<string, number>(); // edgeKey -> edge vertex index
   const midData: Array<{ index: number; rest: Vector3; key: string }> = [];
@@ -112,12 +111,12 @@ export function buildSubdivide(
   const sunkApexes = (t: number): Vector3[] =>
     dcel.vertices.map((v) => v.position.clone().lerp(foot.get(v.id)!, t));
 
-  // The rescale that holds the apexes at their original mean radius. Note it
-  // interpolates the mean radius rather than averaging the interpolated radii: both
-  // agree at t=0 and t=1 (and everywhere, whenever a vertex sinks along its own
-  // radial — every symmetric solid), but only this form INVERTS IN CLOSED FORM. A
-  // mean of norms does not, and inverting it numerically would leave `snap` unable to
-  // return exactly t=1 — which is the only value the drag controller welds on.
+  // The rescale that holds the apexes at their original mean radius. It interpolates the
+  // mean radius rather than averaging the interpolated radii: both agree at t=0 and t=1
+  // (and everywhere on a symmetric solid, where each vertex sinks along its own radial),
+  // but only this form inverts in closed form. A mean of norms does not, and inverting it
+  // numerically would leave `snap` unable to return exactly t=1, the only value the drag
+  // controller welds on.
   const denom = (t: number) => R0 + t * (R1 - R0);
   const scaleAt = (t: number) => (denom(t) > 1e-9 ? R0 / denom(t) : 1);
   const kMax = scaleAt(1);
@@ -142,8 +141,8 @@ export function buildSubdivide(
   // ---- Faces: per-face midpoint polygon + per-vertex triangle fan. ------------
   // Colors (config.colors.operations.subdivide): midpoint vertex ← newVertex; central
   // polygon keeps the old face; corner triangle ← newFace. The drag stages each preview
-  // face across THREE colors (see colorUtil.stagedFaceColors): the ORIGINAL solid at
-  // t=0, the subdivision at t=0.5, then the welded Rectify at t=1.
+  // face across three colors (see colorUtil.stagedFaceColors): the original solid at t=0,
+  // the subdivision at t=0.5, then the welded Rectify at t=1.
   const C = config.colors.operations;
   const midColor = (vid: number, wid: number): GeomColor =>
     old.edge.get(edgeKey(vid, wid)) ?? BLACK;
@@ -154,8 +153,8 @@ export function buildSubdivide(
 
   const midOf = (vid: number, wid: number) => edgeIndex.get(edgeKey(vid, wid))!;
 
-  // (a) one polygon per original face, through its edge midpoints — keeps its face
-  // color throughout (original = subdivided = rectified central polygon).
+  // (a) one polygon per original face, through its edge midpoints. It keeps its color
+  // throughout (original = subdivided = rectified central polygon).
   for (const f of dcel.faces) {
     const loop: number[] = [];
     let h = f.halfedge;
@@ -169,11 +168,11 @@ export function buildSubdivide(
     faceMid.push(old.face[f.id]);
     faceEnd.push(old.face[f.id]);
   }
-  // (b) one triangle per (vertex, consecutive incident-edge pair): the corner fan.
-  // At the Rectify weld the fan goes flat and merges into v's vertex figure, so its
-  // spokes (edge vertex → apex) dissolve — the dual of the original edges that kis
-  // dissolves when its pyramid triangles merge into a Join quad. Hiding them at t=1
-  // makes the fan read as the single vertex-figure polygon before the geometry welds.
+  // (b) one triangle per (vertex, consecutive incident-edge pair): the corner fan. At the
+  // Rectify weld the fan goes flat and merges into v's vertex figure, so its spokes (edge
+  // vertex → apex) dissolve, dual to the original edges kis dissolves when its pyramid
+  // triangles merge into a Join quad. Hiding them at t=1 makes the fan read as the single
+  // vertex-figure polygon before the geometry welds.
   const fanDissolve: Array<[number, number]> = [];
   const cornerTriangles: number[][] = [];
   for (const v of dcel.vertices) {
@@ -246,15 +245,15 @@ export function buildSubdivide(
   }
 
   function previewFaceColors(t: number, weld?: boolean): Color[] {
-    // original solid → subdivision (t=0.5) → Rectify weld (t=1); the weld's merged
-    // vertex figures are shown exactly at the weld so releasing is seamless.
+    // original solid → subdivision (t=0.5) → Rectify weld (t=1); the weld's merged vertex
+    // figures are shown exactly at the weld so releasing is seamless.
     return stagedFaceColors(faceOrig, faceMid, faceEnd, t, weld);
   }
 
-  // ---- Snap: the dragged edge's vertex sweeps outward along its own radial, from its
-  //  rest point to where the Rectify weld leaves it. The cursor's travel `s` fixes the
-  //  scale, which `tForScale` inverts exactly — so dragging to the far end yields t=1
-  //  on the nose, and the drag controller welds.
+  // ---- Snap: the dragged edge's vertex sweeps outward along its radial, from its rest
+  //  point to where the Rectify weld leaves it. The cursor's travel `s` fixes the scale,
+  //  which `tForScale` inverts exactly, so dragging to the far end yields t=1 on the nose
+  //  and the drag controller welds.
   const eRest =
     midData.find((m) => m.key === edgeKey(edge[0], edge[1]))?.rest.clone() ??
     dcel.vertices[edge[0]].position.clone();
@@ -275,9 +274,9 @@ export function buildSubdivide(
 
   function commit(t: number, weld: boolean): { mesh: Mesh; colors: ColorSet } {
     if (weld) {
-      // At the limit every vertex's corner fan is coplanar: its triangles merge
-      // into the vertex-figure polygon and the apex welds away, leaving only the
-      // edge-midpoint vertices — i.e. the RECTIFICATION of the solid.
+      // At the limit every vertex's corner fan is coplanar: its triangles merge into the
+      // vertex-figure polygon and the apex welds away, leaving only the edge-midpoint
+      // vertices, i.e. the rectification of the solid.
       const verts: Vector3[] = new Array(E);
       const midCol: GeomColor[] = new Array(E);
       for (const m of midData) {
@@ -300,19 +299,19 @@ export function buildSubdivide(
         faces.push(loop);
         rFaceColor.push(old.face[f.id]);
       }
-      // (b) the vertex figure of each original vertex (its surrounding midpoints).
-      // At the limit this is the rectify face-from-vertex, which reuses truncate.newFace
-      // — the same rule truncate.ts applies to this exposed n-gon.
+      // (b) the vertex figure of each original vertex (its surrounding midpoints). At the
+      // limit this is the rectify face-from-vertex, reusing truncate.newFace, the same
+      // rule truncate.ts applies to this exposed n-gon.
       for (const v of dcel.vertices) {
         faces.push(outgoingHalfEdges(v).map((h) => midOf(v.id, h.next.origin.id)));
         rFaceColor.push(combine(C.truncate.newFace, { oldVertex: old.vertex[v.id] }, "truncate.newFace"));
       }
-      // Rectify edges ← rectify.newEdge (oldFace + oldVertex)/2, exactly as truncate's
-      // Rectify path colors them — subdivide-welded IS the rectification, so its edges
-      // must match. Each rectify edge is a central-polygon edge of one original face `f`
-      // flanking one original vertex (the corner its two midpoints straddle); that
-      // (face, vertex) pair is its source. (Copying an endpoint vertex's own color here
-      // instead would make every edge collide with that vertex — see tests/colorIds.)
+      // Rectify edges ← rectify.newEdge (oldFace + oldVertex)/2, as truncate's Rectify
+      // path colors them: the welded subdivide is the rectification, so its edges match.
+      // Each rectify edge is a central-polygon edge of one original face `f` flanking one
+      // original vertex (the corner its two midpoints straddle); that (face, vertex) pair
+      // is its source. Copying an endpoint vertex's own color instead would make every
+      // edge collide with that vertex (see tests/colorIds).
       const rEdgeColor = new Map<string, GeomColor>();
       for (const f of dcel.faces) {
         let h = f.halfedge;

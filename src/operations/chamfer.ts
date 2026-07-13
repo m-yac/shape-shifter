@@ -21,22 +21,21 @@ function faceLoopIds(f: HEFace): number[] {
  * The point every face shrinks toward, one per face.
  *
  * Each original edge (p,q) becomes a hexagon `[p, A_p, A_q, q, B_q, B_p]`, where
- * `A_p = lerp(p, target_A, t)`. Since the hexagon must contain p, q and the two
- * inset corners of face A — all four of which lie in A's plane when the target is
- * A's centroid — a centroid-targeted hexagon can only be planar by accident. So
- * the target must leave the face plane.
+ * `A_p = lerp(p, target_A, t)`. The hexagon must contain p, q and the two inset corners of
+ * face A, all four of which lie in A's plane when the target is A's centroid, so a
+ * centroid-targeted hexagon can only be planar by accident: the target must leave the face
+ * plane.
  *
  * Writing the planarity condition out, the hexagon is planar exactly when
- * `det[q−p, target_A−p, target_B−p] = 0`, i.e. when p, q and the two targets are
- * coplanar — a condition on the targets alone, INDEPENDENT of t. That is precisely
- * the condition kis solves for when it places a pyramid apex per face such that the
- * Join quads `[p, apex_A, q, apex_B]` are planar. So the chamfer targets ARE the
- * join apexes, and reusing them makes every hexagon planar at every t with the
- * original vertices held fixed. (It also makes chamfer→Join geometrically identical
- * to joining directly, which the color rules already assumed.)
+ * `det[q−p, target_A−p, target_B−p] = 0`, i.e. when p, q and the two targets are coplanar,
+ * a condition on the targets alone, independent of t. That is the same condition kis solves
+ * when it places a pyramid apex per face such that the Join quads `[p, apex_A, q, apex_B]`
+ * are planar. So the chamfer targets are the join apexes, and reusing them makes every
+ * hexagon planar at every t with the original vertices held fixed. It also makes
+ * chamfer→Join geometrically identical to joining directly, which the color rules assume.
  *
- * For a non-canonical solid `computeJoinHeights` is a least-squares fit, so the
- * hexagons inherit its (small) residual rather than being exactly planar.
+ * For a non-canonical solid `computeJoinHeights` is a least-squares fit, so the hexagons
+ * inherit its (small) residual rather than being exactly planar.
  */
 function insetTargets(poly: Polyhedron): Map<number, Vector3> {
   const heights = computeJoinHeights(poly);
@@ -47,11 +46,11 @@ function insetTargets(poly: Polyhedron): Map<number, Vector3> {
 }
 
 /**
- * Chamfer ↔ Join, driven by dragging an edge midpoint sideways along a bordering
- * face. Like truncate/kis the gesture is global: dragging ONE edge chamfers EVERY
- * edge (the handle just sets the global inset). Each original face shrinks toward
- * its join apex (see `insetTargets`), each original edge is replaced by a hexagon
- * spanning the gap, and every original vertex is kept, fixed in place.
+ * Chamfer ↔ Join, driven by dragging an edge midpoint sideways along a bordering face.
+ * Like truncate/kis the gesture is global: dragging one edge chamfers every edge, and the
+ * handle only sets the global inset. Each original face shrinks toward its join apex (see
+ * `insetTargets`), each original edge is replaced by a hexagon spanning the gap, and every
+ * original vertex is kept, fixed in place.
  *
  *   t = 0 → coincident with the original (zero inset, hexagons collapsed).
  *   0 < t < 1 → the chamfered solid (n-gons + hexagons).
@@ -73,15 +72,15 @@ export function buildChamfer(
   const old = poly.colors;
   const V = dcel.vertices.length;
 
-  // ---- Index the inset ("new") vertices: one per (face, vertex) corner. -------
+  // ---- Index the new inset vertices: one per (face, vertex) corner. -----------
   const cornerIndex = new Map<string, number>(); // `${faceId}_${vId}` -> new index
   const cornerOf = (fid: number, vid: number) => cornerIndex.get(`${fid}_${vid}`)!;
   // Per inset vertex, cache its original vertex position and its face's inset target so
   // positions(t) is a cheap lerp.
-  // Chamfer is the exact DUAL of subdivide, so its rules are the dualized (vertex↔
-  // face) subdivide rules (see colorUtil.dualRule). An inset corner (a new vertex) ←
-  // dual(subdivide.newFace), from this vertex and face. (At the Join weld a face's
-  // insets collapse to its centre, which recolors to the join apex — see commit.)
+  // Chamfer is the dual of subdivide, so its rules are the dualized (vertex↔face) subdivide
+  // rules (see colorUtil.dualRule). An inset corner (a new vertex) ←
+  // dual(subdivide.newFace), from this vertex and face. At the Join weld a face's insets
+  // collapse to its centre, which recolors to the join apex; see commit.
   const C = config.colors.operations;
   const targets = insetTargets(poly);
   const insets: Array<{ index: number; v: Vector3; c: Vector3; color: GeomColor }> = [];
@@ -139,8 +138,8 @@ export function buildChamfer(
       q, cornerOf(B.id, q), cornerOf(B.id, p),
     ]);
     // The new hexagon replaces the original edge → dual(subdivide.newVertex), from the
-    // original edge (constant through the drag; the welded rhombus keeps it at the Join
-    // limit).
+    // original edge. Constant through the drag; the welded rhombus keeps it at the Join
+    // limit.
     const ec = combine(dualRule(C.subdivide.newVertex), { oldEdge: old.edge.get(edgeKey(p, q)) ?? BLACK });
     faceColor.push(ec);
     faceStart.push(ec);
@@ -156,9 +155,9 @@ export function buildChamfer(
     const vids = faceLoopIds(f);
     const loop = vids.map((vid) => cornerOf(f.id, vid));
     for (let i = 0; i < loop.length; i++) {
-      // Shrunk-face perimeter edges collapse when the face shrinks to its apex at
-      // the Join — the dual of subdivide's fan edges (which vanish at the Rectify) —
-      // so ← dual(subdivEdgeEdge), from the original edge it insets from and this face.
+      // Shrunk-face perimeter edges collapse when the face shrinks to its apex at the
+      // Join: the dual of subdivide's fan edges, which vanish at the Rectify. So ←
+      // dual(subdivEdgeEdge), from the original edge it insets from and this face.
       edgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]),
         combine(dualRule(C.subdivide.subdivEdgeEdge), {
           oldEdge: old.edge.get(edgeKey(vids[i], vids[(i + 1) % vids.length])) ?? BLACK,
@@ -166,11 +165,11 @@ export function buildChamfer(
         }));
     }
   }
-  // Connector edges (original vertex → its inset corners) SURVIVE the Join — each
-  // becomes a spoke to the collapsed face centre, exactly like a kis spoke (the dual
-  // of subdivide's central-polygon edges, which survive as the Rectify edges) — so ←
-  // dual(subdivFaceEdge), from the face the connector lies in and its original vertex.
-  // (This makes a chamfer→Join color-identical to joining directly.)
+  // Connector edges (original vertex → its inset corners) survive the Join: each becomes a
+  // spoke to the collapsed face centre, like a kis spoke — the dual of subdivide's
+  // central-polygon edges, which survive as the Rectify edges. So ← dual(subdivFaceEdge),
+  // from the face the connector lies in and its original vertex. This makes a chamfer→Join
+  // color-identical to joining directly.
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue;
     const p = he.origin.id;
@@ -214,10 +213,9 @@ export function buildChamfer(
     const mesh: Mesh = { vertices: positions(t), faces: previewFaces.map((f) => f.slice()) };
     const vertex = vertexColor.slice();
     if (weld) {
-      // At the Join each face's insets collapse to its apex, becoming the join
-      // apex vertex — which (like a kis apex, the dual) is the old FACE color, NOT the
-      // inset's old-vertex tint. Recolor them so a chamfer→Join matches joining
-      // directly (e.g. cube → rhombic dodecahedron identically).
+      // At the Join each face's insets collapse to its apex, becoming the join apex vertex,
+      // which (like a kis apex, its dual) takes the old face color rather than the inset's
+      // old-vertex tint. Recolor them so a chamfer→Join matches joining directly.
       for (const f of dcel.faces)
         for (const v of faceVertices(f)) vertex[cornerOf(f.id, v.id)] = old.face[f.id];
     }

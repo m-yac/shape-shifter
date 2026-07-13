@@ -17,23 +17,23 @@ import { SceneView } from "./sceneView";
  *
  *  Two flavors, both of the 3D shape only (no HTML text overlays):
  *    - WYSIWYG: the exact on-screen render (chunky low-res, bloom, dark backlight).
- *    - "light": the same camera, but square, high-res, no bloom and on white —
- *      a clean printable version using the config's `render.light` palette.
+ *    - light: the same camera, but square, high-res, no bloom and on white, using
+ *      the config's `render.light` palette. A clean printable version.
  * =============================================================================
  */
 
-// Map the unicode superscript digits used in vertex configurations back to plain
-// ASCII so filenames stay portable.
+// The unicode superscript digits used in vertex configurations, mapped back to
+// plain ASCII so filenames stay portable.
 const SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
 
-/** Asciify a display name for use in a filename: the figure notation uses a comma
- *  for the configuration dot, a caret for the unicode exponent, and "x" for "×"
- *  (e.g. "Truncated (2×(3.6²))" → "truncated_(2x(3,6^2))"). Then lower-case, turn
- *  slashes into hyphens, and runs of whitespace into underscores. */
+/** Asciify a display name for use in a filename: the figure notation's dot becomes
+ *  a comma, its unicode exponent a caret, and × an x, e.g. "Truncated (2×(3.6²))" →
+ *  "truncated_(2x(3,6^2))". Then lower-case, slashes to hyphens, whitespace runs to
+ *  underscores. */
 export function fileBase(name: string | null | undefined): string {
   let s = (name ?? "").trim();
-  // "3.6²" → "3,6^2": superscript runs become "^" + their plain digits; the
-  // configuration dots become commas. (Shape base names contain no periods.)
+  // Superscript runs become "^" + their plain digits, and configuration dots become
+  // commas. Shape base names contain no periods, so this is unambiguous.
   s = s.replace(new RegExp(`[${SUPERSCRIPTS}]+`, "g"), (run) =>
     "^" + [...run].map((c) => String(SUPERSCRIPTS.indexOf(c))).join(""),
   );
@@ -55,19 +55,19 @@ export function download(data: Blob | string, filename: string): void {
 }
 
 /**
- * Save the exact on-screen render. Reads the WebGL canvas directly, so the
- * renderer must be created with `preserveDrawingBuffer: true` for this to be
- * reliable regardless of when the click lands relative to the render loop.
+ * Save the exact on-screen render. Reads the WebGL canvas directly, so the renderer
+ * must be created with `preserveDrawingBuffer: true` — otherwise the read depends on
+ * when the click lands relative to the render loop.
  */
 export function saveWysiwygPng(renderer: WebGLRenderer, baseName: string): void {
   download(renderer.domElement.toDataURL("image/png"), `${baseName}.png`);
 }
 
 /**
- * Save the "light" version: same camera view, but square, high resolution, no
- * bloom (renders straight to a render target, bypassing the bloom composer) and
- * on a white background, using the light palette. Restores every temporary
- * override before returning, so the on-screen frame is untouched.
+ * Save the light version: same camera view, but square, high resolution, no bloom
+ * (rendered straight to a render target, bypassing the bloom composer) and on a
+ * white background with the light palette. Every temporary override is restored
+ * before returning, so the on-screen frame is untouched.
  */
 export function saveLightPng(
   renderer: WebGLRenderer,
@@ -78,8 +78,8 @@ export function saveLightPng(
   baseName: string,
 ): void {
   const res = config.render.light.resolution;
-  // sRGB texture so the readback is already gamma-encoded (we skip the composer's
-  // OutputPass, which would otherwise do that conversion).
+  // sRGB texture so the readback is already gamma-encoded: this path skips the
+  // composer's OutputPass, which is what would otherwise do that conversion.
   const target = new WebGLRenderTarget(res, res, { samples: 4 });
   target.texture.colorSpace = SRGBColorSpace;
 
@@ -96,7 +96,7 @@ export function saveLightPng(
   const buffer = new Uint8Array(res * res * 4);
   renderer.readRenderTargetPixels(target, 0, 0, res, res, buffer);
 
-  // Restore everything before doing the (slower) pixel copy + encode.
+  // Restore everything before the slower pixel copy + encode.
   renderer.setRenderTarget(oldTarget);
   camera.aspect = oldAspect;
   camera.updateProjectionMatrix();

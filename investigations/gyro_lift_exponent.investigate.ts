@@ -21,20 +21,20 @@ function relax(poly: Polyhedron): Mesh {
 }
 const canon = (p: Polyhedron) => new Polyhedron(relax(p));
 
-// Two ways to reach the JOIN that gyro is applied to:
+// Two ways to reach the join that gyro is applied to:
 //  • kisRelaxed — weld to the full join, then canonicalize. Every face becomes a
-//    congruent regular Catalan face with a uniform dihedral, so a single per-shape
-//    lift exponent is optimal. This is what the app shows AFTER a release + relax.
+//    congruent regular Catalan face with a uniform dihedral, so a single per-shape lift
+//    exponent is optimal. This is what the app shows after a release + relax.
 //  • kisRaw — the full join straight out of `buildKis`, un-relaxed. This is the geometry
-//    a LIVE drag actually carries into gyro, and the only path that exercises the
-//    per-face `computeJoinHeights` in kis.ts. On a non-canonical base its faces are
-//    (near-)planar quads but of VARYING shape and dihedral, so a single exponent is no
-//    longer optimal — that is what the per-q analysis below is for.
+//    a live drag carries into gyro, and the only path that exercises the per-face
+//    `computeJoinHeights` in kis.ts. On a non-canonical base its faces are near-planar
+//    quads of varying shape and dihedral, so a single exponent is no longer optimal —
+//    hence the per-q analysis below.
 const kisRelaxed = (p: Polyhedron) => canon(new Polyhedron(buildKis(p, 0, null).commit(1, true).mesh));
 const kisRaw = (p: Polyhedron) => new Polyhedron(buildKis(p, 0, null).commit(1, true).mesh);
 const rectify = (p: Polyhedron) => canon(new Polyhedron(buildTruncate(p, 0, null).commit(1, true).mesh));
 
-// Relaxed joins: uniform faces, one dihedral each. The original fit was made here.
+// Relaxed joins: uniform faces, one dihedral each. The `pFit` line is fit here.
 const relaxedCases: Record<string, () => Polyhedron> = {
   "join(tetra)=cube": () => kisRelaxed(seed("tetrahedron")),
   "join(cube)=rhombicDodeca": () => kisRelaxed(seed("cube")),
@@ -44,10 +44,10 @@ const relaxedCases: Record<string, () => Polyhedron> = {
   "join(cuboctahedron)": () => kisRelaxed(rectify(seed("cube"))),
 };
 
-// Raw (un-relaxed) joins — the drag-time geometry. The platonic ones stay ~canonical
-// (their raw join IS the Catalan) so they double as a check that the raw path matches
-// the relaxed numbers; the mixed-face ones (cuboctahedron, icosidodecahedron, a Catalan
-// re-joined) are genuinely non-canonical and are where a new heuristic must earn its keep.
+// Raw (un-relaxed) joins: the drag-time geometry. The Platonic ones stay ~canonical —
+// their raw join is already the Catalan — so they double as a check that the raw path
+// matches the relaxed numbers. The mixed-face ones (cuboctahedron, icosidodecahedron, a
+// re-joined Catalan) are genuinely non-canonical, and are where a heuristic earns its keep.
 const rawCases: Record<string, () => Polyhedron> = {
   "join(tetra)": () => kisRaw(seed("tetrahedron")),
   "join(cube)": () => kisRaw(seed("cube")),
@@ -57,8 +57,8 @@ const rawCases: Record<string, () => Polyhedron> = {
   "join(rhombicDodeca)": () => kisRaw(kisRelaxed(seed("cube"))),
 };
 
-/** Newell normal + centroid best-fit plane; return max |dist| of face verts, in units
- *  of the face's mean edge length (scale-free). */
+/** Max |dist| of a face's verts from their Newell-normal + centroid best-fit plane, in
+ *  units of the face's mean edge length (scale-free). */
 function planarity(verts: Vector3[], face: number[]): number {
   const c = new Vector3();
   for (const i of face) c.add(verts[i]);
@@ -90,7 +90,7 @@ function analyze(name: string, J: Polyhedron): void {
   }>;
   const V = J.vertices.length;
 
-  // Positions for a GLOBAL (slide fraction t, lift fraction lam) applied to every q.
+  // Positions for a global (slide fraction t, lift fraction lam) applied to every q.
   const positionsAt = (t: number, lam: number): Vector3[] => {
     const out: Vector3[] = [];
     for (let i = 0; i < V; i++) out[i] = J.vertices[i].clone();
@@ -99,7 +99,7 @@ function analyze(name: string, J: Polyhedron): void {
     }
     return out;
   };
-  // Positions for a PER-Q lift fraction (used by the per-q schedule analysis).
+  // Positions for a per-q lift fraction (used by the per-q schedule analysis).
   const positionsSched = (t: number, lamOf: (qIndex: number) => number): Vector3[] => {
     const out: Vector3[] = [];
     for (let i = 0; i < V; i++) out[i] = J.vertices[i].clone();
@@ -127,7 +127,7 @@ function analyze(name: string, J: Polyhedron): void {
   }
   const dihedral = dsum / dcnt;
 
-  // Worst-over-t error for the GLOBAL lam = t^p, and the best single exponent p.
+  // Worst-over-t error for a global lam = t^p, and the best single exponent p.
   const errForExp = (p: number): number => {
     let m = 0;
     for (let t = 0.05; t < 1; t += 0.05) m = Math.max(m, maxPlan(t, Math.pow(t, p)));
@@ -138,7 +138,7 @@ function analyze(name: string, J: Polyhedron): void {
     const e = errForExp(p);
     if (e < bestPErr) { bestPErr = e; bestP = p; }
   }
-  // Actual error using the real (per-q) schedule now baked into plan.positions.
+  // Actual error under the per-q schedule baked into plan.positions.
   let realErr = 0;
   for (let t = 0.05; t < 1; t += 0.05) {
     const P = plan.positions(t);
@@ -153,11 +153,11 @@ function analyze(name: string, J: Polyhedron): void {
   );
 
   // ── Per-q lift-schedule analysis ────────────────────────────────────────────
-  // Each split gyro face (len>3) is owned by ONE original join face and carries that
+  // Each split gyro face (len>3) is owned by one original join face and carries that
   // face's two q's, so its planarity during the drag couples both q's lift schedules.
-  // Optimise a per-q exponent by coordinate descent (seeded at the current heuristic),
-  // then compare the optimum to `liftExponent(dihedral)` per q — this is what reveals
-  // whether the raw, non-canonical regime needs a different fit from the relaxed one.
+  // Optimise a per-q exponent by coordinate descent, seeded at the heuristic, then
+  // compare the optimum to `liftExponent(dihedral)` per q. This is what shows whether
+  // the raw, non-canonical regime needs a different fit from the relaxed one.
   const bigFaces = faces.filter((f) => f.length > 3);
   const facesOfQ = new Map<number, number[]>(); // q index -> indices into bigFaces
   for (let fi = 0; fi < bigFaces.length; fi++) {
@@ -166,7 +166,7 @@ function analyze(name: string, J: Polyhedron): void {
   const tGrid: number[] = [];
   for (let t = 0.05; t < 1; t += 0.05) tGrid.push(t);
 
-  const pMap = new Map<number, number>(qs.map((q) => [q.index, q.liftExp])); // seed = current heuristic
+  const pMap = new Map<number, number>(qs.map((q) => [q.index, q.liftExp])); // seed: the heuristic
   const worstOf = (faceIdxs: number[]): number => {
     let m = 0;
     for (const t of tGrid) {
@@ -176,7 +176,7 @@ function analyze(name: string, J: Polyhedron): void {
     return m;
   };
   const allIdx = bigFaces.map((_, i) => i);
-  const worstCurrent = worstOf(allIdx); // should track REAL positions() err above
+  const worstCurrent = worstOf(allIdx); // tracks the real positions() err above
 
   for (let round = 0; round < 5; round++) {
     for (const q of qs) {
@@ -202,8 +202,8 @@ function analyze(name: string, J: Polyhedron): void {
   const a = haveFit ? (nq * sxy - sx * sy) / denom : 0;
   const b = haveFit ? (sy - a * sx) / nq : sy / nq;
 
-  // Error if we drove every q by the freshly-fit line instead of its own optimum —
-  // i.e. how much of the per-q gain a single new linear heuristic recovers.
+  // Error from driving every q by the freshly-fit line instead of its own optimum: how
+  // much of the per-q gain a single linear heuristic recovers.
   const save = new Map(pMap);
   for (const q of qs) pMap.set(q.index, Math.max(0.3, Math.min(1.6, a * q.dihedral + b)));
   const worstFit = worstOf(allIdx);
@@ -216,15 +216,14 @@ function analyze(name: string, J: Polyhedron): void {
   );
 
   // ── Endpoint (t=1) target analysis ──────────────────────────────────────────
-  // The bestErr column below climbs to ~0.05 at t→1 on non-canonical joins, i.e. the
-  // FINAL gyro pentagon is itself non-planar — no lift SCHEDULE (any exponent) can flatten
-  // a non-planar endpoint. The only lever left is the q TARGET. Here we hold the slide at
-  // its baked value and free each q's lift MAGNITUDE (scale on liftFull), then optimise it
-  // per q to flatten the t=1 pentagons — the gyro analog of kis's computeJoinHeights. If
-  // this drives the endpoint error to ~0 the new heuristic is a per-q lift magnitude; if a
-  // floor remains, the slide (FACE_SLIDE) is also off on irregular faces.
-  // q target = start + slideScale·slideFull + liftScale·liftFull. Scales default to 1
-  // (the current baked target). Free them per q to flatten the t=1 pentagons.
+  // The bestErr column below climbs to ~0.05 at t→1 on non-canonical joins: the final
+  // gyro pentagon is itself non-planar, and no lift schedule — no exponent — can flatten
+  // a non-planar endpoint. The only remaining lever is the q target,
+  //     q = start + slideScale·slideFull + liftScale·liftFull
+  // whose scales are both 1 at the baked target. Pass 1 holds the slide and frees each
+  // q's lift magnitude, the gyro analog of kis's computeJoinHeights: if that drives the
+  // endpoint error to ~0, a per-q lift magnitude suffices; a remaining floor means the
+  // slide is also off on irregular faces, which pass 2 tests.
   const endpoint = (slideMap: Map<number, number>, liftMap: Map<number, number>): Vector3[] => {
     const out: Vector3[] = [];
     for (let i = 0; i < V; i++) out[i] = J.vertices[i].clone();
@@ -244,7 +243,7 @@ function analyze(name: string, J: Polyhedron): void {
   const one = () => new Map<number, number>(qs.map((q) => [q.index, 1]));
   const slideM = one(), liftM = one();
   const endCurrent = worstEndpoint(allIdx, slideM, liftM);
-  // Pass 1: free only the lift magnitude (the single knob gyroLiftFactor exposes today).
+  // Pass 1: free only the lift magnitude (the single knob gyroLiftFactor exposes).
   for (let round = 0; round < 6; round++) {
     for (const q of qs) {
       const owned = facesOfQ.get(q.index) ?? [];
@@ -265,8 +264,8 @@ function analyze(name: string, J: Polyhedron): void {
     return `${lo.toFixed(2)}..${hi.toFixed(2)} mean ${(sum / m.size).toFixed(2)}`;
   };
   const liftRange = range(liftM);
-  // Pass 2: additionally free the slide magnitude (does re-tuning BOTH baked knobs suffice,
-  // or is the target DIRECTION itself wrong on irregular faces?).
+  // Pass 2: also free the slide magnitude — does re-tuning both baked knobs suffice, or
+  // is the target direction itself wrong on irregular faces?
   for (let round = 0; round < 8; round++) {
     for (const q of qs) {
       const owned = facesOfQ.get(q.index) ?? [];
@@ -288,7 +287,7 @@ function analyze(name: string, J: Polyhedron): void {
     `free slide+lift err=${endBothOpt.toFixed(4)} (slide ${range(slideM)})`,
   );
 
-  // Per-dihedral-bucket table of the per-q optimum vs the current heuristic.
+  // Per-dihedral-bucket table of the per-q optimum vs the heuristic.
   const buckets = new Map<string, { dih: number; opt: number[]; heur: number }>();
   for (const q of qs) {
     const key = dg(q.dihedral);
@@ -304,9 +303,9 @@ function analyze(name: string, J: Polyhedron): void {
     }
   }
 
-  // For each GLOBAL slide fraction t, the lift fraction lam minimizing the worst face
-  // non-planarity — the terminal value (t=0.9) also checks the lift MAGNITUDE (lam≈1 ⇒
-  // the baked liftFull lands the face flat at t=1).
+  // For each global slide fraction t, the lift fraction lam minimizing the worst face
+  // non-planarity. The terminal value (t=0.9) also checks the lift magnitude: lam≈1 means
+  // the baked liftFull lands the face flat at t=1.
   console.log(`=== ${name} ===`);
   console.log("   t   |  bestLam  bestErr  |  linErr(lam=t)  |  sqrtErr(lam=sqrt t)");
   const ts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];

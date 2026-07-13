@@ -37,11 +37,11 @@ const cases: Array<[string, () => Polyhedron]> = [
 /**
  * Part 1. The equilibrium law behind the "faces won't planarize" warning.
  *
- * In the regularize phase, `regularizeFacesStep` pulls vertices off their face
- * planes and the `planarSubsteps` calls to `planarizeStep` pull them back. They
- * settle at an equilibrium, and its residual out-of-plane error is LINEAR in the
- * regularity step size. So the step size alone decides whether a given shape ever
- * reads as planar (`planarity.tolerance`) — no amount of extra iteration helps.
+ * In the regularize phase, `regularizeFacesStep` pulls vertices off their face planes
+ * and the `planarSubsteps` calls to `planarizeStep` pull them back. They settle at an
+ * equilibrium whose residual out-of-plane error is linear in the regularity step size.
+ * So the step size alone decides whether a shape ever reads as planar (below
+ * `planarity.tolerance`); no amount of extra iteration helps.
  */
 it("planarity residual is proportional to the regularize step", () => {
   console.log(`planarity tolerance = ${P.tolerance}`);
@@ -68,11 +68,10 @@ it("planarity residual is proportional to the regularize step", () => {
 });
 
 /**
- * Part 2. The two ways the app drives the solver: a fresh commit relaxes on its
- * own (`sustain = false`, decaying damping ramp), whereas a HELD OPTIONS button
- * pins the step at `holdDamping` and never lets the solver stop. Both must reach
- * planar for the shapes above; the held run is expected to report done=false,
- * since by design it only stops when the button is released.
+ * Part 2. The two ways the app drives the solver: a fresh commit relaxes on its own
+ * (`sustain = false`, decaying damping ramp), whereas a held OPTIONS button pins the
+ * step at `holdDamping` and never lets the solver stop. Both reach planar for the
+ * shapes above. The held run reports done=false, since it only stops on release.
  */
 function run(p: Polyhedron, strategy: Strategy, sustain: boolean, frames = 2000) {
   const topo = extractTopology(p);

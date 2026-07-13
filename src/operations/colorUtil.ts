@@ -2,38 +2,37 @@ import { Color } from "three";
 import { type GeomColor, paletteRGB } from "../geometry/colors";
 
 /**
- * Shared color-propagation helpers for the Conway operations. Each operation reads
- * the OLD `ColorSet` and assigns geometric-color TRIPLES to the new elements per
- * the rules in `config.colors.operations` (see geometry/colors.ts). A new element
- * either INHERITS an old element's triple directly (e.g. a kis apex ← its face's
- * color) or is a COMBINATION of several old triples, evaluated by `combine`.
+ * Shared color-propagation helpers for the operations. Each operation reads the old
+ * `ColorSet` and assigns geometric colors to the new elements per the rules in
+ * `config.colors.operations` (see geometry/colors.ts). A new element either inherits an old
+ * element's color directly (a kis apex takes its face's color) or is a combination of
+ * several old ones, evaluated by `combine`.
  */
 
-/** The old-element triples a rule's tokens resolve against, for one new element.
- *  The caller supplies the specific neighbor for each token (incl. any "nth" one). */
+/** The old-element colors a rule's tokens resolve against, for one new element. The caller
+ *  supplies the specific neighbor for each token, including any "nth" one. */
 export type ColorSources = Record<string, GeomColor | undefined>;
 
-/** A combination rule (as stored in config.colors.operations): a map from each old
- *  token to the coefficient its triple is weighted by. */
+/** A combination rule, as stored in config.colors.operations: a map from each old token to
+ *  the coefficient its color is weighted by. */
 export type ColorRule = Readonly<Record<string, number>>;
 
-/** The only tokens a combination rule (in config.colors.operations) may contain.
- *  Everything that reads the rules — `combine`, `dualRule` — depends on this exact
- *  set, so both validate against it and throw a descriptive error on anything else. */
+/** The only tokens a combination rule (in config.colors.operations) may contain. `combine`
+ *  and `dualRule` both depend on this exact set, so both validate against it and throw a
+ *  descriptive error on anything else. */
 export const COLOR_TOKENS = ["oldVertex", "oldFace", "oldEdge"] as const;
 const TOKEN_SET = new Set<string>(COLOR_TOKENS);
 
 /**
- * The DUAL of a combination rule: the same tokens (with their coefficients) but the
+ * The dual of a combination rule: the same tokens and coefficients, but with the
  * vertex/face roles exchanged (`oldVertex`↔`oldFace`; `oldEdge` maps to itself). Kis /
- * join / gyro / chamfer are the exact polyhedral duals of truncate / rectify / snub /
- * subdivide, so their color rules are NOT stored in config — each is derived here
- * from its primal. Under duality a new element's role flips too (a vertex↔a face,
- * an edge stays an edge), so the caller pairs each dual element with the PRIMAL
- * element it mirrors and dualizes that rule: e.g. a kis apex (a new vertex) reads
- * `dualRule(truncate.newFace)`, and a kis triangle (a new face) reads
- * `dualRule(truncate.newVertex)`. The caller likewise supplies sources with the
- * roles already swapped (an `oldFace` source where the primal used `oldVertex`).
+ * join / gyro / chamfer are the polyhedral duals of truncate / rectify / snub / subdivide,
+ * so their color rules are not stored in config; each is derived here from its primal.
+ * Under duality a new element's role flips too (a vertex↔a face, an edge stays an edge), so
+ * the caller pairs each dual element with the primal element it mirrors and dualizes that
+ * rule: a kis apex (a new vertex) reads `dualRule(truncate.newFace)`, and a kis triangle (a
+ * new face) reads `dualRule(truncate.newVertex)`. The caller likewise supplies sources with
+ * the roles already swapped (an `oldFace` source where the primal used `oldVertex`).
  */
 export function dualRule(rule: ColorRule): ColorRule {
   const out: Record<string, number> = {};
@@ -51,15 +50,15 @@ export function dualRule(rule: ColorRule): ColorRule {
 }
 
 /**
- * Evaluate a combination rule against its sources: the weighted sum of each token's
- * triple by that token's coefficient. Returns the resulting geometric-color triple.
+ * Evaluate a combination rule against its sources: the weighted sum of each token's color
+ * by that token's coefficient.
  *
- * STRICT on form: the rule may only contain `COLOR_TOKENS`, and the caller MUST
- * supply a source for every token the rule uses. A rule token with no matching
- * source key throws (rather than silently contributing zero) — that mismatch means
- * a call site and its config rule have diverged (e.g. a rule gained a token the
- * caller doesn't provide), which would otherwise drop part of the color unnoticed.
- * `label` (an operation.rule name) is included in the message to locate the culprit.
+ * Strict on form: the rule may only contain `COLOR_TOKENS`, and the caller has to supply a
+ * source for every token the rule uses. A rule token with no matching source key throws
+ * rather than silently contributing zero, since that mismatch means a call site and its
+ * config rule have diverged (a rule gained a token the caller doesn't provide), which would
+ * otherwise drop part of the color unnoticed. `label` (an operation.rule name) is included
+ * in the message to locate the culprit.
  */
 export function combine(rule: ColorRule, src: ColorSources, label?: string): GeomColor {
   const where = label ? ` for '${label}'` : "";
@@ -78,7 +77,7 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
           `${JSON.stringify(rule)}). Supply this token at the call site, or update the rule.`,
       );
     }
-    // ID vectors are variable length (a one-hot is length 14; a `[0,0,0]` fallback is
+    // Id vectors are variable length (a one-hot is length 14; a `[0,0,0]` fallback is
     // shorter). Accumulate component-wise over the longest, treating missing entries as 0.
     const c = src[tok] ?? [];
     for (let i = 0; i < c.length; i++) out[i] = (out[i] ?? 0) + c[i] * coeff;
@@ -87,12 +86,12 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
 }
 
 /**
- * Two-segment per-face color for an "intermediate" drag (truncate / kis / subdivide):
- * the solid reads as the ORIGINAL solid at t=0, its named intermediate form (the
- * truncation / kis / subdivision) at t=0.5, and the welded Rectify / Join at t=1. So
- * each face lerps `orig`→`mid` across [0, 0.5] then `mid`→`end` across [0.5, 1]. When
- * `weld` is set (the drag has latched the Rectify/Join max) the `end` color is shown
- * exactly — matching the committed weld colors so releasing is seamless.
+ * Two-segment per-face color for an intermediate drag (truncate / kis / subdivide): the
+ * solid reads as the original at t=0, as its named intermediate form (the truncation / kis
+ * / subdivision) at t=0.5, and as the welded Rectify / Join at t=1. So each face lerps
+ * `orig`→`mid` across [0, 0.5] then `mid`→`end` across [0.5, 1]. When `weld` is set (the
+ * drag has latched the Rectify/Join max) the `end` color is shown exactly, matching the
+ * committed weld colors so releasing doesn't jump.
  */
 export function stagedFaceColors(
   orig: GeomColor[],

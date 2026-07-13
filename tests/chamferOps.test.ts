@@ -53,8 +53,8 @@ describe("chamfer", () => {
 });
 
 // A chamfer whose hexagons bow out of plane self-intersects visibly around small
-// faces (the truncated dodecahedron's triangles used to blow their hexagons up by
-// several edge lengths). Both invariants below break together when that regresses.
+// faces. The two invariants that keep it flat: the new hexagons stay planar, and the
+// original vertices don't move at all.
 describe("chamfer stays planar on solids with mixed face sizes", () => {
   const cases = [
     "Cube", "Truncated dodecahedron", "Truncated cube",
@@ -69,8 +69,8 @@ describe("chamfer stays planar on solids with mixed face sizes", () => {
       const V = poly.dcel.vertices.length;
 
       // Scale-free tolerance: a fraction of the mean original edge length. 5% is the
-      // worst residual `computeJoinHeights` leaves on these (the truncated
-      // icosahedron); the bug this guards against bowed hexagons by >500%.
+      // worst residual `computeJoinHeights` leaves on these solids (the truncated
+      // icosahedron); a bowing hexagon overshoots it by orders of magnitude.
       let sum = 0, count = 0;
       for (const he of poly.dcel.halfedges) {
         if (!he.twin || he.id >= he.twin.id) continue;
@@ -111,10 +111,10 @@ function concavity(pts: Vector3[]): number {
   return worst;
 }
 
-// The dual of the chamfer bug: raising edge MIDPOINTS along the edge normal left the
-// triakis icosahedron's degree-10 vertex figures 35° concave and 11% non-planar.
-// Placing the new vertex at truncate's collapse point instead fixes both — and the
-// drag must still push those vertices outward, which the rescale preserves.
+// The dual of the chamfer invariant. Subdivide puts each new vertex at truncate's
+// collapse point, not at the edge midpoint raised along the edge normal: the midpoint
+// leaves the triakis icosahedron's degree-10 vertex figures concave and non-planar.
+// The gesture must still push those vertices outward, which the rescale preserves.
 describe("subdivide stays planar and convex", () => {
   const cases = [
     "Cube", "Triakis icosahedron", "Triakis octahedron",
@@ -139,10 +139,10 @@ describe("subdivide stays planar and convex", () => {
         }
       }
 
-      // A central polygon's vertices lie ON the original face's edges, so it is as
-      // planar as that face was — no worse. (A couple of database solids have very
-      // slightly non-planar faces, which is why this is relative, not absolute.
-      // Vertex figures separately inherit the collapse solve's small residual.)
+      // A central polygon's vertices lie on the original face's edges, so it is
+      // exactly as planar as that face was. A few database solids have slightly
+      // non-planar faces, hence the relative rather than absolute bound; vertex
+      // figures separately inherit the collapse solve's small residual.
       const outOfPlane = (pts: Vector3[]) => {
         const c = faceCentroidOf(pts, pts.map((_, i) => i));
         const n = newellNormal(pts);
@@ -173,9 +173,9 @@ describe("subdivide stays planar and convex", () => {
   }
 });
 
-// dragController welds only on `t >= 1` exactly, so snap MUST be able to return it.
-// (An earlier draft inverted the drag's rescale numerically and always landed a hair
-// short, which silently disabled the Rectify weld on every solid.)
+// dragController welds only on `t >= 1` exactly, so snap has to be able to return it.
+// A snap that lands a hair short — say from inverting the drag's rescale numerically
+// — silently disables the Rectify weld on every solid.
 describe("subdivide's drag can always reach the weld", () => {
   it("dragging past the far end yields exactly t=1, on every named solid", () => {
     const short: string[] = [];

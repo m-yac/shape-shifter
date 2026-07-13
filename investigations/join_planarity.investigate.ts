@@ -10,23 +10,24 @@ import { extractTopology } from "../src/solver/topology";
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
- * Kis / Join planarity investigation — the DUAL of truncate_planarity.
+ * Kis / join planarity — the dual of truncate_planarity.
  *
- * Kis raises a pyramid of height h_f on every face; at Join two pyramid
- * triangles straddling a shared edge merge into one quad `[P1, apex_f, P2,
- * apex_g]`. On a canonical solid a single symmetric join height (h_f = h_g,
- * the max over a face's edges — the old kis.ts behaviour) welds every quad flat.
- * On a solid with non-coplanar structure (e.g. the triakis tetrahedron, i.e.
- * kis(tetra) relaxed) those quads come out badly non-planar — the exact dual of
- * truncate's non-planar vertex figures.
+ * Kis raises a pyramid of height h_f on every face; at join, two pyramid triangles
+ * straddling a shared edge merge into one quad `[P1, apex_f, P2, apex_g]`. On a
+ * canonical solid, a single symmetric join height (h_f = h_g, the max over a face's
+ * edges) welds every quad flat. On a solid with non-coplanar structure — the triakis
+ * tetrahedron, i.e. relaxed kis(tetra) — those quads come out badly non-planar, the
+ * dual of truncate's non-planar vertex figures.
  *
- * The quad is planar iff P1, P2, apex_f, apex_g are coplanar, i.e. the triple
- * product R(h_f,h_g) = (apex_f−P1)·((P2−P1)×(apex_g−P1)) = 0. This is bilinear
- * in the two apex heights. Dual to truncate (one radial-depth δ per vertex,
- * least-squares over edges), we solve one height h_f per FACE by least squares
- * over the join quads (`computeJoinHeights`). This script measures the residual
- * non-planarity of the welded Join quads under (a) the symmetric max height and
- * (b) the solved per-face heights, and confirms the triakis tetra is exact.
+ * The quad is planar iff P1, P2, apex_f, apex_g are coplanar, i.e. the triple product
+ * R(h_f,h_g) = (apex_f−P1)·((P2−P1)×(apex_g−P1)) = 0, which is bilinear in the two apex
+ * heights. Dual to truncate (one radial depth δ per vertex, least squares over edges),
+ * `computeJoinHeights` solves one height h_f per face by least squares over the join
+ * quads.
+ *
+ * Result: this measures the residual non-planarity of the welded join quads under (a)
+ * the symmetric max height and (b) the solved per-face heights, and confirms the solved
+ * heights are exact on the triakis tetrahedron.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -70,9 +71,9 @@ function planarity(verts: Vector3[], face: number[]): number {
 }
 
 /*
- * A self-contained Join, mirroring src/operations/kis.ts: every face is kissed;
- * each face f raises an apex c_f + h_f·n_f, and adjacent apexes weld with the
- * shared base edge into a quad `[P1, apex_f, P2, apex_g]`.
+ * A self-contained join, mirroring src/operations/kis.ts: every face is kissed, each
+ * face f raising an apex c_f + h_f·n_f, and adjacent apexes weld with the shared base
+ * edge into a quad `[P1, apex_f, P2, apex_g]`.
  */
 function buildJoin(J: Polyhedron) {
   const dcel = J.dcel;
@@ -104,7 +105,7 @@ function buildJoin(J: Polyhedron) {
   return { cen, nrm, quads, positions };
 }
 
-// symmetric per-face height: max join height over its edges (old kis.ts).
+// symmetric per-face height: the max join height over its edges
 function symmetricHeights(J: Polyhedron): Map<number, number> {
   const B = buildJoin(J);
   const h = new Map<number, number>();

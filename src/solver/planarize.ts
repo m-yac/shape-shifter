@@ -3,10 +3,10 @@ import { type Mesh } from "../geometry/HalfEdge";
 import { faceCentroidOf, newellNormal } from "../geometry/polyhedron";
 
 /**
- * One planarization iteration: pull each face's vertices toward that face's
- * best-fit plane (centroid + Newell normal). A vertex shared by several faces
- * receives the average of their corrections. Returns the largest out-of-plane
- * distance found this pass, RELATIVE to `radius` (so the tolerance is scale-free).
+ * One planarization iteration: pull each face's vertices toward that face's best-fit
+ * plane (centroid + Newell normal). A vertex shared by several faces receives the
+ * average of their corrections. Returns the largest out-of-plane distance found this
+ * pass, relative to `radius`, so the tolerance is scale-free.
  */
 export function planarizeStep(
   mesh: Mesh,

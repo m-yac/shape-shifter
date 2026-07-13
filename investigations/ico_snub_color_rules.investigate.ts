@@ -19,21 +19,21 @@ import { buildChamfer } from "../src/operations/chamfer";
 import { config } from "../src/config";
 
 /**
- * Can the `snub` color rules be chosen so that an icosahedral-symmetry solid built out
- * of the tetrahedron (tetra → rectify → octahedron → snub → icosahedron) gets EXACTLY
- * the swatches it would get if the icosahedron were an atomic seed whose faces all had
- * ID [1,0,0], vertices [0,1,0] and edges [0,0,1]?
+ * Can the `snub` color rules be chosen so that an icosahedral-symmetry solid built from
+ * the tetrahedron (tetra → rectify → octahedron → snub → icosahedron) gets exactly the
+ * swatches it would get if the icosahedron were an atomic seed whose faces all had ID
+ * [1,0,0], vertices [0,1,0] and edges [0,0,1]?
  *
- * The whole swatch lookup only ever sees the COLLAPSED 3-vector (face, vert, edge)
- * provenance triple (geometry/colors.ts `collapse`), and every operation rule is a
- * linear combination, so this investigation works directly in that 3-space: the
- * tetrahedron starts as face=[1,0,0] / vert=[0,1,0] / edge=[0,0,1] and every derived
- * color is exactly the collapse of the real 14-D ID.
+ * The swatch lookup only ever sees the collapsed 3-vector (face, vert, edge) provenance
+ * triple (geometry/colors.ts `collapse`), and every operation rule is a linear
+ * combination, so this works directly in that 3-space: the tetrahedron starts as
+ * face=[1,0,0] / vert=[0,1,0] / edge=[0,0,1] and every derived color is the collapse of
+ * the real 14-D ID.
  *
  * ACTUAL   = colors from the real operations (config.colors.operations, with `snub`
  *            swapped to the candidate) resolved through the icosahedral scheme whose
- *            group triples are DERIVED from those same rules (as geometry/colors.ts does).
- * IDEAL    = the same operation chain run on the same mesh with the one-hot icosahedron
+ *            group triples are derived from those same rules, as geometry/colors.ts does.
+ * IDEAL    = the same operation chain on the same mesh with the one-hot icosahedron
  *            colors, resolved through a scheme whose groups are just those one-hots.
  * A candidate passes when every element of every reachable shape agrees.
  */
@@ -73,17 +73,17 @@ function derive(rule: Rule, src: Record<string, Triple[]>): Triple[] {
 }
 
 /**
- * The synthesized swatch families. `tint` is geometry/colors.ts's existing one (0.75 base
- * + 0.25 of another group, or of an equal pair of the two others). `extras` lets us ask
- * what a WIDER palette would buy:
+ * The synthesized swatch families. `tint` is geometry/colors.ts's own (0.75 base + 0.25
+ * of another group, or of an equal pair of the two others). `extras` asks what a wider
+ * palette would buy:
  *   tint2  — the same shape at 2/3 : 1/3 instead of 3/4 : 1/4.
  *   avg3   — an equal 1/3 : 1/3 : 1/3 mix of all three groups.
- * Both are added at the LOWEST precedence, so they can only claim keys nothing else wants.
+ * Both sit at the lowest precedence, so they only claim keys nothing else wants.
  */
 type Extras = { tint2?: boolean; tint4?: boolean; avg3?: boolean };
 
-/** The augmented (swatch, triples, tier) list — the single source both the lookup and the
- *  stolen-key check are built from. Lower tier = higher precedence. */
+/** The augmented (swatch, triples, tier) list, which both the lookup and the stolen-key
+ *  check are built from. Lower tier = higher precedence. */
 function augment(groups: Record<string, Group>, extras: Extras = {}): Array<Group & { tier: number }> {
   const keys = Object.keys(groups);
   const aug: Array<Group & { tier: number }> = keys.map((k) => ({ ...groups[k], tier: 0 }));
@@ -136,7 +136,7 @@ function augment(groups: Record<string, Group>, extras: Extras = {}): Array<Grou
   return aug;
 }
 
-/** The augmented lookup (key → swatch), exactly as geometry/colors.ts builds it. */
+/** The augmented lookup (key → swatch), as geometry/colors.ts builds it. */
 function buildLookup(groups: Record<string, Group>, extras: Extras = {}): Map<string, string> {
   const aug = augment(groups, extras);
   const map = new Map<string, string>();
@@ -149,7 +149,7 @@ function buildLookup(groups: Record<string, Group>, extras: Extras = {}): Map<st
 
 const swatchOf = (lookup: Map<string, string>, c: Triple) => lookup.get(key(c)) ?? "white";
 
-// The one-hot ICOSAHEDRON reference scheme: what the lookup would be if the icosahedron
+// The one-hot icosahedron reference scheme: the lookup as it would be if the icosahedron
 // were an atomic seed (faces [1,0,0], vertices [0,1,0], edges [0,0,1]).
 const F1: Triple = [1, 0, 0], V1: Triple = [0, 1, 0], E1: Triple = [0, 0, 1];
 const ONE_HOT_GROUPS: Record<string, Group> = {
@@ -180,7 +180,7 @@ function icoGroups(snubRules: Record<string, Rule>) {
 }
 
 // ---------------------------------------------------------------------------
-// Shapes: build everything with the REAL operations, in collapsed-triple color space.
+// Shapes: build everything with the real operations, in collapsed-triple color space.
 // ---------------------------------------------------------------------------
 
 const wrap = (r: { mesh: Mesh; colors: ColorSet }) => new Polyhedron(r.mesh, r.colors);
@@ -221,7 +221,7 @@ function starts(g: ReturnType<typeof icoGroups>): Start[] {
     ideal: uniformColors(ico.mesh, V1, E1, F1),
   });
   // The dual: tetra → join → cube → gyro → dodecahedron. Its faces come from the
-  // icosahedron's VERTICES, its vertices from the icosahedron's faces.
+  // icosahedron's vertices, its vertices from the icosahedron's faces.
   const dod = OPS.gyro(TETRA());
   out.push({
     label: "built dodeca",
@@ -229,8 +229,8 @@ function starts(g: ReturnType<typeof icoGroups>): Start[] {
     actual: dod.colors,
     ideal: uniformColors(dod.mesh, F1, E1, V1),
   });
-  // A directly-LOADED icosahedron seed: uniform, taking each orbit's representative triple
-  // (exactly what geometry/colors.ts `seedColors` does).
+  // A directly-loaded icosahedron seed: uniform, taking each orbit's representative
+  // triple, as geometry/colors.ts `seedColors` does.
   const seed = getSeed("icosahedron");
   out.push({
     label: "loaded ico",
@@ -243,11 +243,11 @@ function starts(g: ReturnType<typeof icoGroups>): Start[] {
 
 /**
  * A mismatch comes in two flavours:
- *   HARD — the IDEAL gives a real swatch and the ACTUAL gives a different one. A face
- *          that should be tint(yellow) coming out red. These are the actual bug.
+ *   HARD — the IDEAL gives a real swatch and the ACTUAL a different one: a face that
+ *          should be tint(yellow) coming out red. These are the mis-colorings.
  *   SOFT — the IDEAL itself resolves to the fallback `white` (the color system has no
- *          name for that combination) and the ACTUAL names it (or vice versa). The two
- *          renders differ, but no *classified* color is wrong.
+ *          name for that combination) and the ACTUAL names it, or vice versa. The two
+ *          renders differ, but no classified color is wrong.
  */
 type Fails = { hard: Map<string, number>; soft: Map<string, number> };
 
@@ -273,8 +273,8 @@ function mismatches(
   for (const k of meshEdgeKeys(mesh)) cmp("edge", actual.edge.get(k)!, ideal.edge.get(k)!);
 }
 
-/** Run every op (and every depth-2 pair, when `depth` is 2) from each start shape and
- *  collect the ACTUAL-vs-IDEAL swatch mismatches. */
+/** Run every op — and every depth-2 pair, when `depth` is 2 — from each start shape and
+ *  collect the ACTUAL vs IDEAL swatch mismatches. */
 function evaluate(snubRules: Record<string, Rule>, depth: number, extras: Extras = {}): Fails {
   (config.colors.operations as any).snub = snubRules;
   const g = icoGroups(snubRules);
@@ -314,16 +314,16 @@ function evaluate(snubRules: Record<string, Rule>, depth: number, extras: Extras
 }
 
 /**
- * A FAST, op-free necessary condition, and the one that actually decides the question.
+ * The fast, op-free necessary condition — and the one that decides the question.
  *
  * Every downstream color is a linear combination of the icosahedron's element colors,
  * and every scheme group (plain, avg, nested-avg, tint) is generated by applying the
- * SAME canonical weight patterns to the group representatives. So whenever the ideal
- * color has a name, the actual color is guaranteed to be *a member of* the matching
- * actual group — by construction. The only way it can come out wrong is TIER STEALING:
- * its key was already claimed by a different group. So a candidate is right for every
- * reachable shape, at every depth, exactly when no group's triple is claimed by another
- * group's swatch. This counts those stolen keys.
+ * same canonical weight patterns to the group representatives. So whenever the ideal
+ * color has a name, the actual color is by construction a member of the matching actual
+ * group. The only way it comes out wrong is tier stealing: its key was already claimed
+ * by a different group. A candidate is therefore right for every reachable shape at
+ * every depth exactly when no group's triple is claimed by another group's swatch, and
+ * this counts those stolen keys.
  */
 function stolenKeys(groups: Record<string, Group>, extras: Extras = {}): string[] {
   const lookup = buildLookup(groups, extras);
@@ -337,8 +337,8 @@ function stolenKeys(groups: Record<string, Group>, extras: Extras = {}): string[
 }
 
 // ---------------------------------------------------------------------------
-// 14-D ID uniqueness: the same structural check tests/colorIds runs — a candidate that
-// makes two snub (or gyro) elements share an ID is not admissible however good its colors.
+// 14-D ID uniqueness: the structural check tests/colorIds runs. A candidate that makes
+// two snub or gyro elements share an ID is inadmissible however good its colors.
 // ---------------------------------------------------------------------------
 
 function rng(seed: number) {
@@ -367,7 +367,7 @@ function hasCollision(colors: ColorSet): boolean {
   }
   return false;
 }
-/** True when snub AND gyro keep all IDs distinct (over several random generic inputs). */
+/** True when snub and gyro both keep all IDs distinct, over several generic inputs. */
 function idsStayUnique(snubRules: Record<string, Rule>): boolean {
   (config.colors.operations as any).snub = snubRules;
   const rectified = OPS.rectify(new Polyhedron(getSeed("tetrahedron"))).mesh;
@@ -386,10 +386,10 @@ function idsStayUnique(snubRules: Record<string, Rule>): boolean {
 const rule = (toks: Record<string, number>): Rule =>
   Object.fromEntries(Object.entries(toks).filter(([, v]) => v !== 0));
 
-/** The call sites (operations/snub.ts) only offer these sources per rule:
+/** The call sites in operations/snub.ts offer only these sources per rule:
  *    newFace   ← oldVertex, oldEdge          (the gap triangle: no single old face)
- *    newVertex ← oldVertex, oldEdge          (the split vertex sliding along its kept edge)
- *    newEdge   ← oldVertex                   (only source available → forced to {oldVertex: 1})
+ *    newVertex ← oldVertex, oldEdge          (the split vertex, sliding along its edge)
+ *    newEdge   ← oldVertex                   (the only source, so forced to {oldVertex: 1})
  *    snubEdge  ← oldFace, oldVertex, oldEdge (all three)  */
 function candidate(a: number, b: number, gf: number, gv: number): Record<string, Rule> {
   return {
@@ -403,8 +403,8 @@ function candidate(a: number, b: number, gf: number, gv: number): Record<string,
 const ORIGINAL = JSON.parse(JSON.stringify(config.colors.operations.snub));
 
 describe("snub color rules vs the one-hot icosahedron", () => {
-  /** The committed fix, checked through the REAL geometry/colors.ts (its own derived
-   *  scheme, its own seed colors, its own 14-D IDs) rather than this file's model. */
+  /** The config's rules, checked through the real geometry/colors.ts — its own derived
+   *  scheme, seed colors and 14-D IDs — rather than this file's model of them. */
   it("VERIFY the shipped fix", () => {
     const real = (p: Polyhedron, label: string) => {
       const m = new Map<string, number>();
@@ -422,7 +422,7 @@ describe("snub color rules vs the one-hot icosahedron", () => {
     console.log("\nICOSAHEDRAL (built from the tetrahedron):");
     real(ico, "icosahedron");
     real(idod, "icosidodecahedron");
-    real(OPS.subdivide(idod), "subdivide(icosidodeca)"); // ← the reported bug
+    real(OPS.subdivide(idod), "subdivide(icosidodeca)"); // the shape that exposes a steal
     real(OPS.snub(ico), "snub icosidodecahedron");
     real(OPS.gyro(ico), "pent. hexecontahedron");
 
@@ -446,10 +446,10 @@ describe("snub color rules vs the one-hot icosahedron", () => {
   }, 120_000);
 
   /**
-   * `snub.newFace` is the rule that also colors the SNUB CUBE's 24 gap triangles (they
-   * come from cuboctahedron edges), and today's `{oldEdge: 1}` is what lands them on
-   * avg(red,yellow) in the octahedral scheme. So: is `{oldEdge: 1}` compatible with a
-   * steal-free icosahedral scheme at all — i.e. can newFace be left alone?
+   * `snub.newFace` also colors the snub cube's 24 gap triangles, which come from
+   * cuboctahedron edges: `{oldEdge: 1}` is what lands them on avg(red,yellow) in the
+   * octahedral scheme. Is `{oldEdge: 1}` compatible with a steal-free icosahedral scheme
+   * at all — can newFace be left alone?
    */
   it("can newFace stay {oldEdge: 1}?", () => {
     const FINE = [0, 1 / 6, 1 / 5, 1 / 4, 1 / 3, 2 / 5, 1 / 2, 3 / 5, 2 / 3, 3 / 4, 4 / 5, 5 / 6, 1];
@@ -459,7 +459,7 @@ describe("snub color rules vs the one-hot icosahedron", () => {
       for (const gf of FINE)
         for (const gv of FINE) {
           if (gf + gv > 1 + 1e-9) continue;
-          const c = candidate(0, b, gf, gv); // newFace = {oldEdge: 1}, untouched
+          const c = candidate(0, b, gf, gv); // newFace pinned to {oldEdge: 1}
           const g = icoGroups(c);
           const reps = [...g.face.triples, ...g.vert.triples, ...g.edge.triples];
           if (new Set(reps.map(key)).size !== reps.length) continue;
@@ -474,11 +474,11 @@ describe("snub color rules vs the one-hot icosahedron", () => {
   }, 300_000);
 
   /**
-   * The full search. A candidate must (a) leave no stolen key in the icosahedral scheme
-   * — which is exactly "every named color an icosahedral solid can reach comes out right,
-   * at any depth" — and (b) keep the 14-D IDs unique. Among those, we care what it does
-   * to the four library solids the snub/gyro rules color at RUNTIME: their faces should
-   * not fall back to the white default.
+   * The full search. A candidate must (a) leave no stolen key in the icosahedral scheme,
+   * which is exactly the condition that every named color an icosahedral solid can reach
+   * comes out right at any depth, and (b) keep the 14-D IDs unique. Among those, what
+   * matters is the four library solids the snub / gyro rules color at runtime: their
+   * faces should not fall back to the white default.
    */
   it("full search", () => {
     const FINE = [0, 1 / 6, 1 / 5, 1 / 4, 1 / 3, 2 / 5, 1 / 2, 3 / 5, 2 / 3, 3 / 4, 4 / 5, 5 / 6, 1];
@@ -488,8 +488,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
         .filter(([n, d]) => Math.abs(n / d - x) < 1e-9)
         .map(([n, d]) => `${n}/${d}`)[0] ?? x.toFixed(3);
 
-    // The octahedral scheme (rectify only — the snub rules don't define it, but they DO
-    // feed it at runtime via snub(cube) / gyro(cube)).
+    // The octahedral scheme (rectify only). The snub rules don't define it, but they do
+    // feed it at runtime via snub(cube) / gyro(cube).
     const R = config.colors.operations.rectify;
     const tet = { oldFace: [F1], oldVertex: [V1], oldEdge: [E1] };
     const OCTA_LOOKUP = buildLookup({
@@ -536,7 +536,7 @@ describe("snub color rules vs the one-hot icosahedron", () => {
               shapes,
             });
           }
-    // Baseline: what the CURRENT rules give for those same four solids.
+    // Baseline: what the config's rules give for those same four solids.
     (config.colors.operations as any).snub = ORIGINAL;
     {
       const icoLookup = buildLookup(icoGroups(ORIGINAL));
@@ -561,14 +561,14 @@ describe("snub color rules vs the one-hot icosahedron", () => {
   }, 900_000);
 
   /**
-   * WHY the trade-off is forced, and whether an extra rule token could dodge it.
+   * Why the trade-off is forced, and whether an extra rule token could dodge it.
    *
-   * `snub.newVertex` is also, dually, what colors the GYRO solids' pentagons
-   * (dualRule(snub.newVertex) read against the JOIN). So one rule has to satisfy two
-   * masters. Here we free it completely — let it weight oldVertex / oldEdge / oldFace
-   * however it likes (oldFace would need a new source at the call site: the split
-   * vertex's anchoring face, `aface` in snub.ts) — and ask whether ANY weighting both
-   * leaves the icosahedral scheme steal-free AND keeps the gyro pentagon named.
+   * `snub.newVertex` is dually also what colors the gyro solids' pentagons:
+   * dualRule(snub.newVertex), read against the join. One rule serves two masters. Here it
+   * is freed completely — any weighting of oldVertex / oldEdge / oldFace, where oldFace
+   * would need a new source at the call site, the split vertex's anchoring face `aface`
+   * in snub.ts — to ask whether any weighting both leaves the icosahedral scheme
+   * steal-free and keeps the gyro pentagon named.
    */
   it("could a 3-token newVertex satisfy both?", () => {
     // The join (rhombic dodecahedron) the gyro reads against, with real colors.
@@ -593,14 +593,14 @@ describe("snub color rules vs the one-hot icosahedron", () => {
       for (const d of FINE) {
         if (b + d > 1 + 1e-9) continue;
         const e = 1 - b - d;
-        // GYRO side: the pentagon is dualRule(newVertex) = {oldFace: b, oldVertex: d,
+        // Gyro side: the pentagon is dualRule(newVertex) = {oldFace: b, oldVertex: d,
         // oldEdge: e} against the rhombic dodecahedron. Every source combination must
         // land on a named swatch.
         const gyroCols = derive({ oldFace: b, oldVertex: d, oldEdge: e },
           { oldFace: rdFace, oldVertex: rdVert, oldEdge: rdEdge });
         const named = gyroCols.every((c) => swatchOf(OCTA_LOOKUP, c) !== "white");
         if (!named) continue;
-        // ICO side: steal-free with newFace left at {oldEdge: 1}?
+        // Ico side: steal-free with newFace left at {oldEdge: 1}?
         for (const gf of FINE)
           for (const gv of FINE) {
             if (gf + gv > 1 + 1e-9) continue;
@@ -624,7 +624,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
     (config.colors.operations as any).snub = ORIGINAL;
   }, 600_000);
 
-  /** The two branches of the forced trade-off, with the simplest fractions in each. */
+  /** The two branches of the forced trade-off, with the simplest fractions in each. The
+   *  branch labels below state what each one costs. */
   it("branches", () => {
     const FRACS: Array<[string, number]> = [
       ["0", 0], ["1/4", 1 / 4], ["1/3", 1 / 3], ["2/5", 2 / 5], ["1/2", 1 / 2],
@@ -674,20 +675,20 @@ describe("snub color rules vs the one-hot icosahedron", () => {
   }, 600_000);
 
   /**
-   * The "borders" reading of the snub rules:
-   *   newFace   — the gap triangle borders two old edges and one new edge (whose color is
-   *               the old vertex): (2·oldEdge + oldVertex)/3.
+   * The borders reading of the snub rules:
+   *   newFace   — the gap triangle borders two old edges and one new edge, whose color is
+   *               the old vertex: (2·oldEdge + oldVertex)/3.
    *   snubEdge  — borders an old face and a new face: (oldFace + newFace)/2
    *               = 1/2 oldFace + 1/3 oldEdge + 1/6 oldVertex.
-   * With those two pinned, what can newVertex be? It must (a) leave the icosahedral
-   * scheme steal-free and (b) ideally still land the GYRO pentagons on a light blue.
+   * With those two pinned, what can newVertex be? It must leave the icosahedral scheme
+   * steal-free, and ideally still land the gyro pentagons on a light blue.
    */
   it("newVertex options for the 'borders' rules", () => {
     const NEW_FACE = { oldEdge: 2 / 3, oldVertex: 1 / 3 };
     const SNUB_EDGE = { oldFace: 1 / 2, oldEdge: 1 / 3, oldVertex: 1 / 6 };
 
-    // The octahedral scheme (rectify only) — what the snub cube / pentagonal
-    // icositetrahedron are colored by.
+    // The octahedral scheme (rectify only): what colors the snub cube and the pentagonal
+    // icositetrahedron.
     const R = config.colors.operations.rectify;
     const tet = { oldFace: [F1], oldVertex: [V1], oldEdge: [E1] };
     const OCTA_GROUPS: Record<string, Group> = {
@@ -754,7 +755,7 @@ describe("snub color rules vs the one-hot icosahedron", () => {
         console.log(`      subdivide(icosidodeca): ${faces(OPS.subdivide(OPS.rectify(ico)), icoLookup)}`);
       }
     }
-    // Which newVertex weights are admissible AT ALL under these rules (+ avg3)?
+    // Which newVertex weights are admissible at all under these rules, plus avg3?
     console.log(`\n${"#".repeat(80)}\nEVERY steal-free newVertex (with the 'borders' newFace/snubEdge + avg3)\n${"#".repeat(80)}`);
     const octaLookupAvg3 = buildLookup(OCTA_GROUPS, { avg3: true });
     for (let d = 2; d <= 8; d++)
@@ -781,21 +782,21 @@ describe("snub color rules vs the one-hot icosahedron", () => {
   }, 600_000);
 
   /**
-   * A PRINCIPLED newVertex. The rectification's vertices always have degree 4, so a snub
-   * split vertex ALWAYS borders exactly 2 rotated old faces and 3 new gap triangles
-   * (check: icosahedron = 8 rotated × 3 + 12 gap × 3 = 60 = 12 verts × 5). So "the average
-   * of the faces I border" is
+   * A principled newVertex. The rectification's vertices always have degree 4, so a snub
+   * split vertex always borders exactly 2 rotated old faces and 3 new gap triangles
+   * (check: icosahedron = 8 rotated × 3 + 12 gap × 3 = 60 = 12 verts × 5). So the average
+   * of the faces it borders is
    *     newVertex = (2·oldFace + 3·newFace)/5
-   *               = 2/5 oldFace + 2/5 oldEdge + 1/5 oldVertex      (with the new newFace)
-   * That needs an `oldFace` source at the call site (snub.ts already knows it: `aface`).
-   * Does it survive? Compared against every other simple newVertex.
+   *               = 2/5 oldFace + 2/5 oldEdge + 1/5 oldVertex
+   * That needs an `oldFace` source at the call site, which snub.ts already has as `aface`.
+   * Compared here against every other simple newVertex.
    */
   it("principled degree-5 newVertex", () => {
     const NEW_FACE = { oldEdge: 2 / 3, oldVertex: 1 / 3 };
     const SNUB_EDGE = { oldFace: 1 / 2, oldEdge: 1 / 3, oldVertex: 1 / 6 };
     const EXTRAS: Extras = { avg3: true, tint4: true };
 
-    // What the gyro pentagons (dual of newVertex) read against: the rhombic dodecahedron.
+    // What the gyro pentagons, the dual of newVertex, read against.
     (config.colors.operations as any).snub = ORIGINAL;
     const rd = OPS.join(OPS.join(TETRA()));
     const rdSrc = {
@@ -831,8 +832,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
       const distinct = new Set(reps.map(key)).size === reps.length;
       const st = stolenKeys(g, EXTRAS);
       const pent = [...new Set(derive(dual(nv), rdSrc).map((c) => swatchOf(OCTA, c)))];
-      // The `oldFace` variants would need a new source at the snub.ts call site, so they
-      // can only be checked analytically; the rest run through the real operations.
+      // The `oldFace` variants need a new source at the snub.ts call site, so they can
+      // only be checked analytically; the rest run through the real operations.
       const runnable = !("oldFace" in nv);
       const c: Record<string, Rule> = { newFace: NEW_FACE, newEdge: { oldVertex: 1 }, snubEdge: SNUB_EDGE, newVertex: nv };
       const ids = runnable ? idsStayUnique(c) : "n/a";
@@ -845,8 +846,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
     (config.colors.operations as any).snub = ORIGINAL;
   }, 300_000);
 
-  /** THE SHIPPING CONFIGURATION: the committed snub rules + the widened palette
-   *  (tint3 = the old 3:1 tint, tint4 = a new 4:1 tint, avg(a,b,c) = an equal 3-way mix). */
+  /** The config's snub rules against the widened palette: tint3 (a 3:1 tint), tint4 (a
+   *  4:1 tint) and avg(a,b,c) (an equal 3-way mix). */
   it("shipping config", () => {
     const EXTRAS: Extras = { avg3: true, tint4: true };
     const c = config.colors.operations.snub as unknown as Record<string, Rule>;
@@ -910,13 +911,13 @@ describe("snub color rules vs the one-hot icosahedron", () => {
       console.log(`  soft mismatches: ${f.soft.size}`);
       for (const [m] of [...f.soft].sort()) console.log(`      ${m}`);
 
-      // The user's case, plus the shapes the snub rules also color at RUNTIME.
+      // The subdivide case, plus the shapes the snub rules also color at runtime.
       (config.colors.operations as any).snub = c;
       const ico = OPS.snub(TETRA());
       const idod = OPS.rectify(ico);
       const sub = OPS.subdivide(idod);
-      // NB the colors here are ALREADY collapsed triples (the tetra starts as one), so
-      // they feed the lookup directly — no `collapse` step.
+      // The colors here are already collapsed triples — the tetra starts as one — so they
+      // feed the lookup directly, with no `collapse` step.
       const show = (p: Polyhedron, label: string, lk: Map<string, string>) => {
         const m = new Map<string, number>();
         p.faces.forEach((fc, i) => {
@@ -931,8 +932,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
       show(sub, "subdivide(icosidodec)", lookup);
       show(OPS.snub(ico), "snub icosidodecahedron", lookup);
       show(OPS.gyro(ico), "pent. hexecontahedron ", lookup);
-      // Snub cube / snub dodeca live in the OCTAHEDRAL scheme, which the snub rules do
-      // not define but DO feed at runtime — make sure they don't go white.
+      // The snub cube and snub dodecahedron live in the octahedral scheme, which the snub
+      // rules don't define but do feed at runtime, so check they don't go white.
       const octaG = (() => {
         const R = config.colors.operations.rectify;
         const tet = { oldFace: [F1], oldVertex: [V1], oldEdge: [E1] };
@@ -970,8 +971,8 @@ describe("snub color rules vs the one-hot icosahedron", () => {
           }
     console.log(`\ntried ${tried}; ${clean.length} have no stolen keys`);
 
-    // Stage 2: they must also keep the 14-D IDs unique (tests/colorIds), and then we
-    // confirm on the real operations.
+    // Stage 2: they must also keep the 14-D IDs unique (tests/colorIds); then confirm on
+    // the real operations.
     const results: Array<{ c: Record<string, Rule>; hard: number; soft: number }> = [];
     for (const c of clean) {
       if (!idsStayUnique(c)) continue;

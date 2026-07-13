@@ -60,18 +60,18 @@ function sameIdSet(a: Set<number>, b: Set<number>): boolean {
 // it so coincident vertices / faces don't produce degenerate geometry.
 const MAX_T_WITHOUT_WELD = config.interaction.maxTWithoutWeld;
 
-// The base drag's t past which the twist arc begins to hint (fade in).
+// The base drag's t past which the twist arc begins to fade in.
 const ARC_FADE_START = config.operations.arcFadeStartT;
-// How far along the twist arc the cursor must move before the snub/gyro engages
-// (below this, a welded release commits the plain rectify / join instead).
+// How far along the twist arc the cursor must move before the snub/gyro engages;
+// below this, a welded release commits the plain rectify / join instead.
 const TWIST_ENGAGE_T = 0.04;
-// Once the base drag welds, the "welded" state stays latched until the cursor
-// retreats back down the truncation line below this t (hysteresis, so nudging onto
-// the arc doesn't snap back to truncating).
+// Once the base drag welds, the welded state stays latched until the cursor retreats
+// back down the truncation line below this t. Hysteresis: nudging onto the arc must
+// not snap back to truncating.
 const WELD_UNLATCH_T = 0.75;
 // The twist plan is rebuilt only when its weld anchor (rectify vertex / join apex)
 // moves more than this. The anchor is piecewise-constant per incident edge/face, so
-// this is effectively "rebuild only when the base handle switches", not per frame.
+// it rebuilds when the base handle switches, not every frame.
 const TWIST_ANCHOR_EPS = 1e-5;
 
 interface Pending {
@@ -99,13 +99,13 @@ interface Drag {
   // The base operation (truncate / kis / edge op) tracks the mouse for t ∈ [0,1].
   base: PlanSlot;
   sel: Set<number> | null; // participating subset (the n-truncate / n-kis arity group)
-  // The twist form (snub / gyro) extends a full rectify/join: it is built once the
-  // base drag passes `arcFadeStartT` (so the arc can hint), and drives the morph once
-  // the base welds (t=1) and the cursor moves onto the arc. Null when unavailable.
+  // The twist form (snub / gyro) extends a full rectify/join: built once the base drag
+  // passes `arcFadeStartT` (so the arc can hint), and drives the morph once the base
+  // welds (t=1) and the cursor moves onto the arc. Null when unavailable.
   twist: PlanSlot | null;
-  // The weld anchor `twist` was built for (rectify vertex / join apex). The plan is
-  // an expensive per-frame rebuild (snub's two chiral variants / gyro's planarity
-  // solve), so we keep it while the anchor holds still and only rebuild when it moves.
+  // The weld anchor `twist` was built for (rectify vertex / join apex). Building the
+  // plan runs snub's two chiral variants / gyro's planarity solve, too costly per
+  // frame, so it is kept while the anchor holds still.
   twistAnchor: Vector3 | null;
   twisting: boolean; // the cursor has engaged the twist arc (snub/gyro active)
   weldLatched: boolean; // base reached the full rectify/join (latched with hysteresis)
@@ -117,16 +117,15 @@ interface Drag {
   restore: SelectionSnapshot | null; // selection to put back if this multi-drag commits nothing
   t: number; // active plan's current parameter (base t, or the arc t while twisting)
   weld: boolean;
-  // Edge drags (chamfer / subdivide) only: the dragged edge, its three axes, and
-  // which one is currently active — so moving the cursor can SWITCH axes mid-drag
-  // (rebuilding `base`), the way a vertex drag switches which incident edge it
-  // tracks. Null for vertex/face drags.
+  // Edge drags (chamfer / subdivide) only: the dragged edge, its three axes, and which
+  // one is active. Moving the cursor can switch axes mid-drag (rebuilding `base`), the
+  // way a vertex drag switches which incident edge it tracks. Null for vertex/face drags.
   edgeAxis: EdgeAxisState | null;
-  // Twist drags only: the fixed "base return" line the drag climbed to reach the
-  // weld — snub's un-rectify line (rectify vertex → original vertex) or gyro's un-join
-  // line (join apex → original face centroid). Once welded, this competes with the
-  // twist handle for the cursor as a single stable segment, so heading back down it
-  // un-welds (back to truncate / kis) instead of engaging the snub / gyro.
+  // Twist drags only: the fixed base-return line the drag climbed to reach the weld —
+  // snub's un-rectify line (rectify vertex → original vertex) or gyro's un-join line
+  // (join apex → original face centroid). Once welded, this competes with the twist
+  // handle for the cursor as a single stable segment, so heading back down it un-welds
+  // (back to truncate / kis) instead of engaging the snub / gyro.
   baseReturnLine: { origin: Vector3; far: Vector3 } | null;
 }
 
@@ -135,11 +134,11 @@ interface EdgeAxisInfo {
   midpoint: Vector3;
   faceA: number;
   faceB: number;
-  // Each axis is a half-line (ray) from the midpoint along `dir` — the direction the
-  // cursor must head to select it. Chamfer axes carry the bordering face's centroid +
-  // outward normal so a face turned away from the camera can be culled (the chamfer
-  // analog of truncate refusing edges facing away); the subdivide (`normal`) axis has
-  // no `view` and is always available.
+  // Each axis is a half-line from the midpoint along `dir`: the direction the cursor
+  // must head to select it. Chamfer axes carry the bordering face's centroid and
+  // outward normal so a face turned away from the camera can be culled, as truncate
+  // culls edges facing away. The subdivide (`normal`) axis has no `view` and is
+  // always available.
   axes: Array<{
     which: "A" | "B" | "normal";
     dir: Vector3;
@@ -172,13 +171,13 @@ export class DragController {
   private holdDown = false;
   private holdMinUntil = 0;
   private solveStartMs = 0; // when the current relaxation began (for the planarity warning)
-  // "Jumbled" only: set once the button has been held long enough for the planarity
+  // `jumbled` only: set once the button has been held long enough for the planarity
   // warning to appear, which leaves the solve running after the button is released
   // (see `update`). Cleared by starting any new solve.
   private solveLatched = false;
   // Rendered vertices, eased toward the solver's live vertices so the morph reads
-  // smoothly. `solveStopping` = stepping is done; we're only letting the display
-  // catch up before finalizing.
+  // smoothly. `solveStopping` means stepping is done and we are only letting the
+  // display catch up before finalizing.
   private displayVerts: Vector3[] | null = null;
   private solveStopping = false;
 
@@ -189,9 +188,8 @@ export class DragController {
   private hoverInRange = false;
   private hoverRay: Ray | null = null;
   private hoverMulti = false; // Cmd/Ctrl held while hovering (would drag a single element)
-  // Option/Alt held: a "same arity as whatever I'm hovering" gesture — hovering
-  // highlights the hovered handle's whole arity group, and a click ADDS that group
-  // to the current selection (building selections spanning several arities).
+  // Option/Alt held: hovering highlights the hovered handle's whole arity group, and a
+  // click adds that group to the selection, so selections can span several arities.
   private altHeld = false;
   // Memoized per-vertex degree (incident-face count) for the current polyhedron,
   // rebuilt only when `this.current` changes.
@@ -217,10 +215,9 @@ export class DragController {
   // in the main view with the exact timeline that first produced it.
   private readonly historyStore = new HistoryStore();
   // A just-discovered shape whose timeline still needs persisting. The save is held
-  // until its relaxation finishes (finishSolve) so the stored final entry is the
-  // settled/canonical geometry — the exact form the LIBRARY reopens. Saving at commit
-  // time instead would freeze the raw, un-relaxed commit (visible on reload, worst for
-  // the twists whose raw form is farthest from canonical).
+  // until its relaxation finishes (finishSolve), so the stored final entry is the
+  // settled canonical geometry the LIBRARY reopens rather than the raw commit (whose
+  // form is farthest from canonical for the twists).
   private pendingSave: string | null = null;
   private readonly discoveryPopup: DiscoveryPopup;
   private readonly library: LibraryBrowser;
@@ -292,8 +289,8 @@ export class DragController {
     return this.library.isOpen();
   }
 
-  /** The display name of the current shape — its identified name, or the derived
-   *  history name (e.g. "Augmented Truncated Cube") when unidentified — for filenames. */
+  /** The display name of the current shape, used for filenames: its identified name,
+   *  or the derived history name (e.g. "Augmented Truncated Cube") when unidentified. */
   currentName(): string | null {
     return this.history.list[this.history.current]?.displayName ?? this.lastName;
   }
@@ -321,21 +318,21 @@ export class DragController {
   /**
    * Open a named shape (clicked in the LIBRARY) in the main view, restoring the
    * construction history that first produced it. Falls back to the named-polyhedron
-   * database (a single-entry history) for shapes with no saved timeline — e.g. the
-   * pre-discovered tetrahedron, or any shape exposed by the reveal-all cheat.
+   * database for shapes with no saved timeline: the pre-discovered tetrahedron, or any
+   * shape exposed by the reveal-all cheat.
    */
   openNamed(name: string): void {
     let entries: HistoryEntry[];
     let index: number;
-    let fallback = false; // a database-built solid (no saved timeline) — relax it
+    let fallback = false; // a database-built solid (no saved timeline), so relax it
     const saved = this.historyStore.get(name);
     if (saved) {
       entries = deserializeHistory(saved).entries;
       index = entries.length - 1;
     } else {
       // No user-made timeline (e.g. opened via reveal-all): synthesize the
-      // tetrahedron-rooted construction chain from the named-polyhedron database, so
-      // it still imports "with its history from a tetrahedron".
+      // tetrahedron-rooted construction chain from the named-polyhedron database, so it
+      // still imports with a history reaching back to a tetrahedron.
       const steps = historyStepsFor(name);
       const np = namedPolyhedronFor(name);
       if (!steps || !np) return;
@@ -357,17 +354,17 @@ export class DragController {
       fallback = true;
     }
     this.history.replaceAll(entries, index);
-    // Render + re-identify the target entry (also restores its color scheme +
-    // strategy and clears any in-progress drag / selection / solver).
+    // Render and re-identify the target entry; this also restores its color scheme and
+    // strategy, and clears any in-progress drag / selection / solver.
     this.restore(this.history.list[this.history.current]);
     this.renderHistory();
-    // A library open can precede the user's first edit, so make sure every panel
-    // is revealed (idempotent if they already are).
+    // A library open can precede the user's first edit, so reveal every panel
+    // (idempotent if they already are).
     this.firstEdit = false;
     this.onFirstEdit();
     this.panel.reveal();
-    // A database-built solid isn't regularized; relax it into its canonical form
-    // (a saved timeline's last state is already relaxed, so skip it there).
+    // A database-built solid isn't regularized, so relax it into its canonical form.
+    // A saved timeline's last state is already relaxed.
     if (fallback) this.relax();
   }
 
@@ -393,8 +390,8 @@ export class DragController {
     if (entry) this.restore(entry);
   }
 
-  /** DEBUG: dump a poly's per-class geometric colors + how the active scheme paints
-   *  them, so a live click-load / snub can be compared. Paste the console output. */
+  /** Debug: dump a poly's per-class geometric colors and how the active scheme paints
+   *  them, so a click-loaded shape can be compared against a made one. */
   private logColors(label: string, poly: Polyhedron): void {
     const tally = (nums: GeomColor[], resolve: (g: GeomColor) => { getHexString(): string }) => {
       const out: Record<string, number> = {};
@@ -415,24 +412,23 @@ export class DragController {
 
   /** Show a previously-committed state without re-solving (it's already relaxed). */
   private restore(entry: HistoryEntry): void {
-    // Note: navigating away (undo/redo/jump/library-open) abandons an in-progress
-    // relaxation and drops its pending save — harmless, since reopening that shape then
-    // just takes the database path, which relaxes it into the same canonical form.
+    // Navigating away drops any pending save. Harmless: reopening that shape then takes
+    // the database path, which relaxes it into the same canonical form.
     this.pendingSave = null;
     this.solver = null; // abandon any in-progress relaxation
     this.shapes.setSolving(false);
     this.mode = "idle";
     this.pending = null;
     this.drag = null;
-    // The mesh is being swapped, so any hovered marker now points at stale geometry
-    // (its id may not even exist in the new mesh) — drop it before re-highlighting.
+    // The mesh is being swapped, so a hovered marker's id may not even exist in the
+    // new mesh; drop it before re-highlighting.
     this.hover = null;
     this.readout.setDrag(null); // drop any stale drag readout (e.g. undo mid-drag)
     this.selection.clear();
     this.current = entry.poly;
     this.invalid = entry.invalid;
-    // Restore the color scheme + regularization strategy remembered for this entry
-    // (before rendering, so the surface comes back with the right colors).
+    // Restore the color scheme and strategy remembered for this entry before
+    // rendering, so the surface comes back with the right colors.
     setColorScheme(entry.options.scheme);
     this.shapes.setActiveColorScheme(entry.options.scheme);
     this.strategy = entry.options.strategy;
@@ -455,9 +451,9 @@ export class DragController {
   }
 
   /**
-   * Switch the regularization strategy used for future shapes AND re-solve the
-   * current one with it now, running to convergence (the debug strategy keys).
-   * The chosen button shows "half-pressed" until this solve finishes.
+   * Switch the regularization strategy used for future shapes and re-solve the current
+   * one with it now, running to convergence (the debug strategy keys). The chosen
+   * button shows half-pressed until this solve finishes.
    */
   selectStrategy(s: Strategy): void {
     this.strategy = s;
@@ -468,10 +464,10 @@ export class DragController {
   }
 
   /**
-   * Switch the active color SCHEME (the OPTIONS "Colors" buttons) and recolor the
-   * current shape right away. The geometric element colors don't change — only how
-   * they map to the palette — so no re-solve is needed. A live drag's preview reads
-   * the scheme every frame, so it picks the change up on its own.
+   * Switch the active color scheme (the OPTIONS Colors buttons) and recolor the current
+   * shape right away. Only the mapping from geometric element colors to the palette
+   * changes, so no re-solve is needed. A live drag's preview reads the scheme every
+   * frame, so it picks the change up on its own.
    */
   selectColorScheme(name: SchemeName): void {
     if (name === getColorScheme()) return;
@@ -512,21 +508,21 @@ export class DragController {
    *  `hold` is set it keeps stepping until the button is released (min `holdMinMs`),
    *  otherwise it runs to convergence on its own. */
   private startSolve(poly: Polyhedron, hold = false): void {
-    // Snapshot the shape as it looks NOW (before the solver recenters/rescales it),
-    // so the rendered geometry can ease from here into the relaxing form.
+    // Snapshot the shape as it looks now, before the solver recenters/rescales it, so
+    // the rendered geometry can ease from here into the relaxing form.
     this.displayVerts = poly.mesh.vertices.map((v) => v.clone());
     this.solveStopping = false;
-    // Always regularize from the operation's pristine RAW geometry (1:1 with the
-    // live vertices) rather than continuing from the possibly-degenerate current
-    // state — so a wildly-dragged vertex or a strategy switch can't leave the shape
-    // permanently mangled. The display still eases from `displayVerts` (its current
-    // look) into the freshly-relaxed result, so this reset isn't visible as a jump.
+    // Always regularize from the operation's raw geometry (1:1 with the live vertices)
+    // rather than continuing from the possibly-degenerate current state, so a wildly
+    // dragged vertex or a strategy switch can't leave the shape permanently mangled.
+    // The display still eases from `displayVerts` into the freshly-relaxed result, so
+    // this reset isn't visible as a jump.
     const live = poly.mesh.vertices;
     for (let i = 0; i < live.length; i++) live[i].copy(poly.raw.vertices[i]);
     const topo = extractTopology(poly);
     this.solver = new RelaxSolver(poly.mesh.vertices, topo, this.strategy);
-    // (The shape relaxes underneath the release color-fade; the active strategy
-    // button shows "half-pressed" meanwhile.)
+    // The shape relaxes underneath the release color-fade; the active strategy button
+    // shows half-pressed meanwhile.
     this.shapes.setSolving(true);
     this.manualHold = hold;
     this.holdDown = hold;
@@ -545,9 +541,9 @@ export class DragController {
     );
   }
 
-  /** The SHAPE-panel hint while relaxing: the usual status, or — once the faces
-   *  have stayed non-planar past the warn delay — a note that they won't flatten
-   *  (which clears itself the moment they do, since the solver keeps trying). */
+  /** The SHAPE-panel hint while relaxing: the usual status, or, once the faces have
+   *  stayed non-planar past the warn delay, a note that they won't flatten. It clears
+   *  itself the moment they do, since the solver keeps trying. */
   private solveHint(): string {
     const s = this.solver;
     if (!s) return "";
@@ -555,8 +551,8 @@ export class DragController {
     return `● relaxing: ${s.statusLabel}`;
   }
 
-  /** Ease the display buffer toward the solver's live vertices; returns true once
-   *  it has essentially caught up (so we can finalize without a visible snap). */
+  /** Ease the display buffer toward the solver's live vertices. Returns true once it
+   *  has caught up close enough to finalize without a visible snap. */
   private easeDisplay(target: Vector3[]): boolean {
     let dv = this.displayVerts;
     if (!dv || dv.length !== target.length) {
@@ -582,11 +578,11 @@ export class DragController {
     // step is running), so flick the activity LED.
     led.pulse();
 
-    // Hold the Jumbled button until the planarity warning appears and the solve
-    // LATCHES: releasing then leaves it jumbling instead of stopping. (A shorter
-    // press just gives the shape one jumbled and settles.) Only "jumbled" latches —
-    // the other strategies planarize, so they'd never reach the warning anyway, and
-    // a latch there could only strand a shape mid-relaxation.
+    // Holding the Jumbled button until the planarity warning appears latches the solve,
+    // so releasing leaves it jumbling instead of stopping; a shorter press jumbles the
+    // shape once and settles. Only `jumbled` latches: the other strategies planarize, so
+    // they'd never reach the warning, and a latch there could only strand a shape
+    // mid-relaxation.
     if (this.holdDown && this.strategy === "jumbled" && this.planarityWarned()) {
       this.solveLatched = true;
     }
@@ -596,7 +592,7 @@ export class DragController {
     this.solver.sustain = this.holdDown || this.solveLatched;
 
     // Step the relaxation (unless we've already decided to stop), then render the
-    // SMOOTHED display rather than the solver's raw vertices.
+    // smoothed display rather than the solver's raw vertices.
     const working = this.solveStopping ? false : this.solver.advance();
     const caughtUp = this.easeDisplay(this.solver.mesh.vertices);
     this.view.showPreview({
@@ -607,9 +603,9 @@ export class DragController {
       this.readout.setHint(this.solveHint());
     }
 
-    // Decide when to STOP stepping: a held button keeps going until released AND past
-    // the click minimum (or fully converged); a latched one ignores the release and
-    // only stops when the solver itself finishes; an auto solve runs to converge.
+    // Decide when to stop stepping: a held button keeps going until released and past
+    // the click minimum (or fully converged); a latched one ignores the release and only
+    // stops when the solver itself finishes; an auto solve runs to convergence.
     if (!this.solveStopping) {
       if (this.manualHold && !this.solveLatched) {
         const pastMin = performance.now() >= this.holdMinUntil;
@@ -630,8 +626,8 @@ export class DragController {
 
   // ---- listeners -----------------------------------------------------------
   private attach(): void {
-    // Capture phase so we can decide (and disable orbit) BEFORE ArcballControls
-    // sees the pointerdown.
+    // Capture phase, so orbit can be disabled before ArcballControls sees the
+    // pointerdown.
     this.canvas.addEventListener("pointerdown", (e) => this.onDown(e), true);
     this.canvas.addEventListener("pointermove", (e) => this.onMove(e));
     window.addEventListener("pointerup", (e) => this.onUp(e), true);
@@ -657,8 +653,8 @@ export class DragController {
     }
     if (this.mode !== "idle" || !config.features.multiSelect) return;
 
-    // Option+A selects EVERY handle of the hovered kind (like Option, but every
-    // arity at once). Uses e.code so it survives Option remapping the character.
+    // Option+A selects every handle of the hovered kind: like Option, but every arity
+    // at once. Keyed off e.code, since Option remaps the character.
     if (e.type === "keydown" && e.altKey && e.code === "KeyA" && this.hover) {
       e.preventDefault();
       const kind = this.hover.kind;
@@ -724,23 +720,21 @@ export class DragController {
     return ids;
   }
 
-  /**
-   * The arity an active Option gesture targets for marker `m`, or null when Option
-   * isn't held: Option takes the marker's OWN arity, so hovering highlights — and a
-   * click adds — every handle sharing the hovered one's arity.
-   */
+  /** The arity an active Option gesture targets for marker `m`, or null when Option
+   *  isn't held: the marker's own arity, so hovering highlights, and a click adds,
+   *  every handle sharing it. */
   private gestureArity(m: Marker): number | null {
     // Edges have no arity grouping (chamfer / subdivide are always global).
     if (m.kind === "edge") return null;
     return this.altHeld ? this.arityOf(m) : null;
   }
 
-  /** Cmd/Ctrl held (the "command" modifier), gated by the multiSelect feature. */
+  /** The command modifier (Cmd on macOS, Ctrl elsewhere), gated by multiSelect. */
   private cmdHeld(e: { metaKey: boolean; ctrlKey: boolean }): boolean {
     return (IS_MAC ? e.metaKey : e.ctrlKey) && config.features.multiSelect;
   }
 
-  /** Whether a selection modifier (Cmd/Ctrl or Option) is active — gated by the
+  /** Whether a selection modifier (Cmd/Ctrl or Option) is active, gated by the
    *  multiSelect feature. */
   private multiHeld(e: { metaKey: boolean; ctrlKey: boolean; altKey: boolean }): boolean {
     return (this.cmdHeld(e) || e.altKey) && config.features.multiSelect;
@@ -801,8 +795,8 @@ export class DragController {
   /** Refresh the idle hover state (nearest pickable handle + its ray) for a
    *  pointer position. Caller is responsible for refreshHighlights(). */
   private updateHover(x: number, y: number): void {
-    // While the solver is relaxing, nothing is interactable yet (positions are
-    // mid-flight), so suppress hover entirely.
+    // While the solver is relaxing the positions are mid-flight and nothing is
+    // interactable, so suppress hover entirely.
     if (config.features.hoverHighlight && !this.solver) {
       const hit = this.picker.pickClosest(
         this.allMarkers(),
@@ -830,7 +824,7 @@ export class DragController {
   /**
    * Snap to `ray`, store the resulting t/weld, and refresh the preview, drag marker,
    * range line and twist arc. The base truncate/kis tracks the cursor for t ∈ [0,1];
-   * once it welds (t=1) to a full rectify/join and the cursor moves onto the twist
+   * once it welds (t=1) into a full rectify/join and the cursor moves onto the twist
    * arc, the snub/gyro plan takes over (`twisting`).
    */
   private updateDragPreview(ray: Ray): void {
@@ -848,8 +842,8 @@ export class DragController {
         if (d.base.allowMax) weld = true;
         else t = MAX_T_WITHOUT_WELD;
       }
-      // Record the drag parameter so a release commits (without this, d.t stays 0
-      // and the release reads as a negligible drag and snaps back).
+      // Record the drag parameter: a release with d.t still 0 reads as a negligible
+      // drag and snaps back instead of committing.
       d.t = weld ? 1 : t;
       d.weld = weld;
       this.showBasePreview(d, snap, weld, true);
@@ -868,23 +862,23 @@ export class DragController {
       else baseT = MAX_T_WITHOUT_WELD;
     }
 
-    // Latch the welded state: once the base drag reaches the full rectify/join we
-    // stay in "welded, arc-active" mode until the cursor clearly retreats back down
-    // the truncation line (below WELD_UNLATCH_T), so nudging the cursor onto the arc
-    // never snaps back to truncating. (Hysteresis — the source of the earlier jank.)
+    // Whether this drag has a twist form at all: snub for a vertex, gyro for a face,
+    // and only when the weld end it extends is enabled.
     const twistOp =
       d.base.allowMax &&
       ((d.kind === "vertex" && ops.snub) || (d.kind === "face" && ops.gyro));
-    // Latch the welded (rectify/join) state. Don't unlatch while actively twisting —
-    // there the cursor is off on a snub line, far from the base edge, so baseT is not
-    // meaningful; unlatching would tear the twist plan down mid-snub.
+    // Latch the welded (rectify/join) state until the cursor retreats back down the
+    // truncation line, so nudging onto the arc doesn't snap back to truncating. Never
+    // unlatch while actively twisting: there the cursor is off on a snub line, far from
+    // the base edge, so baseT is meaningless and unlatching would tear the twist plan
+    // down mid-snub.
     if (weld) d.weldLatched = true;
     else if (!d.twisting && baseT < WELD_UNLATCH_T) d.weldLatched = false;
 
-    // Build (or refresh) the twist plan once the base drag is deep enough. It is
-    // frozen while actively twisting so its anchor can't jump, and otherwise reused
-    // across frames while its weld anchor holds still (rebuilding it runs the snub /
-    // gyro solve, far too costly to redo every mouse-move).
+    // Build (or refresh) the twist plan once the base drag is deep enough. It is frozen
+    // while actively twisting so its anchor can't jump, and otherwise reused while its
+    // weld anchor holds still: rebuilding runs the snub / gyro solve, too costly to
+    // redo every mouse-move.
     const twistAvail = !!twistOp && (baseT > ARC_FADE_START || d.weldLatched);
     if (!twistAvail) {
       d.twist = null;
@@ -901,20 +895,20 @@ export class DragController {
       }
     }
 
-    // Snub (vertex twist) rides straight LINE handles that sit alongside the base
-    // "un-rectify" line. Once rectified, the un-rectify line and the two chiral snub
-    // lines are all equally pickable: the cursor snaps to whichever is nearest, the
-    // same way a truncate drag switches between incident edges.
+    // Snub (vertex twist) rides straight line handles alongside the base un-rectify
+    // line. Once rectified, the un-rectify line and the two chiral snub lines are all
+    // equally pickable: the cursor snaps to whichever is nearest, the same way a
+    // truncate drag switches between incident edges.
     if (d.kind === "vertex") {
       this.updateSnubStage(d, ray, baseSnap, baseT, weld);
       return;
     }
 
     // Gyro (face twist) rides an arc handle near the join apex. Before the join latches
-    // it's just the kis drag. Once latched, the base "un-join" line (the face normal the
-    // drag climbed) competes with the arc by ray distance — dragging back down it
-    // un-joins (like snub's un-rectify line), while veering onto the arc twists. The arc
-    // only ENGAGES once the cursor has moved far enough along it past the join rest.
+    // it is just the kis drag. Once latched, the un-join line (the face normal the drag
+    // climbed) competes with the arc by ray distance: dragging back down it un-joins,
+    // like snub's un-rectify line, while veering onto the arc twists. The arc engages
+    // only once the cursor has moved far enough along it past the join rest.
     if (!d.weldLatched || !d.twist) {
       d.twisting = false;
       d.t = baseT;
@@ -957,10 +951,10 @@ export class DragController {
 
   /**
    * The snub stage of a vertex drag. Before the base drag latches a full rectify (or
-   * before the snub plan exists) this is just the truncate drag. Once rectified, the
-   * three straight lines — the base un-rectify line and the two chiral snub lines —
-   * are all live at once; the cursor snaps to the nearest, so heading back down the
-   * original edge un-rectifies while veering onto either snub line twists that way.
+   * before the snub plan exists) this is just the truncate drag. Once rectified, three
+   * straight lines are live at once: the base un-rectify line and the two chiral snub
+   * lines. The cursor snaps to the nearest, so heading back down the original edge
+   * un-rectifies while veering onto either snub line twists that way.
    */
   private updateSnubStage(
     d: Drag,
@@ -975,13 +969,13 @@ export class DragController {
       d.weld = weld;
       this.showBasePreview(d, baseSnap, weld, true);
     } else {
-      // Nearest of the un-rectify line (a single fixed segment, so the base plan can't
-      // re-snap to some other incident edge as the cursor rides far out a snub line)
-      // and the two snub lines (the twist plan's snap already picked the nearer
-      // chirality). The snub only ENGAGES once the cursor has moved a little way down
-      // its line; right at the rectify vertex (or heading back down the un-rectify
-      // line) we sit on the plain rectify via the base plan, so a release there
-      // commits the Rectify rather than cancelling the drag.
+      // Take the nearest of the un-rectify line (a single fixed segment, so the base
+      // plan can't re-snap to another incident edge while the cursor rides far out a
+      // snub line) and the two snub lines (the twist plan's snap has already picked the
+      // nearer chirality). The snub engages only once the cursor has moved a little way
+      // down its line: right at the rectify vertex, or heading back down the un-rectify
+      // line, the base plan holds the plain rectify, so a release there commits that
+      // rather than cancelling the drag.
       const twistSnap = d.twist.plan.snap(ray);
       const baseDist = this.baseReturnDist(d, ray);
       const twistDist = distancePointToRay(twistSnap.point, ray);
@@ -994,9 +988,9 @@ export class DragController {
         d.twisting = false;
         d.t = weld ? 1 : baseT;
         d.weld = weld;
-        // At the rectify vertex, hint the nearest snub line so its availability shows
-        // (like a hovered vertex highlighting its nearest truncation line); once the
-        // cursor heads back down the un-rectify line, show that line instead.
+        // At the rectify vertex, hint the nearest snub line so its availability shows,
+        // as a hovered vertex highlights its nearest truncation line. Once the cursor
+        // heads back down the un-rectify line, show that line instead.
         const hint = weld ? twistSnap.highlight : undefined;
         this.showBasePreview(d, baseSnap, weld, true, hint);
       }
@@ -1007,9 +1001,9 @@ export class DragController {
 
   /**
    * Render the base truncate/kis/edge preview at its current t (welding at the max).
-   * `lineOverride` replaces the highlighted range line — used at the rectify state to
-   * HINT the nearest snub line (so its availability is visible) while the geometry and
-   * the release still commit the plain rectify.
+   * `lineOverride` replaces the highlighted range line: at the rectify state it hints
+   * the nearest snub line, while the geometry and the release still commit the plain
+   * rectify.
    */
   private showBasePreview(
     d: Drag,
@@ -1036,17 +1030,17 @@ export class DragController {
   }
 
   /**
-   * Render the snub/gyro twist preview at the current parameter. `highlight` (snub)
-   * is the active straight handle line, drawn with the same white tube as every other
-   * drag line; when absent (gyro's arc handle) the arc replaces the straight line.
+   * Render the snub/gyro twist preview at the current parameter. `highlight` (snub) is
+   * the active straight handle line, drawn with the same white tube as every other drag
+   * line; when absent (gyro's arc handle) the arc replaces the straight line.
    */
   private showTwistPreview(d: Drag, ridePoint: Vector3, highlight?: { a: Vector3; b: Vector3 }): void {
     const plan = d.twist!.plan;
     // A twist always extends a completed weld (rectify → snub, join → gyro), so the
-    // vanishing edges (gyro's dissolved original join edges) are never real edges of
-    // the twisting solid — hide them for the WHOLE twist, not just at the welded end,
-    // so they don't linger as faint fixed lines over the rotating gyro. (Snub's
-    // vanishingEdges is empty, so this is a no-op there.)
+    // vanishing edges (gyro's dissolved original join edges) are never real edges of the
+    // twisting solid. Hide them across the whole twist, not just at the welded end, or
+    // they linger as faint fixed lines over the rotating gyro. Snub's vanishingEdges is
+    // empty, so this is a no-op there.
     const hiddenEdges = new Set(plan.vanishingEdges.map(([a, b]) => edgeKey(a, b)));
     this.view.showPreview(
       { vertices: plan.positions(d.t), faces: plan.previewFaces },
@@ -1058,9 +1052,9 @@ export class DragController {
   }
 
   /**
-   * Show / hide the twist arc handle. The arc appears once the join is latched (the
-   * same moment snub's line hints appear) as its full extent at a reduced opacity;
-   * while actively twisting a solid progress arc (midpoint → cursor) is overlaid to
+   * Show / hide the twist arc handle. The arc appears once the join is latched, the
+   * same moment snub's line hints appear, drawn at its full extent at reduced opacity.
+   * While actively twisting, a solid progress arc (midpoint → cursor) is overlaid to
    * show how far the gyro has been rotated.
    */
   private updateArc(d: Drag): void {
@@ -1087,22 +1081,21 @@ export class DragController {
     const kind = p.marker.kind;
     const id = p.marker.id;
 
-    // Edge handles drive chamfer / subdivide (always global, no modifiers / Shift).
-    // The drag axis (which the chosen op depends on) is fixed now from the cursor.
+    // Edge handles drive chamfer / subdivide: always global, no modifiers. The cursor
+    // picks the drag axis, which in turn selects the operation.
     if (kind === "edge") {
       this.startEdgeDrag(p.marker, ray);
       return;
     }
 
-    // A modifier drag (Option / Cmd-Ctrl) may temporarily fold handles into the
-    // selection and drag the whole set — but TEMPORARILY: if the drag commits nothing,
-    // the prior selection is restored on release (see onUp), so an aimless modifier-drag
-    // doesn't leave anything selected. Snapshot it now to restore later.
+    // A modifier drag (Option / Cmd-Ctrl) folds handles into the selection and drags the
+    // whole set, but only for the duration: if the drag commits nothing, onUp restores
+    // this snapshot, so an aimless modifier-drag leaves nothing selected.
     const restore: SelectionSnapshot | null =
       p.alt || p.cmd ? { kind: this.selection.kind, ids: new Set(this.selection.ids) } : null;
 
     // Decide the participating selection set. The default (no modifier) drag affects
-    // the dragged handle's whole ARITY group (degree-n vertices / n-gon faces).
+    // the dragged handle's whole arity group (degree-n vertices / n-gon faces).
     let sel: Set<number> | null;
     let persistent = false; // whether a lasting selection should survive this drag
     if (p.alt) {
@@ -1121,7 +1114,7 @@ export class DragController {
       this.selection.clear();
       sel = new Set([id]);
     } else if (this.selection.kind === kind && this.selection.ids.has(id)) {
-      // No modifier, but dragging a member of an existing (Option-built) selection →
+      // No modifier, but dragging a member of an existing (Option-built) selection:
       // operate on the whole selection.
       sel = this.selection.setFor(kind);
       persistent = true;
@@ -1130,13 +1123,13 @@ export class DragController {
       this.selection.clear();
       sel = this.arityGroup(kind, this.arityOf(p.marker));
     }
-    // A group covering every element of its kind is equivalent to "the whole solid"
-    // (null) — keep that path so uniform solids behave exactly as before.
+    // A group covering every element of its kind means the whole solid, which the rest
+    // of the pipeline represents as null.
     const total = kind === "face" ? this.current.faces.length : this.current.vertices.length;
     if (sel && sel.size === total) sel = null;
 
-    // Build the base operation (truncate / kis). The twist form (snub / gyro) is
-    // built lazily once the drag is deep enough (see buildTwist).
+    // Build the base operation (truncate / kis). The twist form (snub / gyro) is built
+    // lazily once the drag is deep enough (see buildTwist).
     const base = this.buildPlan(kind, id, sel);
     if (!base) {
       if (restore) this.selection.replace(restore.kind, restore.ids); // undo temp changes
@@ -1186,11 +1179,11 @@ export class DragController {
   }
 
   /**
-   * Build the twist (snub / gyro) plan extending the full rectify/join. The base
-   * drag is committed to its welded max to get the rectified/joined polyhedron; the
-   * snub then rotates its faces (arc centred on the dragged vertex's new figure) and
-   * the gyro rotates its vertices (arc near the join apex the drag ended on).
-   * `weldPoint` is the base drag's current max target (the rectify vertex / join apex).
+   * Build the twist (snub / gyro) plan extending the full rectify/join. The base drag
+   * is committed to its welded max to get the rectified/joined polyhedron; the snub
+   * then rotates its faces (arc centred on the dragged vertex's new figure), the gyro
+   * its vertices (arc near the join apex the drag ended on). `weldPoint` is the base
+   * drag's current max target: the rectify vertex or join apex.
    */
   private buildTwist(d: Drag, weldPoint: Vector3 | undefined): PlanSlot | null {
     if (!weldPoint) return null;
@@ -1198,7 +1191,7 @@ export class DragController {
       const { mesh, colors } = d.base.plan.commit(1, true);
       const R = new Polyhedron(mesh, colors);
       if (d.kind === "vertex") {
-        // Nearest rectify vertex to where the drag ended = the dragged corner.
+        // The rectify vertex nearest where the drag ended is the dragged corner.
         let rVid = 0;
         let best = Infinity;
         R.vertices.forEach((p, i) => {
@@ -1234,8 +1227,8 @@ export class DragController {
 
   /**
    * The three drag axes of an edge handle, as lines through the edge midpoint:
-   * perpendicular to the edge within each bordering face (→ chamfer), and along the
-   * edge normal — the mean of the two face normals (→ subdivide).
+   * perpendicular to the edge within each bordering face (chamfer), and along the edge
+   * normal, the mean of the two face normals (subdivide).
    */
   private edgeAxes(a: number, b: number): EdgeAxisInfo | null {
     const he = this.halfEdgeFor(a, b);
@@ -1281,9 +1274,9 @@ export class DragController {
       this.pending = null;
       return;
     }
-    // Pick the axis whose infinite line passes nearest the cursor ray, then build
-    // the matching operation. (Both are re-evaluated every frame during the drag so
-    // moving the cursor can switch axes — see updateEdgeAxis.)
+    // Pick the axis whose infinite line passes nearest the cursor ray, then build the
+    // matching operation. Both are re-evaluated every frame of the drag, so moving the
+    // cursor can switch axes (see updateEdgeAxis).
     const which = this.pickEdgeAxis(info, ray);
     const slot = which && this.buildEdgeSlot(marker.edge, which, info);
     if (!which || !slot) {
@@ -1330,14 +1323,14 @@ export class DragController {
     let best: { which: "A" | "B" | "normal"; dist: number } | null = null;
     for (const ax of info.axes) {
       if (ax.dir.lengthSq() < 1e-12) continue;
-      // Skip a chamfer axis whose bordering face is turned away from the camera (the
-      // face analog of truncate culling edges that face away): on a back face only
-      // the other chamfer line and the subdivide line remain selectable.
+      // Skip a chamfer axis whose bordering face is turned away from the camera, the
+      // face analog of truncate culling edges that face away: on a back face only the
+      // other chamfer line and the subdivide line stay selectable.
       if (ax.view && !this.inView(ax.view.point, [ax.view.normal])) continue;
-      // Measure to the HALF-line (ray from the midpoint along `dir`), not the full
-      // line: clamping the parameter at 0 means the region opposite an axis no longer
-      // snaps to it, so the three axes carve the space into three regions (one around
-      // each line) instead of pairing each line with its opposite.
+      // Measure to the half-line from the midpoint along `dir`, not the full line.
+      // Clamping the parameter at 0 stops the region opposite an axis from snapping to
+      // it, so the three axes carve the space into three regions, one around each line,
+      // instead of pairing each line with its opposite.
       const s = Math.max(0, closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction));
       const point = info.midpoint.clone().add(ax.dir.clone().multiplyScalar(s));
       const dist = distancePointToRay(point, ray);
@@ -1403,12 +1396,12 @@ export class DragController {
       } else {
         const active = this.activeSlot(this.drag);
         const { mesh, colors: finalColors } = active.plan.commit(this.drag.t, this.drag.weld);
-        // `this.current` is still the pre-operation shape here (committed below), so
-        // the op descriptor classifies against the geometry that was acted on. The
+        // `this.current` is still the pre-operation shape here (it is committed below),
+        // so the op descriptor classifies against the geometry that was acted on. The
         // chirality (snub / gyro only) distinguishes the two committed enantiomorphs.
-        // A twist (snub/gyro), a full rectify/join weld, and a full truncation/kis
-        // (t≥0.5) all act on the WHOLE solid; only an n-truncate/n-kis (t<0.5)
-        // classifies its arity subset. Edge ops (chamfer/subdivide) are always global.
+        // A twist, a full rectify/join weld and a full truncation/kis (t≥0.5) all act
+        // on the whole solid; only an n-truncate/n-kis (t<0.5) classifies its arity
+        // subset. Edge ops (chamfer/subdivide) are always global.
         const whole =
           this.drag.kind === "edge" ||
           this.drag.twisting ||
@@ -1423,9 +1416,9 @@ export class DragController {
           chirality: active.plan.chirality?.(),
         };
         const label = operationLabel(op);
-        // Colors at release: the welded form's committed colors are taken as-is
-        // (any difference from the drag's t=1 look snaps instantly); a partial
-        // (un-welded) commit fades from the interpolated drag colors.
+        // Colors at release: a welded form takes its committed colors as-is, so any
+        // difference from the drag's t=1 look snaps instantly; an unwelded commit fades
+        // from the interpolated drag colors.
         const fromRGB = this.drag.weld
           ? faceColorsRGB(finalColors.face)
           : active.plan.previewFaceColors(this.drag.t);
@@ -1442,7 +1435,7 @@ export class DragController {
         this.hover = null; // any hovered marker now points at the old mesh
         const poly = new Polyhedron(mesh, finalColors);
         this.logColors(`commit "${label}" (weld=${this.drag.weld})`, poly);
-        // Render the committed geometry with the "from" colors, then start the fade.
+        // Render the committed geometry with the `fromRGB` colors, then start the fade.
         this.view.showPreview(
           { vertices: mesh.vertices, faces: mesh.faces },
           { faceColors: fromRGB, edgeColors: finalColors.edge },
@@ -1456,8 +1449,8 @@ export class DragController {
       if (!p.marker) {
         this.selection.clear(); // click on empty space clears
       } else if (p.alt) {
-        // Option click: ADD the clicked handle's whole arity group to the selection —
-        // or, if that exact group already IS the selection, toggle it back off.
+        // Option click: add the clicked handle's whole arity group to the selection, or
+        // toggle it back off when that exact group is already the selection.
         const k = p.marker.kind;
         const group = this.arityGroup(k, this.arityOf(p.marker));
         if (this.selection.kind === k && sameIdSet(this.selection.ids, group))
@@ -1466,10 +1459,10 @@ export class DragController {
       } else if (p.cmd && config.features.commandAddsToSelection) {
         this.selection.toggle(p.marker.kind, p.marker.id); // additive: toggle one
       } else {
-        // A plain click — or a Command click in single-element (default) mode —
-        // clears the selection rather than selecting one handle, so it never looks
-        // like you can build a multi-selection by clicking. (Command still acts on a
-        // single element when DRAGGED.)
+        // A plain click, or a Command click in single-element (default) mode, clears the
+        // selection rather than selecting one handle, so it never looks like clicking
+        // can build a multi-selection. Command still acts on a single element when
+        // dragged.
         this.selection.clear();
       }
     }
@@ -1483,9 +1476,9 @@ export class DragController {
   }
 
   private commitPoly(poly: Polyhedron, label: string, op: OpDescriptor): void {
-    // A prior discovery may still be waiting on its relaxation; persist it now (with
-    // however-far-it-settled geometry) before this new commit grows the timeline and
-    // would otherwise attach the pending name to the wrong slice.
+    // A prior discovery may still be waiting on its relaxation. Persist it now, with
+    // whatever geometry it has settled into, before this commit grows the timeline and
+    // the pending name attaches to the wrong slice of it.
     this.flushPendingSave();
     this.current = poly;
     this.invalid = false;
@@ -1495,10 +1488,9 @@ export class DragController {
     }
     this.history.push(poly, label, this.currentOptions(), op);
     this.renderHistory();
-    // Identify (and name) right away — identification is purely combinatorial, so
-    // it works even before the faces have planarized. The relaxation may later
-    // re-identify the settled shape, but the name + history entry are set now even
-    // if the faces turn out never to flatten.
+    // Identify and name right away: identification is purely combinatorial, so it works
+    // before the faces have planarized. The relaxation may re-identify the settled shape
+    // later, but the name and history entry are set now even if the faces never flatten.
     this.runIdentify(poly, true);
     if (config.solver.enabled) {
       this.startSolve(poly); // mutates poly's vertices in place across frames
@@ -1515,9 +1507,9 @@ export class DragController {
     // Keep any in-progress release color-fade running on the now-relaxed shape.
     this.view.setPolyhedron(this.current, this.invalid, true);
     this.runIdentify(this.current, true);
-    // The shape is now settled into its canonical form — persist any timeline that was
-    // waiting on this relaxation (either flagged at commit, or first recognized only
-    // now that the faces have flattened).
+    // The shape has settled into its canonical form, so persist any timeline waiting on
+    // this relaxation (flagged at commit, or recognized only now that the faces have
+    // flattened).
     this.flushPendingSave();
   }
 
@@ -1540,8 +1532,8 @@ export class DragController {
   }
 
   // ---- identification ------------------------------------------------------
-  // `discover` is true only when the shape was just MADE (a fresh commit / solve),
-  // so undo/redo, restore and seed loads never count as discovering a shape.
+  // `discover` is true only when the shape was just made (a fresh commit / solve), so
+  // undo/redo, restore and seed loads never count as discovering a shape.
   private runIdentify(poly: Polyhedron, discover = false): void {
     const { name, signature } = identify(poly);
     this.lastName = name;
@@ -1556,15 +1548,14 @@ export class DragController {
       }
       if (config.discovery.enabled && isNew) this.celebrate(name, first);
     }
-    // Record the result against the current history entry (invalid states show no
-    // name). This also runs for the seed root and on restore — both harmless.
+    // Record the result against the current history entry; invalid states show no name.
     this.history.annotate(this.history.current, this.invalid ? null : name, this.invalid);
     this.renderHistory();
-    // Persist the timeline that just produced a brand-new shape (so the LIBRARY can
-    // reopen it here with its history). When the solver will relax the fresh commit,
-    // defer the save until it settles (finishSolve) so the stored final entry is the
-    // canonical form the library shows — not the raw commit. With the solver off there
-    // is no relaxation to wait for, so the commit geometry is already final.
+    // Persist the timeline that just produced a brand-new shape, so the LIBRARY can
+    // reopen it here with its history. When the solver will relax the fresh commit,
+    // defer the save until it settles (finishSolve), so the stored final entry is the
+    // canonical form rather than the raw commit. With the solver off there is no
+    // relaxation to wait for and the commit geometry is already final.
     if (justDiscovered) {
       if (config.solver.enabled) this.pendingSave = justDiscovered;
       else this.saveTimeline(justDiscovered);
@@ -1637,8 +1628,8 @@ export class DragController {
 
     const hovering = !!this.hover && config.features.hoverHighlight;
 
-    // Edge handles drive chamfer / subdivide (no arity / multi-select). Hovering one
-    // shows the handle and highlights its whole edge; modifiers don't apply.
+    // Edge handles drive chamfer / subdivide, with no arity or multi-select. Hovering
+    // one shows the handle and highlights its whole edge; modifiers don't apply.
     if (hovering && this.hover!.kind === "edge") {
       const state = this.hoverInRange ? "hover" : "proximity";
       this.view.showMarker("edge", this.hover!.id, state);
@@ -1648,8 +1639,8 @@ export class DragController {
       return;
     }
 
-    // Option gesture: hovering a handle in range previews its WHOLE arity group
-    // (every matching handle lights up, and a click/drag ADDS them to the selection).
+    // Option gesture: hovering a handle in range previews its whole arity group, every
+    // matching handle lighting up, and a click/drag adds them to the selection.
     const arity = hovering ? this.gestureArity(this.hover!) : null;
     if (arity != null && this.hoverInRange) {
       const k = this.hover!.kind;
@@ -1665,21 +1656,21 @@ export class DragController {
       return;
     }
 
-    // "Affected" = this handle is part of the active selection — either already
-    // command-clicked, or Cmd is held so a drag would add it. Those are previewed
+    // A handle is affected when it is part of the active selection: either already
+    // command-clicked, or Cmd is held so a drag would add it. Affected handles preview
     // in the selection color; a plain handle keeps the neutral hover look.
     const selected = hovering && this.selection.isSelected(this.hover!.kind, this.hover!.id);
     const affected = selected || (hovering && this.hoverMulti && this.hoverInRange);
 
-    // A selection-colored Cmd-hovered handle isn't in the selection set yet, but a drag would add
-    // it, so count it toward the readout's selection. Skipped while dragging/relaxing,
-    // where the readout shows the live operation / status instead.
+    // A Cmd-hovered handle isn't in the selection set yet, but a drag would add it, so
+    // count it toward the readout's selection. Skipped while dragging or relaxing, where
+    // the readout shows the live operation / status instead.
     if (this.mode === "idle" && !this.solver)
       this.syncReadoutSelection(affected && !selected ? this.hover : null);
 
     if (!hovering) return;
 
-    // Within drag range → prominent; merely nearby → subtle proximity hint.
+    // Within drag range: prominent. Merely nearby: a subtle proximity hint.
     const state = affected ? "selected" : this.hoverInRange ? "hover" : "proximity";
     this.view.showMarker(this.hover!.kind, this.hover!.id, state);
 
@@ -1711,16 +1702,13 @@ export class DragController {
   }
 
   /**
-   * Hover preview of what a drag would affect: the incident edge (vertex) or the
-   * whole face (face center). `affected` marks a command-clicked / Cmd-held handle
-   * — part of the active selection — and is the explicit split between rendering a
-   * plain handle and a selected one. Today they differ only in color; if rectify /
-   * join ever applies in the command-click case, the `affected` branch is where the
-   * geometry (e.g. the vertex line length) should diverge from the plain preview.
+   * Hover preview of what a drag would affect: the incident edge (vertex) or the whole
+   * face (face center). `affected` marks a handle in the active selection, and splits
+   * rendering a plain handle from a selected one — currently only a color difference.
    */
   private showHoverPreview(marker: Marker, ray: Ray, affected: boolean): void {
-    // Guard against a marker left over from a previous mesh (the id may no longer
-    // exist after a commit / undo swapped the geometry).
+    // The id guards below reject a marker left over from a previous mesh: a commit or
+    // undo may have swapped the geometry out from under it.
     if (marker.kind === "edge") {
       // Highlight the whole hovered edge (the handle drives chamfer / subdivide).
       const ops = config.features.operations;
@@ -1740,12 +1728,9 @@ export class DragController {
       return;
     if (marker.kind === "vertex" && config.features.operations.truncate) {
       const e = closestIncidentEdge(this.current, marker.id, ray, this.inView, this.collapseFractions());
-      // While only hovering (not dragging) the line spans the FULL drag range: the
-      // vertex center (e.from) → the rectify max (e.mid, the edge midpoint). It does
-      // NOT shrink to the snapped cursor position; that only happens during a drag.
-      // `affected` distinguishes a command-clicked / Cmd-held handle (drawn in the selection color)
-      // from a plain one, and is the seam where a future rectify/join preview for
-      // the selected case could use a different far endpoint (a different length).
+      // While hovering, the line spans the full drag range: the vertex center (e.from)
+      // to the rectify max (e.mid, the edge midpoint). It shrinks to the snapped cursor
+      // position only during a drag.
       this.view.setEdgeHighlight(
         e.from,
         e.mid,

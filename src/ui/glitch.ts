@@ -3,21 +3,19 @@ import { type Screen } from "./screen";
 
 /**
  * =============================================================================
- *  GLITCH OVERLAY — character-grid "corruption" on top of everything.
+ *  GLITCH OVERLAY — character-grid corruption on top of everything.
  * =============================================================================
  *
  *  A full-grid <pre> whose cells are independently flipped to random glyphs to
  *  fake a corrupted display. It is driven by a single coverage value in [0,1]:
  *  the probability that any given cell shows a random glyph each refresh. At 0
- *  it is empty (off); at 1 every cell churns with random characters.
+ *  it is empty; at 1 every cell churns with random characters.
  *
- *  Coverage comes from two sources, combined by max():
- *    - a STEADY `base` level (optionally eased via `rampBase`), and
- *    - transient BURSTS that decay back to 0.
- *
- *  AUTO-BURST (`setAuto`) realises the "low percentage = occasional bursts"
- *  behaviour: given an intensity p it spawns bursts at random, both their peak
- *  coverage AND how often they appear scaling with p (see config.glitch.burst).
+ *  Coverage is the max of two sources: a steady `base` level (optionally eased
+ *  via `rampBase`), and transient bursts that decay back to 0. `setAuto` spawns
+ *  bursts at random from an intensity p, scaling both their peak coverage and how
+ *  often they appear with p (see config.glitch.burst), so a low p reads as
+ *  occasional flickers rather than a thin steady fill.
  *
  *  One instance is shared by the boot sequence (which choreographs it) and the
  *  new-shape discovery flash. It is ticked once per frame from the main loop.
@@ -185,11 +183,10 @@ export class GlitchOverlay {
   }
 
   /**
-   * The (drifting) noise field defines the BLOBS — the boundaries within which
-   * corruption is allowed (noise below `coverage`). WITHIN those boundaries the
-   * speckle keeps the original flat per-cell density (`random < coverage`), so
-   * the clusters look exactly as dense as the old uniform effect did — just
-   * confined to clumps instead of spread across the whole screen.
+   * The drifting noise field bounds the blobs: corruption is allowed only where
+   * the noise is below `coverage`. Inside a blob, cells speckle at that same flat
+   * per-cell density (`random < coverage`), so a cluster is as dense as `coverage`
+   * says while the corruption stays confined to clumps.
    */
   private render(coverage: number, now: number): void {
     const { cols, rows } = this.screen;

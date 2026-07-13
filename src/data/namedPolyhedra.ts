@@ -10,24 +10,20 @@ import { buildChamfer } from "../operations/chamfer";
 import { buildSubdivide } from "../operations/subdivide";
 
 /**
- * The named-polyhedron database — the SINGLE source of truth for both
- * identification (`identify/identify.ts`) and the LIBRARY browse diagram
- * (`ui/libraryBrowser.ts` via `libraryShapeFor`).
+ * The named-polyhedron database, used by both identification (`identify/identify.ts`)
+ * and the LIBRARY browse diagram (`ui/libraryBrowser.ts` via `libraryShapeFor`).
  *
- * Identification is purely combinatorial (vertex/face configurations + V,E,F), so
- * an entry only needs correct CONNECTIVITY. The LIBRARY, however, also renders each
- * solid in its *default colors*, and those depend on the construction PATH — so we
- * build every solid the way the GAME makes it: rooted at the tetrahedron (the only
- * starting seed), following the same operation tree the player would (e.g. the
- * game's cube is `join(tetrahedron)`, whose faces inherit the tetrahedron's edge
- * color — not a bare cube seed whose faces are color 0). Each entry also carries the
- * symmetry color SCHEME it displays in, mirroring the live app's auto-switch.
+ * Identification is purely combinatorial (vertex/face configurations plus V, E, F),
+ * so an entry only needs correct connectivity. The LIBRARY also renders each solid in
+ * its default colors, and those depend on the construction path, so every solid is
+ * built the way the game makes it: rooted at the tetrahedron, the only starting seed,
+ * following the same operation tree a player would. The game's cube is
+ * `join(tetrahedron)`, whose faces inherit the tetrahedron's edge color, not a bare
+ * cube seed whose faces are color 0. Each entry also carries the symmetry color
+ * scheme it displays in, mirroring the live app's auto-switch.
  *
- * ── To add your own ──────────────────────────────────────────────────────────
- *   Build it from an existing solid with the recipe helpers below (truncate /
- *   rectify / kis / join / snub / gyro, or the arity-selected truncateVerticesOfDegree
- *   / kisFacesOfSides), then add an `E(name, type, scheme, poly)` entry.
- * ─────────────────────────────────────────────────────────────────────────────
+ * To add one: build it from an existing solid with the recipe helpers below (truncate,
+ * rectify, kis, join, snub, gyro) and add an `E(name, type, scheme, build)` entry.
  */
 /** The family a named solid belongs to (shown in the discovery popup). */
 export type SolidType =
@@ -49,61 +45,60 @@ export interface BuildStep {
 export interface NamedPolyhedron {
   name: string;
   type: SolidType;
-  /** A colored embedding built by the recipe. `poly.mesh` is its connectivity
-   *  (all identification needs); `poly.colors` carries the geometric colors so
-   *  the LIBRARY browse diagram can render each solid in its default colors. */
+  /** A colored embedding built by the recipe. `poly.mesh` is its connectivity, all
+   *  identification needs; `poly.colors` carries the geometric colors the LIBRARY
+   *  diagram renders with. */
   poly: Polyhedron;
-  /** The symmetry-appropriate color scheme (the one the live app auto-switches to
-   *  for this solid's family), so the browse diagram colors each solid the way the
-   *  live app does when you make it. */
+  /** The color scheme the live app auto-switches to for this solid's family, so the
+   *  browse diagram colors it the way the live app does. */
   scheme: SchemeName;
-  /** The construction chain from the tetrahedron (excluding the root), so the
-   *  LIBRARY can reopen the solid in the main view with a tetrahedron-rooted
-   *  history even when the user never personally made it. */
+  /** The construction chain from the tetrahedron (excluding the root), so the LIBRARY
+   *  can reopen the solid with a tetrahedron-rooted history even when the user never
+   *  made it themselves. */
   steps: BuildStep[];
 }
 
 // --- recipe helpers ---------------------------------------------------------
 // Colors propagate through a chain of operations exactly as they do during live
-// editing (a fresh seed starts with `seedColors`, and every operation layers on its
-// c+n rule). Each helper takes and returns a *colored* Polyhedron.
+// editing: a fresh seed starts with `seedColors` and every operation layers on its
+// combination rule. Each helper takes and returns a colored Polyhedron.
 const wrap = (r: { mesh: Mesh; colors: ColorSet }): Polyhedron =>
   new Polyhedron(r.mesh, r.colors);
 
 /** Uniform truncation (intermediate topology). */
 const truncate = (p: Polyhedron): Polyhedron =>
   wrap(buildTruncate(p, 0, null).commit(0.5, false));
-/** Rectify / ambo (the welded "max" of the truncate drag). */
+/** Rectify / ambo: the welded max of the truncate drag. */
 const rectify = (p: Polyhedron): Polyhedron =>
   wrap(buildTruncate(p, 0, null).commit(1, true));
 /** Kis (intermediate topology). */
 const kis = (p: Polyhedron): Polyhedron =>
   wrap(buildKis(p, 0, null).commit(0.5, false));
-/** Join (the welded "max" of the kis drag). */
+/** Join: the welded max of the kis drag. */
 const join = (p: Polyhedron): Polyhedron =>
   wrap(buildKis(p, 0, null).commit(1, true));
-/** Snub of `p` — a SINGLE game operation: the vertex drag rectifies `p` and keeps
- *  going into the twist, so the rectification is an internal stage, not a step of
- *  its own. (Any vertex / anchor works, since the committed topology is the
- *  whole-solid snub.) */
+/** Snub of `p`, a single game operation: the vertex drag rectifies `p` and keeps
+ *  going into the twist, so the rectification is an internal stage, not a step of its
+ *  own. Any vertex works as the anchor, since the committed topology is the
+ *  whole-solid snub. */
 const snub = (p: Polyhedron): Polyhedron => {
   const r = rectify(p);
   return wrap(buildSnub(r, 0, r.vertices[0].clone()).commit(1, true));
 };
-/** Gyro of `p` — likewise a single operation: the face drag joins `p` and twists on. */
+/** Gyro of `p`, likewise a single operation: the face drag joins `p` and twists on. */
 const gyro = (p: Polyhedron): Polyhedron => {
   const j = join(p);
   return wrap(buildGyro(j, 0, j.vertices[0].clone()).commit(1, true));
 };
 
 // --- chamfer / subdivide ----------------------------------------------------
-// These are built with the actual interactive operations (the same `buildChamfer`
-// / `buildSubdivide` the game runs on a dragged edge), rather than reconstructed
-// from truncate/kis on a selected arity. That arity trick can't express the
-// tetrahedron — its join (the cube) is vertex-uniform and its rectify (the
-// octahedron) is face-uniform, so there's no sub-arity to target — whereas the
-// real operation chamfers/subdivides EVERY edge and so handles it directly. Any
-// edge works as the drag handle (the op is global); we just take the first.
+// These use the interactive operations (the `buildChamfer` / `buildSubdivide` the
+// game runs on a dragged edge) rather than a reconstruction from truncate/kis on a
+// selected arity. That arity trick can't express the tetrahedron: its join (the cube)
+// is vertex-uniform and its rectify (the octahedron) is face-uniform, so there is no
+// sub-arity to target. The real operation acts on every edge, so it handles the
+// tetrahedron directly. Any edge serves as the drag handle, since the operation is
+// global; the first one is taken.
 
 /** Chamfer (intermediate topology) every edge of `p`. */
 const chamfer = (p: Polyhedron): Polyhedron => {
@@ -120,11 +115,10 @@ const subdivide = (p: Polyhedron): Polyhedron => {
 };
 
 // --- step-recording builds --------------------------------------------------
-// A Build is a solid together with the chain of operations that produced it from
-// the tetrahedron. The low-level recipe helpers above stay pure (poly → poly);
-// these wrappers apply one and append the labeled step, so every named solid
-// carries a tetrahedron-rooted history.
-// The tetrahedron — the only starting seed, and the root of every construction.
+// A Build is a solid together with the chain of operations that produced it from the
+// tetrahedron. The recipe helpers above stay pure (poly -> poly); these wrappers apply
+// one and append the labeled step, so every named solid carries a tetrahedron-rooted
+// history. The tetrahedron is the only starting seed, and the root of every build.
 const tetMesh = getSeed("tetrahedron");
 const tet = new Polyhedron(tetMesh, seedColors(tetMesh));
 
@@ -165,13 +159,11 @@ const OC: SchemeName = "octahedral";
 const IC: SchemeName = "icosahedral";
 
 // --- the construction tree, rooted at the tetrahedron -----------------------
-// (Identical to what the game produces from the only starting seed; the Build
-// wrappers record each step so a tetrahedron-rooted history can be replayed.)
 const octB = Rectify(root); //     rectify(tetra) = octahedron
 const cubeB = Join(root); //       join(tetra)    = cube
-// Snub / gyro are SINGLE operations that pass through the rectify / join on their
-// way, so they hang off the same parent as those — not off their result. (Snubbing
-// the tetrahedron makes the icosahedron in one drag; the octahedron is never a step.)
+// Snub and gyro are single operations that pass through the rectify / join on their
+// way, so they hang off the same parent as those, not off their result: snubbing the
+// tetrahedron makes the icosahedron in one drag, with the octahedron never a step.
 const icoB = Snub(root); //        snub(tetra)    = icosahedron
 const dodB = Gyro(root); //        gyro(tetra)    = dodecahedron
 

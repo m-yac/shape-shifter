@@ -15,27 +15,23 @@ import { config } from "../config";
 
 const BLACK: GeomColor = [0, 0, 0];
 
-// At the full gyro each new edge-midpoint vertex slides `gyroFaceSlide` of the way
-// along the line joining the midpoints of its quad's two opposite edges, and lifts
-// outward off the face. The lift is NOT a fixed fraction of the edge: it scales with
-// cot(dihedral/2) of the join edge the vertex sits over, so a sharp join folds up much
-// more than a nearly-flat one — see config.operations.gyroLiftFactor.
+// At the full gyro each new edge-midpoint vertex slides `gyroFaceSlide` of the way along
+// the line joining the midpoints of its quad's two opposite edges, and lifts outward off
+// the face. The lift is not a fixed fraction of the edge: it scales with cot(dihedral/2)
+// of the join edge the vertex sits over, so a sharp join folds up much more than a
+// nearly-flat one (see config.operations.gyroLiftFactor).
 const FACE_SLIDE = config.operations.gyroFaceSlide;
 
 /**
- * The exponent `p` in a q vertex's lift schedule `lift(t) = t^p`. The in-plane slide
- * runs linearly (0→1); if the lift ran linearly too (`p = 1`) the two split half-quads
- * would fold along the old join edge and crease at every intermediate step, flattening
- * only at the t=1 end. Advancing the lift AHEAD of the slide (`p < 1`) keeps each split
- * face approximately planar throughout the drag — the sharper the join edge the q sits
- * over, the more the lift must lead, so `p` grows with the join `dihedral`:
- *
- *     p ≈ 0.79·dihedral − 0.85   (dihedral in radians)
- *
- * a line fit to the per-shape optimum across the Platonic joins & rectifications
- * (90° cube → p≈0.39, 120° → 0.81, 144° → 1.14). Clamped to a sane band. See
- * tests/twist_validate.test.ts ("gyro faces stay ~planar") for the resulting planarity
- * and investigations/gyro_lift_exponent.investigate.ts for how the fit was found.
+ * The exponent `p` in a q vertex's lift schedule `lift(t) = t^p`. The in-plane slide runs
+ * linearly (0→1); were the lift linear too (`p = 1`) the two split half-quads would fold
+ * along the old join edge and crease at every intermediate step, flattening only at t=1.
+ * Running the lift ahead of the slide (`p < 1`) keeps each split face near-planar
+ * throughout the drag; the sharper the join edge the q sits over, the more the lift
+ * must lead, so `p` grows with the join `dihedral` (in radians), clamped to [0.3, 1.6]:
+ * 90° cube → p≈0.52, 120° → 0.68, 144° → 0.80. The line is gentler than the per-shape
+ * optimum fit in investigations/gyro_lift_exponent.investigate.ts, which sits near the
+ * top of the band on the sharpest joins.
  */
 export function liftExponent(dihedral: number): number {
   return Math.max(0.3, Math.min(1.6, 0.30 * dihedral + 0.05));
@@ -85,10 +81,10 @@ function twoColorVertices(dcel: DCEL): Map<number, 0 | 1> {
 }
 
 /** One peripheral (q) vertex of a gyred face: its new index and the two orthogonal
- *  displacements that carry it from its edge midpoint to the full gyro. Splitting the
- *  motion this way lets `positions` schedule the in-plane slide and the out-of-plane
- *  lift on separate curves, so the split faces stay (near-)planar all through the drag
- *  rather than only at the t=1 end (see `liftSchedule`). */
+ *  displacements that carry it from its edge midpoint to the full gyro. Keeping the
+ *  motion split lets `positions` schedule the in-plane slide and the out-of-plane lift on
+ *  separate curves, so the split faces stay near-planar all through the drag rather than
+ *  only at t=1 (see `liftExponent`). */
 interface QVert {
   index: number;
   start: Vector3; // the edge midpoint (t=0)
@@ -99,15 +95,15 @@ interface QVert {
 }
 
 /**
- * Gyro as a twist extension of a JOIN. Given the join `poly` (all quad faces), each
- * original vertex — together with the inner halves of its edges — rotates about its
- * radial axis; a new vertex appears at every edge midpoint and each quad splits into
- * two, producing the gyro (the dual of snub). The topology (tiling + weld across
- * every join edge) is exactly the classic gyro, so it is independent of the
- * intermediate rotation, which the post-release relaxer regularizes.
+ * Gyro as a twist extension of a join. Given the join `poly` (all quad faces), each
+ * original vertex, together with the inner halves of its edges, rotates about its radial
+ * axis; a new vertex appears at every edge midpoint and each quad splits in two, giving
+ * the gyro (the dual of snub). The topology (tiling + weld across every join edge) is
+ * the classic gyro's, independent of the intermediate rotation, which the post-release
+ * relaxer regularizes.
  *
- * `apexPos` (the join apex the base drag ended on, passed by the controller) selects
- * the local neighbourhood the arc is drawn in.
+ * `apexPos` is the join apex the base drag ended on; it selects the local neighbourhood
+ * the arc is drawn in.
  */
 export function buildGyro(
   poly: Polyhedron,
@@ -122,9 +118,9 @@ export function buildGyro(
   const C = config.colors.operations;
   const color = twoColorVertices(dcel);
 
-  // Welded max: dissolve every original edge (shared by two faces of the join). Built up
-  // front (independent of chirality) so the per-variant target solver below can weld the
-  // preview into the true gyro faces it needs to flatten.
+  // Welded max: dissolve every original edge (shared by two faces of the join). Built
+  // before the variants, and independent of chirality, so the per-variant target solver
+  // below can weld the preview into the gyro faces it needs to flatten.
   const dissolve = new Set<string>();
   const dissolveList: Array<[number, number]> = [];
   for (const he of dcel.halfedges) {
@@ -142,20 +138,17 @@ export function buildGyro(
     edgeColor: Map<string, GeomColor>;
     qverts: QVert[];
   } {
-    // Colors mirror snub (its dual): each snub rule, dualized (vertex↔face), read
-    // against the JOIN's own stored colors (`old`), so oldFace = old.face, oldVertex =
-    // old.vertex, oldEdge = old.edge. A gyro FACE is the dual of a snub split VERTEX
+    // Colors mirror snub (its dual): each snub rule, dualized (vertex↔face), read against
+    // the join's own stored colors (`old`): oldFace = old.face, oldVertex = old.vertex,
+    // oldEdge = old.edge. A gyro face is the dual of a snub split vertex
     // (dualRule(snub.newVertex)); a q vertex is the dual of a snub gap face
     // (dualRule(snub.newFace)).
     //
-    // A finished gyro face is welded from a big half (owning face f) and a triangle
-    // half of a NEIGHBOUR across a dissolved join edge. Each half is colored from the
-    // join edge IT welds across, so the two halves agree (the join's faces across that
-    // edge share a color on the symmetric solids) and the merged face reads as one
-    // color from t=0.
-    // `fid` = the join face this half splits from (dual of the rectify vertex a snub
-    // split-vertex comes from). Each weld half passes its own parent face; they agree
-    // on the symmetric solids (the two faces across a join edge share a color).
+    // A finished gyro face is welded from a big half (owning face f) and a triangle half
+    // of a neighbour, across a dissolved join edge. `ea`/`eb` are the join edge the half
+    // welds across and `fid` its own parent face, so the two halves agree (on the
+    // symmetric solids the faces across a join edge share a color) and the merged face
+    // reads as one color from t=0.
     const gyroFaceColor = (ea: number, eb: number, fid: number): GeomColor =>
       combine(dualRule(C.snub.newVertex), {
         oldEdge: old.edge.get(edgeKey(ea, eb)) ?? BLACK,
@@ -189,27 +182,26 @@ export function buildGyro(
         vertexColor[center] = old.face[f.id];
         ownerFace.set(center, f.id);
       }
-      // Outward normal of this quad — the lift direction, shared by both its q's so
-      // the raise has NO in-plane component (a per-vertex radial axis would tilt the
-      // two q's toward opposite corners, which reads as an unwanted twist).
+      // Outward normal of this quad: the lift direction, shared by both its q's so the
+      // raise has no in-plane component (a per-vertex radial axis would tilt the two q's
+      // toward opposite corners, reading as an unwanted twist).
       const faceNormal = faceNormalHE(f);
       if (faceNormal.dot(faceCentroidHE(f)) < 0) faceNormal.negate();
       const qIdx: number[] = [];
-      // Center→q spoke / quad-split edges are the dual of a snub CENTER split edge (the
+      // Center→q spoke / quad-split edges are the dual of a snub center split edge (the
       // new edge a split rectify vertex opens): snub colors that the rectify vertex, so
-      // gyro colors this the join FACE (old.face). (The q↔original edges — the dual of
-      // snub's inner/outer edges — are colored in the edge pass below.)
+      // gyro colors this the join face. (The q↔original edges, the dual of snub's
+      // inner/outer edges, are colored in the edge pass below.)
       const spokeColor: GeomColor = old.face[f.id];
       for (let j = 0; j < n; j++) {
         const q = idx++;
         qIdx.push(q);
-        // q_j sits at the midpoint of boundary edge (P[2j-1], P[2j]). Projected onto
-        // the quad it slides straight along the line joining that midpoint to the
-        // midpoint of the OPPOSITE edge (P[2j+1], P[2j+2]), and lifts outward along the
-        // face normal. The chirality lives entirely in the topology (which opposite-
-        // edge pair each variant's 2-colouring picks), so this motion is a clean
-        // straight slide with no in-plane rotation; the relaxer then settles the
-        // pentagons into the true gyro.
+        // q_j sits at the midpoint of boundary edge (P[2j-1], P[2j]). Projected onto the
+        // quad it slides straight along the line joining that midpoint to the midpoint of
+        // the opposite edge (P[2j+1], P[2j+2]), and lifts outward along the face normal.
+        // The chirality lives entirely in the topology (which opposite-edge pair each
+        // variant's 2-colouring picks), so the motion is a straight slide, no in-plane
+        // rotation; the relaxer then settles the pentagons into the true gyro.
         const a = dcel.vertices[P[(2 * j - 1 + m) % m]].position;
         const pivot = dcel.vertices[P[2 * j]].position;
         const oppA = dcel.vertices[P[(2 * j + 1) % m]].position;
@@ -217,25 +209,24 @@ export function buildGyro(
         const mid = a.clone().add(pivot).multiplyScalar(0.5);
         const oppMid = oppA.clone().add(oppB).multiplyScalar(0.5);
         const v0 = mid.clone().sub(pivot);
-        // Lift height: cot(dihedral/2)·|v0| of the join edge (a,pivot) this q sits over,
-        // scaled by gyroLiftFactor. The dihedral comes from the two join faces meeting
-        // along that edge — the sharper the valley, the more the q rises to fold the
-        // quads into a flat pentagon. (cot = cos/sin; near-flat edges → tiny lift.)
+        // Lift height: gyroLiftFactor · cot(dihedral/2) · |v0|, for the join edge
+        // (a, pivot) this q sits over. The dihedral is between the two join faces meeting
+        // along that edge: the sharper the valley, the more the q rises to fold the quads
+        // into a flat pentagon, and a near-flat edge barely lifts at all.
         const boundary = bh[(s + ((2 * j - 1 + m) % m)) % m];
         const cotHalf = cotHalfDihedral(boundary, faceNormal);
         const slideFull = oppMid.clone().sub(mid).multiplyScalar(FACE_SLIDE);
         const liftFull = faceNormal.clone()
           .multiplyScalar(config.operations.gyroLiftFactor * cotHalf * v0.length());
-        // Lift schedule exponent from THIS q's join-edge dihedral (recovered from
+        // Lift schedule exponent from this q's join-edge dihedral (recovered from
         // cot(dihedral/2)): sharper edges lift earlier so the split face stays flat.
         const dihedral = 2 * Math.atan2(1, cotHalf);
         const liftExp = liftExponent(dihedral);
         qverts.push({ index: q, start: mid.clone(), slideFull, liftFull, liftExp, dihedral });
         qNormal.set(q, faceNormal);
-        // A q vertex is the dual of a snub gap triangle (a snub NEW FACE): the join edge
-        // it sits on maps to snub's rectify edge, and the join face f it borders maps to
-        // the rectify vertex the gap opened at. So it's dualRule(snub.newFace) read against
-        // (join edge, join face f).
+        // A q vertex is the dual of a snub gap triangle (snub.newFace): the join edge it
+        // sits on maps to snub's rectify edge, and the join face f it borders to the
+        // rectify vertex the gap opened at.
         vertexColor[q] = combine(dualRule(C.snub.newFace), {
           oldFace: old.face[f.id],
           oldEdge: old.edge.get(edgeKey(P[(2 * j - 1 + m) % m], P[2 * j])) ?? BLACK,
@@ -260,12 +251,11 @@ export function buildGyro(
         previewFaces.push([qIdx[(j + 1) % n], P[2 * j + 1], P[(2 * j + 2) % m]]);
         // Triangle half: welds across join edge (P[2j+1],P[2j+2]).
         faceColor.push(gyroFaceColor(P[2 * j + 1], P[(2 * j + 2) % m], f.id));
-        // This triangle-half is welded (across its dissolved join edge P[2j+1]→P[2j+2])
-        // into the quad/pentagon-half of the NEIGHBOUR face to form one gyro face. Start
-        // it at that neighbour's colour — the colour of the face the merged gyro face is
-        // splitting — rather than its own face's, so the merged face fades as a SINGLE
-        // colour from t=0 instead of showing a seam of two colours along the (now
-        // dissolved, hidden) old join edge.
+        // This triangle-half welds (across its dissolved join edge P[2j+1]→P[2j+2]) into
+        // the big half of the neighbour face to form one gyro face. Start it at that
+        // neighbour's colour, the colour of the face the merged gyro face is splitting,
+        // rather than its own face's, so the merged face fades as one colour from t=0
+        // instead of showing a seam along the dissolved join edge.
         const triBoundary = bh[(s + 2 * j + 1) % m];
         const triNeighbor = triBoundary.twin ? triBoundary.twin.face.id : f.id;
         faceStart.push(old.face[triNeighbor]);
@@ -281,9 +271,9 @@ export function buildGyro(
         const key = edgeKey(a, b);
         if (edgeColor.has(key)) continue;
         // A q↔original-join-vertex edge is a gyro inner/outer edge: the dual of snub's
-        // boundary edge (dualRule(snub.snubEdge)). Dually the boundary's adjacent rotated
-        // face becomes the original join vertex endpoint (oldVertex), and its gap-triangle
-        // vertex becomes the join face this edge borders (oldFace = the q's owner face).
+        // boundary edge. Dually the boundary's adjacent rotated face becomes the original
+        // join vertex endpoint (oldVertex), and its gap-triangle vertex becomes the join
+        // face this edge borders (oldFace = the q's owner face).
         const q = qSourceEdge.has(a) ? a : qSourceEdge.has(b) ? b : -1;
         const orig = a < V ? a : b < V ? b : -1;
         if (q >= 0 && orig >= 0) {
@@ -291,8 +281,8 @@ export function buildGyro(
           edgeColor.set(key, combine(dualRule(C.snub.snubEdge), {
             oldVertex: old.vertex[orig],
             oldFace: old.face[ownerFace.get(q)!],
-            // The join edge this edge runs along (dual of snub's oldEdge above; unused
-            // by the current rule, but the natural single source if it wants oldEdge).
+            // The join edge this edge runs along (dual of snub's oldEdge; unused by the
+            // current rule, but the natural source should it want oldEdge).
             oldEdge: old.edge.get(edgeKey(ea, eb)) ?? BLACK,
           }));
           continue;
@@ -304,7 +294,7 @@ export function buildGyro(
     }
 
     // Re-solve each q's target so the welded gyro faces land planar at t=1 even on a
-    // non-canonical (un-relaxed) join, then keep the same lift schedule (see below).
+    // non-canonical (un-relaxed) join; the lift schedule is unchanged.
     solveGyroTargets(qverts, qNormal, previewFaces, faceColor);
 
     return { previewFaces, vertexCount: idx, vertexColor, faceColor, faceStart, edgeColor, qverts };
@@ -312,25 +302,22 @@ export function buildGyro(
 
   /**
    * Per-q target solve that keeps the finished gyro faces planar on a raw, un-relaxed
-   * join — the gyro analog of kis's `computeJoinHeights`.
+   * join: the gyro analog of kis's `computeJoinHeights`.
    *
-   * The heuristic q target (edge-midpoint + a fixed-fraction slide toward the opposite
-   * edge + a cot(dihedral/2) lift) lands a FLAT pentagon only on a canonical join, whose
-   * quads are congruent. On a non-canonical join (mixed face types, e.g. join of a
-   * cuboctahedron) the same target leaves the t=1 pentagon ~5% of an edge non-planar, and
-   * no lift SCHEDULE can flatten a non-planar endpoint (see
-   * investigations/gyro_lift_exponent.investigate.ts). So we move each q to the point that
-   * best lies on the planes of its incident gyro faces: for each welded pentagon touching
-   * q we require q on the best-fit plane of that face's OTHER vertices — a linear residual
-   * nᵢ·(q−cᵢ)=0 — and least-squares them with a light Tikhonov pull (λ) toward the heuristic
-   * seed (which pins the otherwise-free edge-tangent direction and the underdetermined
-   * canonical case). The faces couple through shared q's, so it's Gauss-Seidel, exactly
-   * like computeJoinHeights.
+   * The heuristic q target (edge midpoint + a fixed slide toward the opposite edge + a
+   * cot(dihedral/2) lift) lands a flat pentagon only on a canonical join, whose quads
+   * are congruent. On a non-canonical join (mixed face types, e.g. the join of a
+   * cuboctahedron) it leaves the t=1 pentagon ~5% of an edge non-planar, and no lift
+   * schedule can flatten a non-planar endpoint. So each q moves to the point best lying
+   * on the planes of its incident gyro faces: for each welded pentagon at q, require q
+   * on the best-fit plane of that face's other vertices (a linear residual nᵢ·(q−cᵢ)=0)
+   * and least-squares them with a Tikhonov pull (λ) toward the heuristic seed, which
+   * pins the free edge-tangent direction and the underdetermined canonical case. The
+   * faces couple through shared q's, so it is Gauss-Seidel, like computeJoinHeights.
    *
-   * The solved target is then split back into an in-plane `slideFull` and an along-normal
-   * `liftFull`, so the drag still runs the slide linearly and leads the lift on t^liftExp
-   * (keeping the "lift has no in-plane component" invariant), only now aimed at a target
-   * that is actually planar.
+   * The solved target is split back into an in-plane `slideFull` and an along-normal
+   * `liftFull`: the drag still runs the slide linearly and leads the lift on t^liftExp,
+   * keeping the invariant that the lift has no in-plane component.
    */
   function solveGyroTargets(
     qverts: QVert[],
@@ -362,7 +349,7 @@ export function buildGyro(
         let m00 = LAMBDA, m01 = 0, m02 = 0, m11 = LAMBDA, m12 = 0, m22 = LAMBDA;
         const rhs = s.clone().multiplyScalar(LAMBDA);
         for (const f of faces) {
-          // Best-fit plane of this face's OTHER vertices (Newell normal + centroid).
+          // Best-fit plane of this face's other vertices (Newell normal + centroid).
           const nrm = new Vector3();
           const c = new Vector3();
           let cnt = 0;
@@ -384,7 +371,7 @@ export function buildGyro(
           m11 += nrm.y * nrm.y; m12 += nrm.y * nrm.z; m22 += nrm.z * nrm.z;
           rhs.addScaledVector(nrm, d);
         }
-        // Solve the SPD 3×3 (always invertible: λI added). three's Matrix3 is row-major set.
+        // Solve the SPD 3×3 (always invertible, given the λI). Matrix3.set is row-major.
         const inv = new Matrix3().set(m00, m01, m02, m01, m11, m12, m02, m12, m22).invert();
         cur.set(q.index, rhs.clone().applyMatrix3(inv));
       }
@@ -432,9 +419,8 @@ export function buildGyro(
       const gRest: number[] = [];
       for (let k = 2; k < lg.length; k++) gRest.push(lg[(G.i + k) % lg.length]);
       out.push([a, ...gRest, b, ...fRest]);
-      // Both halves were colored from this shared join edge they weld across (see
-      // gyroFaceColor), so they already agree on the merged gyro face's color — keep
-      // it rather than recomputing.
+      // Both halves were colored from the shared join edge they weld across (see
+      // gyroFaceColor), so they already agree on the merged face's color.
       outColors.push(faceColorsIn[F.fi]);
     }
     for (let fi = 0; fi < faces.length; fi++) {
@@ -446,18 +432,16 @@ export function buildGyro(
     return { faces: out, faceColors: outColors };
   }
 
-  // ---- Handle: a single ROTATION arc in the tangent plane of the join apex the drag
-  // ended on. The apex vertex itself stays put, but its edges to the new midpoint
-  // vertices (the q's — the only real edges of the gyro) rotate about it as the gyro
-  // forms, and THAT rotation is the gyro's twist. The handle is a circular arc swept
-  // about the apex through the same angle (see `arcSpan`), so riding it out to its limit
-  // carries those edges to the finished gyro. The arc sits on the side of the apex
-  // facing AWAY from the camera (rather than on a particular spoke, whose post-join
-  // angle is often shallow and reads as a foreshortened sliver that the cursor jumps
-  // across), so it always presents its full width. It extends ±arcSpan about its
-  // midpoint; dragging across the middle chooses the chirality, so either gyro is
-  // reachable, and the midpoint (zero twist) is the join rest point the cursor snaps
-  // back onto.
+  // ---- Handle: a rotation arc in the tangent plane of the join apex the drag ended on.
+  // The apex vertex stays put, but its edges to the new midpoint vertices (the q's, the
+  // only real edges of the gyro) rotate about it as the gyro forms, and that rotation is
+  // the gyro's twist. The handle is a circular arc swept about the apex through the same
+  // angle (see `arcSpan`), so riding it out to its limit carries those edges to the
+  // finished gyro. The arc sits on the side of the apex facing away from the camera, so
+  // it always presents its full width; sitting it on a particular spoke instead would
+  // often foreshorten it to a sliver the cursor jumps across. It extends ±arcSpan about
+  // its midpoint, so dragging across the middle chooses the chirality and either gyro is
+  // reachable; the midpoint (zero twist) is the join rest the cursor snaps back onto.
   let apexVid = 0;
   let bestD = Infinity;
   for (const v of dcel.vertices) {
@@ -491,8 +475,8 @@ export function buildGyro(
   // Each direction reaches this far: 360/(divisor·n) degrees (short of 360/(2n), a 2nd
   // join). The two directions are the two chiralities.
   const arcSpan = (2 * Math.PI) / (config.operations.twistArcDivisor * n);
-  // A small dead-zone at the midpoint: within it the cursor snaps to the plain join
-  // (zero twist), so the handle "rests" at the join the way snub rests at the rectify.
+  // Dead-zone at the midpoint: within it the cursor snaps to the plain join (zero twist),
+  // so the handle rests at the join the way snub's rests at the rectify.
   const REST_T = 0.06;
 
   // Live twist state. `sign` is which way along the arc (chirality); `curT` is the
@@ -501,13 +485,12 @@ export function buildGyro(
   let sign = 1;
   const variantIndex = () => (sign >= 0 ? 0 : 1);
 
-  // Each new vertex moves from its edge midpoint by an in-plane slide toward the
-  // opposite edge and an outward lift off the join face. Driving both on the SAME
-  // fraction `t` (a straight line to the target) is planar only at the t=1 end; in
-  // between, the two half-quads of each split face fold along the old edge and crease.
-  // Advancing the lift ahead of the slide (`t^liftExp`, exponent < 1 for sharp joins)
-  // flattens the fold continuously, so the faces stay approximately planar all through
-  // the drag (see liftExponent).
+  // Each new vertex moves from its edge midpoint by an in-plane slide toward the opposite
+  // edge and an outward lift off the join face. Driving both on the same fraction `t` (a
+  // straight line to the target) is planar only at t=1; in between, the two half-quads
+  // of each split face fold along the old edge and crease. Running the lift ahead of the
+  // slide (`t^liftExp`, exponent < 1 for sharp joins) flattens the fold continuously, so
+  // the faces stay approximately planar all through the drag (see liftExponent).
   function positions(t: number): Vector3[] {
     const va = variants[variantIndex()];
     const out: Vector3[] = new Array(va.vertexCount);
@@ -531,13 +514,12 @@ export function buildGyro(
   }
 
   // Intersect the cursor ray with the apex tangent plane. The twist is the hit's angle
-  // relative to the arc midpoint (clamped to ±arcSpan; its sign is the chirality) —
-  // but SCALED by how far OUT the cursor is (its radial distance vs the arc radius), so
-  // the effective snap interpolates from the arc's midpoint (the join rest point, when
-  // the cursor is at the apex centre) out to the true angular position as the cursor
-  // reaches the arc. This keeps the marker from leaping to an arc end while the cursor
-  // is still climbing from the join up to the arc. A small dead-zone snaps it to the
-  // plain join (zero twist) near the midpoint.
+  // relative to the arc midpoint, clamped to ±arcSpan, its sign the chirality, scaled by
+  // how far out the cursor is (its radial distance vs the arc radius). So the snap
+  // interpolates from the arc's midpoint (the join rest point, when the cursor is at the
+  // apex centre) out to the true angular position as the cursor reaches the arc, which
+  // keeps the marker from leaping to an arc end while the cursor still climbs from the
+  // join up to the arc. Near the midpoint the dead-zone snaps it to the plain join.
   function snap(ray: Ray): { t: number; point: Vector3 } {
     const denom = ray.direction.dot(apexNormal);
     if (Math.abs(denom) >= 1e-6) {

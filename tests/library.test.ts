@@ -60,10 +60,10 @@ describe("diagram graph", () => {
 
 describe("computeVisible (directed neighbours)", () => {
   it("reveals the Tetrahedron's whole compound chain (truncate → rectify → snub)", () => {
-    // The spec example: with only the Tetrahedron made, you see it, its
-    // truncation + kis (start), their rectification + join — the Octahedron +
-    // Cube (middle) — and one further hop, the snub + gyro — the Icosahedron +
-    // Dodecahedron (end). Plus its dashed chamfer + subdivide leaves.
+    // With only the Tetrahedron made you see it, its truncation + kis (start), their
+    // rectification + join (middle: the Octahedron + Cube), and one further hop, the
+    // snub + gyro (end: the Icosahedron + Dodecahedron). Plus its dashed chamfer and
+    // subdivide leaves.
     const v = visibleNames(["Tetrahedron"]);
     expect(v).toEqual(
       new Set([
@@ -81,28 +81,26 @@ describe("computeVisible (directed neighbours)", () => {
   });
 
   it("does NOT expand a chain node's own new branches", () => {
-    // The Octahedron is reached mid-chain (via a middle arrow), so only its END
-    // arrow (the snub) continues; its own truncations must stay hidden until it
-    // is discovered. The Cuboctahedron (a truncation-branch of the Octahedron)
-    // therefore stays hidden.
+    // The Octahedron is reached mid-chain, via a middle arrow, so only its end arrow
+    // (the snub) continues; its own truncations stay hidden until it is discovered.
+    // The Cuboctahedron is one such truncation branch.
     expect(visibleNames(["Tetrahedron"]).has("Cuboctahedron")).toBe(false);
   });
 
   it("does NOT chain a dashed chamfer/subdivide leaf onward into a middle arrow", () => {
-    // The Cube reaches the Chamfered Cube by a dashed (:>) arrow, so it is a
-    // leaf: the Rhombicuboctahedron it points on to (via a solid middle arrow)
-    // must not be revealed just from making the Cube.
+    // The Cube reaches the Chamfered Cube by a dashed (:>) arrow, making it a leaf: the
+    // Rhombicuboctahedron it points on to, via a solid middle arrow, is not revealed by
+    // making the Cube.
     const v = visibleNames(["Cube"]);
     expect(v.has("Chamfered Cube")).toBe(true);
     expect(v.has("Rhombicuboctahedron")).toBe(false);
   });
 
   it("does NOT begin a chain partway along a compound arrow (a middle head)", () => {
-    // Making (not just seeing) the Subdivided Cube reveals nothing new: its only
-    // arrow onward is the MIDDLE of the compound arrow Cuboctahedron →
-    // Subdivided Octahedron → Deltoidal Icositetrahedron, and its ">…" first hop
-    // is not active — you have not rectified. So the Deltoidal Icositetrahedron
-    // (and the arrow leading to it) must stay hidden.
+    // Making, not just seeing, the Subdivided Cube reveals nothing new: its only arrow
+    // onward is the middle of the compound arrow Cuboctahedron → Subdivided Octahedron
+    // → Deltoidal Icositetrahedron, whose ">…" first hop is not active because you have
+    // not rectified. So the Deltoidal Icositetrahedron and the arrow to it stay hidden.
     const v = visibleNames(["Subdivided Cube"]);
     expect(v.has("Deltoidal Icositetrahedron")).toBe(false);
     expect(v).toEqual(new Set(["Subdivided Cube"]));
@@ -127,8 +125,8 @@ describe("drawableEdges (only the traversed chain arrows)", () => {
     // The chain arrows are all drawn: truncate → rectify → snub.
     expect(drawn).toContainEqual(["Truncated Tetrahedron", "Octahedron"]);
     expect(drawn).toContainEqual(["Octahedron", "Icosahedron"]);
-    // But the Octahedron's OWN start branches (its truncations) are not followed
-    // here, so they aren't drawn (they'd lead off to still-hidden shapes).
+    // But the Octahedron's own start branches (its truncations) are not followed here,
+    // so they aren't drawn: they lead off to still-hidden shapes.
     expect(drawn).not.toContainEqual(["Octahedron", "Truncated Octahedron"]);
     expect(drawn).not.toContainEqual(["Octahedron", "Triakis Octahedron"]);
   });
@@ -148,9 +146,9 @@ describe("library shapes (rooted at the tetrahedron)", () => {
   it("colors the cube the way the game makes it: join(tetrahedron) → all faces one swatch", () => {
     const cube = libraryShapeFor("Cube")!;
     expect(cube.scheme).toBe("octahedral");
-    // join() colors its 6 rhombi from the tetrahedron's 6 EDGES — so each face now
-    // carries its own distinct edge ID (6 unique vectors), but under the octahedral
-    // scheme all 6 still render as the one edge swatch, so the cube reads as one color.
+    // join() colors its 6 rhombi from the tetrahedron's 6 edges, so each face carries a
+    // distinct edge ID (6 unique vectors); under the octahedral scheme all 6 render as
+    // the one edge swatch, so the cube reads as a single color.
     expect(new Set(cube.poly.colors.face.map((c) => c.join(",")))).toHaveProperty("size", 6);
     setColorScheme(cube.scheme as SchemeName);
     try {

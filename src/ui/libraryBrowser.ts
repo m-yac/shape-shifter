@@ -49,9 +49,9 @@ import {
   type DiagramGraph,
 } from "../data/libraryDiagram";
 
-/** The render side of a diagram node: its world position, group, and the
- *  materials we re-tint as its discovered / ghost / hidden state changes.
- *  `faceMat`/`edgeMat` are null for a node whose solid couldn't be built. */
+/** The render side of a diagram node: its world position, group, and the materials
+ *  re-tinted as its discovered / ghost / hidden state changes. `faceMat` /
+ *  `edgeMat` are null for a node whose solid couldn't be built. */
 interface RenderNode {
   pos: Vector3; // world position (the diagram coordinate)
   name: string; // the diagram name (for the hover SHAPE dialog + click-to-open)
@@ -114,7 +114,7 @@ export class LibraryBrowser {
   private clickCandidate: number | null = null;
   private pointerActive = false;
 
-  // EASTER EGG: typing `config.library.revealAllCode` while open lights the whole
+  // Easter egg: typing `config.library.revealAllCode` while open lights the whole
   // library until it's closed. `cheatBuffer` is a rolling tail of recent keys.
   private revealAll = false;
   private cheatBuffer = "";
@@ -145,9 +145,6 @@ export class LibraryBrowser {
     this.popup.el.classList.add("library-popup");
     this.popup.el.style.display = "none";
 
-    // The inset OPTIONS panel (top-left, one cell in from the frame) with its two
-    // action buttons, and the bottom-left SHAPE dialog (hidden until hovering a
-    // discovered solid). Both are styled like the main-screen dialogs.
     this.optionsPopup = this.buildOptionsPopup();
     this.shapePopup = new Popup(screen, { cols: 12, rows: 4, title: config.ui.titles.polyhedron });
     this.shapePopup.el.classList.add("library-panel");
@@ -157,15 +154,15 @@ export class LibraryBrowser {
     this.shapePopup.el.style.display = "none";
 
     // The 3D view is a full-screen canvas (its backlight-colored scene blocks
-    // everything behind it); the box-drawing frame + title ride ON TOP as a
-    // transparent overlay, exactly like the other on-screen dialogs. The canvas
-    // is mounted into the grid (full screen) rather than inside the popup body.
+    // everything behind it); the box-drawing frame + title ride on top as a
+    // transparent overlay, like the other on-screen dialogs. The canvas is mounted
+    // into the grid, full screen, rather than inside the popup body.
     const backlight = config.theme.backlight;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "library-canvas";
     this.canvas.style.display = "none";
 
-    // A standard "[X]" action button sitting on the left of the top border.
+    // The `[X]` close button, sitting on the left of the top border.
     this.closeBtn = makeActionButton("X", () => this.close()).el;
     this.closeBtn.classList.add("library-close");
     this.popup.el.appendChild(this.closeBtn);
@@ -190,9 +187,9 @@ export class LibraryBrowser {
     this.controls.maxDistance = config.camera.maxDistance * 4;
     // After a pan/orbit gesture, snap the focus to the nearest solid.
     this.controls.addEventListener("end", () => this.snapToNearest());
-    // Left-drag on EMPTY space orbits; left-drag that lands on a solid or an
-    // arrow pans instead (decided per gesture in `pickPanMode`, run on the
-    // capture phase so it sets the button mode before OrbitControls reads it).
+    // Left-drag on empty space orbits; a left-drag that lands on a solid or an
+    // arrow pans instead. `pickPanMode` decides per gesture, and runs on the
+    // capture phase so it sets the button mode before OrbitControls reads it.
     this.controls.mouseButtons.LEFT = MOUSE.ROTATE;
     this.canvas.addEventListener("pointerdown", (e) => this.pickPanMode(e), true);
     // Hovering a discovered solid shows its SHAPE dialog and dims every other solid;
@@ -210,8 +207,8 @@ export class LibraryBrowser {
 
     this.scene.add(this.arrowGroup);
 
-    // The same glass-bloom post-processing as the main view (see main.ts), so
-    // the little solids glow identically. Sized in `relayout`.
+    // The same glass-bloom post-processing as the main view (see main.ts), so the
+    // little solids glow identically. Sized in `relayout`.
     const target = new WebGLRenderTarget(1, 1, { type: HalfFloatType, samples: 4 });
     this.composer = new EffectComposer(this.renderer, target);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
@@ -225,8 +222,8 @@ export class LibraryBrowser {
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
-    // The diagram (which builds ~30 solids) is constructed lazily on first open,
-    // so it never slows app startup.
+    // The diagram builds ~30 solids, so it is constructed lazily on first open
+    // rather than at startup.
 
     // Recreate the panel + renderer size whenever the screen relays out (only
     // matters while open, but cheap to keep in sync).
@@ -238,9 +235,9 @@ export class LibraryBrowser {
   private buildDiagram(): void {
     this.graph = buildDiagramGraph();
 
-    // Each solid is colored in its own symmetry scheme (the one the live app
-    // would auto-switch to), so we briefly drive the shared scheme while baking
-    // its colors, then restore whatever the main view was using.
+    // Each solid is colored in its own symmetry scheme (the one the live app would
+    // auto-switch to), so the shared scheme is driven while baking each solid's
+    // colors, then restored to whatever the main view was using.
     const savedScheme = getColorScheme();
 
     this.graph.nodes.forEach((info, i) => {
@@ -253,7 +250,7 @@ export class LibraryBrowser {
       const node: RenderNode = {
         pos: group.position.clone(),
         name: info.name,
-        // The SHAPE dialog mirrors the main readout's signature line; compute it once
+        // The SHAPE dialog mirrors the main readout's signature line, computed once
         // from the solid's own (database) connectivity.
         sigText: entry ? describeSignature(computeSignature(entry.poly.dcel)) : null,
         discoverable: entry !== null,
@@ -292,7 +289,7 @@ export class LibraryBrowser {
     return out;
   }
 
-  /** Every discoverable node index — the "discovered" set the reveal-all cheat uses. */
+  /** Every discoverable node index: the discovered set the reveal-all cheat uses. */
   private allDiscoverableSet(): Set<number> {
     const out = new Set<number>();
     this.nodes.forEach((n, i) => {
@@ -312,12 +309,12 @@ export class LibraryBrowser {
       const show = visible.has(i);
       node.group.visible = show;
       if (!show || !node.faceMat || !node.edgeMat) return;
-      // Colored-edge tubes carry their own baked colors, so they only make sense on a
-      // discovered (fully-colored) node — a ghost recolors its edges a flat grey.
+      // Colored-edge tubes carry their own baked colors, so they only make sense on
+      // a discovered (fully-colored) node; a ghost recolors its edges a flat grey.
       node.edgeTubes?.setVisible(discovered.has(i));
       node.edgeTubes?.setOpacity(1); // restore after any hover dim
       if (discovered.has(i)) {
-        // Full default colors at default opacity.
+        // Discovered: the solid's own colors, at the normal opacity.
         node.faceMat.vertexColors = true;
         node.faceMat.color.set(0xffffff);
         node.faceMat.opacity = config.render.faceOpacity;
@@ -329,7 +326,7 @@ export class LibraryBrowser {
         node.edgeMat.transparent = false;
         node.edgeMat.needsUpdate = true;
       } else {
-        // Undiscovered ghost: all white at 25% opacity.
+        // Undiscovered ghost: a flat grey, mostly transparent.
         node.faceMat.vertexColors = false;
         node.faceMat.color.set(config.library.ghostColor);
         node.faceMat.opacity = config.library.ghostOpacity;
@@ -346,9 +343,9 @@ export class LibraryBrowser {
     this.buildArrows(visible, discovered);
   }
 
-  /** (Re)draw the diagram's arrows. Which edges to draw — both endpoints visible
-   *  and leaving an expandable (discovered / first-hop) node — is decided by the
-   *  pure `drawableEdges`; this just builds the lines + billboarded heads. */
+  /** (Re)draw the diagram's arrows. `drawableEdges` decides which edges to draw
+   *  (both endpoints visible, leaving an expandable discovered / first-hop node);
+   *  this builds the lines + billboarded heads for them. */
   private buildArrows(visible: Set<number>, discovered: Set<number>): void {
     for (const child of this.arrowGroup.children.slice()) {
       this.arrowGroup.remove(child);
@@ -370,9 +367,9 @@ export class LibraryBrowser {
       const tip = b.clone().addScaledVector(dir, -gap); // the line's forward end
 
       // Every edge carries one forward-pointing arrowhead; `e.head` says where it
-      // sits. The head's TIP goes at `headPos`; the drawn line is trimmed so it
-      // butts against the head's base rather than overlapping it. A "middle" head
-      // just rides on top of the full-length line.
+      // sits. Its tip goes at `headPos`, and the drawn line is trimmed to butt
+      // against the head's base rather than overlap it. A middle head rides on top
+      // of the full-length line.
       let headPos = tip;
       let lineStart = start;
       let lineEnd = tip;
@@ -383,14 +380,14 @@ export class LibraryBrowser {
         headPos = start.clone().addScaledVector(dir, headLen); // base sits at `start`
         lineStart = headPos;
       } else {
-        // Center the head's BODY on the line's midpoint (its tip sits half a head
-        // length past it), so it reads as centered even on short lines where the
-        // head length is a big fraction of the line.
+        // Center the head's body on the line's midpoint, putting its tip half a
+        // head-length past it, so it reads as centered even on short lines where
+        // the head is a big fraction of the length.
         headPos = start.clone().add(tip).multiplyScalar(0.5).addScaledVector(dir, headLen / 2);
       }
 
       const geo = new BufferGeometry().setFromPoints([lineStart, lineEnd]);
-      // Dashed lines (the chamfer/subdivide branches) need per-vertex distances
+      // Dashed lines (the chamfer / subdivide branches) need per-vertex distances
       // for LineDashedMaterial; solid lines use the plain basic material.
       const mat = e.dashed
         ? new LineDashedMaterial({
@@ -423,10 +420,10 @@ export class LibraryBrowser {
     }
   }
 
-  /** Billboard every arrowhead by spinning it about its OWN arrow axis: the tip
-   *  stays exactly along the arrow direction, and the flat triangle rotates around
-   *  that axis to face the camera as much as possible. So it looks flat-on from
-   *  the side but foreshortens to an edge when viewed down the arrow's length. */
+  /** Billboard every arrowhead by spinning it about its own arrow axis: the tip
+   *  stays along the arrow direction while the flat triangle rotates around that
+   *  axis to face the camera as much as it can. So a head looks flat-on from the
+   *  side, but foreshortens to an edge when viewed down the arrow's length. */
   private updateArrowheads(): void {
     const m = new Matrix4();
     for (const { mesh, dir } of this.arrowheads) {
@@ -468,8 +465,8 @@ export class LibraryBrowser {
     this.controls.mouseButtons.LEFT = hits.length > 0 ? MOUSE.PAN : MOUSE.ROTATE;
   }
 
-  /** Whether node `i` is currently interactable (visible AND shown in its colored,
-   *  discovered state — so reveal-all makes everything interactable too). */
+  /** Whether node `i` is interactable: visible and shown in its colored, discovered
+   *  state (so reveal-all makes everything interactable). */
   private isInteractable(i: number): boolean {
     return this.visibleSet.has(i) && this.discoveredNow.has(i);
   }
@@ -506,7 +503,7 @@ export class LibraryBrowser {
   }
 
   /** A release ends the gesture; if it didn't move far and pressed on an
-   *  interactable solid, that counts as a click → open the shape. */
+   *  interactable solid, it counts as a click and opens that shape. */
   private readonly onPointerUp = (e: PointerEvent): void => {
     if (!this.open || e.button !== 0) return;
     const wasActive = this.pointerActive;
@@ -537,8 +534,7 @@ export class LibraryBrowser {
     }
   }
 
-  /** Fill + place the bottom-left SHAPE dialog with a solid's name + signature
-   *  (the same lines the main readout shows, minus the snub/gyro capability line). */
+  /** Fill + place the bottom-left SHAPE dialog with a solid's name + signature. */
   private showShapeDialog(i: number): void {
     const node = this.nodes[i];
     this.shapeBody.textContent = node.sigText ? `${node.name}\n${node.sigText}` : node.name;
@@ -570,7 +566,7 @@ export class LibraryBrowser {
 
   // --- OPTIONS panel + reset confirmation -----------------------------------
 
-  /** The inset OPTIONS panel: a [Reveal all] and a [Reset] action button. */
+  /** The inset OPTIONS panel: the [Reveal all] and [Reset] action buttons. */
   private buildOptionsPopup(): Popup {
     const labels = config.ui.libraryOptions.buttons;
     const popup = new Popup(this.screen, { cols: 16, rows: 3, title: config.ui.titles.shapes });
@@ -590,8 +586,8 @@ export class LibraryBrowser {
     return popup;
   }
 
-  /** "Reveal all": the same as typing the reveal-all cheat — light the whole
-   *  library until the screen is closed. */
+  /** Same as typing the reveal-all cheat: light the whole library until the screen
+   *  is closed. */
   private revealAllNow(): void {
     this.revealAll = true;
     this.hoveredNode = null;
@@ -599,8 +595,8 @@ export class LibraryBrowser {
     this.refresh();
   }
 
-  /** Pop the reset confirmation. "Reset" wipes saved progress and reloads the page
-   *  (back to the intro); "Cancel" dismisses it. */
+  /** Pop the reset confirmation: Reset wipes saved progress and reloads the page
+   *  (back to the intro), Cancel dismisses it. */
   private showResetConfirm(): void {
     if (this.confirmPopup) return;
     const c = config.ui.libraryOptions.confirm;
@@ -639,7 +635,7 @@ export class LibraryBrowser {
     this.confirmPopup = null;
   }
 
-  /** Erase all saved progress and reload — the page comes back up at the intro. */
+  /** Erase all saved progress and reload; the page comes back up at the intro. */
   private doReset(): void {
     clearAllProgress();
     location.reload();
@@ -717,10 +713,10 @@ export class LibraryBrowser {
     this.relayout();
     this.refresh();
 
-    // On the FIRST open, start from the main view's orientation (zoomed further
-    // out so a solid and its neighbours are visible at once), looking at the
-    // origin. After that the two cameras are independent: the browse view keeps
-    // its own position across opens rather than re-syncing to the main view.
+    // On the first open, start from the main view's orientation (zoomed further out
+    // so a solid and its neighbours are visible at once), looking at the origin.
+    // After that the two cameras are independent: the browse view keeps its own
+    // position across opens rather than re-syncing to the main view.
     if (!this.cameraInit) {
       const dir = this.mainCamera.position.clone();
       if (dir.lengthSq() < 1e-9) dir.set(1, 0, 1);
@@ -775,7 +771,7 @@ export class LibraryBrowser {
   private relayout(): void {
     this.popup.resize(this.screen.cols, this.screen.rows);
     this.popup.placeAt(0, 0);
-    // The "[X]" masks border cells at the left of the top line.
+    // The close button masks border cells at the left of the top line.
     this.screen.place(this.closeBtn, 1, 0);
     // The OPTIONS panel is inset one cell from the top-left frame; the SHAPE dialog
     // re-places itself (bottom-left, inset one cell) whenever it's shown.
@@ -783,7 +779,7 @@ export class LibraryBrowser {
     if (this.hoveredNode !== null) this.showShapeDialog(this.hoveredNode);
     this.confirmPopup?.center();
     if (!this.open) return;
-    // The 3D fills the WHOLE glass; the frame overlays its outermost cells.
+    // The 3D fills the whole glass; the frame overlays its outermost cells.
     const w = Math.max(1, this.screen.width);
     const h = Math.max(1, this.screen.height);
     this.renderer.setSize(w, h, true);
@@ -813,23 +809,14 @@ interface BuiltShape {
   edgeTubes: EdgeTubes;
 }
 
-/**
- * A small Group holding a solid's face mesh + wireframe, normalized to
- * config.library.shapeRadius and centered. The geometry is built by the SAME helpers the main
- * view uses (`render/sceneView`), so the colors match exactly; we just bake them
- * into the color attribute and then flip the materials between "colored" and
- * "white ghost" by toggling `vertexColors` + `color`. The caller sets the active
- * color scheme before calling, so `faceColorsRGB` resolves the solid's own scheme.
- */
-/** Canonicalized (midsphere) geometry per library solid, cached so the one-time
- *  relaxation runs only once per solid even across re-opens. */
+/** Canonicalized (midsphere) geometry per library solid, cached so the relaxation
+ *  runs only once per solid, even across re-opens. */
 const canonicalCache = new WeakMap<Polyhedron, Mesh>();
 
-/** Relax a library solid into its canonical (midsphere) form so the browse
- *  diagram shows nicely-regular shapes rather than whatever raw geometry the
- *  database happened to build. Runs the "edges" strategy to convergence; the
- *  topology (and colors) are unchanged, so the existing per-vertex/edge colors
- *  still apply 1:1. */
+/** Relax a library solid into its canonical (midsphere) form, so the browse diagram
+ *  shows regular-looking shapes rather than the raw geometry the database built.
+ *  Runs the `edges` strategy to convergence; the topology (and so the colors) is
+ *  unchanged, so the existing per-vertex / per-edge colors still apply 1:1. */
 function canonicalMesh(poly: Polyhedron): Mesh {
   const cached = canonicalCache.get(poly);
   if (cached) return cached;
@@ -845,10 +832,19 @@ function canonicalMesh(poly: Polyhedron): Mesh {
   return result;
 }
 
+/**
+ * A small Group holding a solid's face mesh + wireframe, centered and normalized to
+ * config.library.shapeRadius. The geometry comes from the same helpers the main view
+ * uses (`render/sceneView`), so the colors match; they are baked into the color
+ * attribute, and the materials then flip between colored and ghost by toggling
+ * `vertexColors` + `color`. The caller sets the active color scheme first, so
+ * `faceColorsRGB` resolves the solid's own scheme.
+ */
 function buildShapeGroup(poly: Polyhedron): BuiltShape {
   const src = canonicalMesh(poly);
 
-  // Center + scale to config.library.shapeRadius, then reuse the shared geometry builders.
+  // Center + scale to config.library.shapeRadius, then reuse the shared geometry
+  // builders.
   const center = new Vector3();
   for (const v of src.vertices) center.add(v);
   center.multiplyScalar(1 / Math.max(1, src.vertices.length));

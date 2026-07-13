@@ -7,10 +7,10 @@ import { config } from "../config";
 
 /**
  * How an operation's selection relates to the solid it acted on:
- *   "whole"  — every vertex/face of its kind (or no explicit selection);
- *   "arity"  — one or more COMPLETE arity classes (every degree-n vertex / n-gon
- *              face); `arities` lists those arities, sorted;
- *   "subset" — any other set, broken down per vertex/face FIGURE (configuration).
+ *   "whole"  — every vertex/face of its kind, or no explicit selection;
+ *   "arity"  — one or more complete arity classes (every degree-n vertex / n-gon face);
+ *              `arities` lists those arities, sorted;
+ *   "subset" — any other set, broken down per vertex/face figure (configuration).
  *
  * The reachable selections (with `commandAddsToSelection` off) map to these as:
  *   default drag → one complete arity class; Option-add → a union of them ("arity");
@@ -142,13 +142,13 @@ function verbs(kind: OperationKind, weld: boolean): readonly [string, string] {
   return config.ui.operationLabels[kind][weld ? "welded" : "unwelded"];
 }
 
-/** The short figure token for the derived NAME: the bare arity ("4") when the
- *  degree pins the figure, else the parenthesized configuration ("(3.6²)"). */
+/** The short figure token for the derived name: the bare arity ("4") when the degree pins
+ *  the figure, else the parenthesized configuration ("(3.6²)"). */
 function shortToken(g: SubsetGroup): string {
   return g.degreeDetermines ? String(g.degree) : `(${formatConfig(g.config)})`;
 }
 
-/** Apply the selection qualifier to a base verb for the derived NAME (short form). */
+/** Apply the selection qualifier to a base verb for the derived name (short form). */
 function qualifyName(verb: string, sel: SelDesc): string {
   if (sel.kind === "whole") return verb;
   if (sel.kind === "arity") return `${sel.arities.join(",")}-${verb}`;

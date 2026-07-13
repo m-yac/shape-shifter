@@ -15,27 +15,26 @@ import { buildSnub } from "../src/operations/snub";
 import { buildGyro } from "../src/operations/gyro";
 
 /**
- * PROBE: does "every element has a unique ID going IN" imply "every element has a
- * unique ID coming OUT" for the color-combination rules in config.colors.operations?
+ * Do unique element IDs going in imply unique element IDs coming out, for the color
+ * rules in config.colors.operations?
  *
- * The rules are LINEAR (each new element's color is a weighted sum of old-element
- * colors — see operations/colorUtil.ts `combine`). So if we give every element of the
- * input shape a DISTINCT, generic (random) color vector, two OUTPUT elements land on
- * the same vector iff their rules are the *same linear combination of the same input
- * elements* — i.e. a genuine, structural collision that would happen for ANY unique
- * assignment of input IDs (the real "two different elements always get the same ID").
+ * The rules are linear: each new element's color is a weighted sum of old-element
+ * colors (operations/colorUtil.ts `combine`). So given every input element a distinct
+ * random color vector, two output elements land on the same vector iff their rules are
+ * the same linear combination of the same inputs — a structural collision, one that
+ * would occur for any unique assignment of input IDs.
  *
- * A merely accidental numeric coincidence would not survive a *different* random
- * assignment, so we run several independent trials and keep only collisions that
- * PERSIST across all of them. That makes length-3 random vectors sufficient to detect
- * the structural collisions we care about, without needing the length-14 IDs yet.
+ * An accidental numeric coincidence would not survive a different random assignment,
+ * so each check runs several independent trials and keeps only the collisions that
+ * persist across all of them. That makes length-3 random vectors enough to find the
+ * structural collisions; the real length-14 IDs aren't needed.
  *
- * "Unique among ALL elements" is checked across vertices, edges AND faces together
- * (the eventual one-hot IDs make a face, an edge and a vertex mutually distinguishable),
- * so a face color equal to an edge color counts as a collision too.
+ * Uniqueness is checked across vertices, edges and faces together — the one-hot IDs
+ * make the three kinds mutually distinguishable — so a face color equal to an edge
+ * color is a collision too.
  */
 
-// ---- deterministic RNG (mulberry32) so a reported collision is reproducible. ----
+// ---- deterministic RNG (mulberry32) so a reported collision is reproducible ----
 function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -47,8 +46,8 @@ function rng(seed: number): () => number {
   };
 }
 
-/** A Polyhedron over `mesh` whose every vertex / edge / face has a DISTINCT random
- *  color vector (so all input IDs are unique and in general position). */
+/** A Polyhedron over `mesh` whose every vertex / edge / face has a distinct random
+ *  color vector, so all input IDs are unique and in general position. */
 function freshlyIdentified(mesh: Mesh, seed: number): Polyhedron {
   const rand = rng(seed);
   const vec = (): GeomColor => [rand(), rand(), rand()];
@@ -62,8 +61,8 @@ function freshlyIdentified(mesh: Mesh, seed: number): Polyhedron {
   return new Polyhedron(mesh, colors);
 }
 
-/** A stable label per element of a ColorSet (independent of the color VALUES, so it is
- *  the same across trials on the same topology). */
+/** A stable label per element of a ColorSet, independent of the color values, so it is
+ *  the same across trials on one topology. */
 function elementLabels(colors: ColorSet): Array<{ id: string; vec: GeomColor }> {
   const out: Array<{ id: string; vec: GeomColor }> = [];
   colors.vertex.forEach((v, i) => out.push({ id: `V${i}`, vec: v }));
@@ -101,7 +100,7 @@ function collidingPairs(colors: ColorSet): Set<string> {
 
 /**
  * Run `produce` (input topology → committed ColorSet) over several independent random
- * ID assignments and return only the collisions that PERSIST across every trial — the
+ * ID assignments and return only the collisions that persist across every trial: the
  * structural ones. `produce` receives a per-trial random seed to identify its input.
  */
 function structuralCollisions(
@@ -127,8 +126,8 @@ const firstEdge = (p: Polyhedron): [number, number] => {
 const SEEDS = ["tetrahedron", "cube", "octahedron", "dodecahedron", "icosahedron"];
 
 // ---------------------------------------------------------------------------
-// SINGLE STEP: give the INPUT shape fresh unique IDs, apply one operation, and
-// check the output. This isolates each operation's rules with generic unique input.
+// Single step: give the input shape fresh unique IDs, apply one operation, check the
+// output. This isolates each operation's rules against generic unique input.
 // ---------------------------------------------------------------------------
 describe("single operation: unique input IDs → unique output IDs", () => {
   // (op label) → produce a committed ColorSet from a freshly-identified input.
@@ -168,8 +167,8 @@ describe("single operation: unique input IDs → unique output IDs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SNUB / GYRO: these are twists of a rectification / join, so their input is that
-// rectified / joined solid. Give THAT solid fresh unique IDs and twist it.
+// Snub / gyro are twists of a rectification / join, so their input is that rectified
+// or joined solid. Give it fresh unique IDs and twist.
 // ---------------------------------------------------------------------------
 describe("snub / gyro: unique input IDs → unique output IDs", () => {
   const rectifiedMesh = (name: string) =>
@@ -199,12 +198,10 @@ describe("snub / gyro: unique input IDs → unique output IDs", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CHAINS: identify the SEED uniquely, then apply a sequence of operations, letting the
-// derived IDs (now dependent averages of the seed IDs) flow from one step to the next.
-// A structural collision here is one that persists across random seed assignments — a
-// genuine "two elements of the final shape always share an ID given a unique start".
-// This is where averaging can bite: two DIFFERENT pairs of already-averaged inputs can
-// have equal sums even though every input is distinct.
+// Chains: identify the seed uniquely, then apply a sequence of operations, letting the
+// derived IDs — now dependent averages of the seed IDs — flow from step to step. This
+// is where averaging can bite: two different pairs of already-averaged inputs can have
+// equal sums even though every input is distinct.
 // ---------------------------------------------------------------------------
 describe("operation chains from a uniquely-identified seed", () => {
   type Step = { label: string; run: (p: Polyhedron) => { mesh: Mesh; colors: ColorSet } };
@@ -238,8 +235,8 @@ describe("operation chains from a uniquely-identified seed", () => {
     for (const chain of chains) {
       const label = `${name}: ` + chain.map((s) => s.label).join(" → ");
       it(label, () => {
-        // Run the chain once per trial; collect per-step collision pairs and keep
-        // those persisting across trials (structural), per step.
+        // Run the chain once per trial, collecting per-step collision pairs, and keep
+        // the ones that persist across trials.
         const perStepPersistent: Array<Set<string> | null> = chain.map(() => null);
         let skipped = false;
         for (let t = 0; t < 4 && !skipped; t++) {
@@ -249,8 +246,8 @@ describe("operation chains from a uniquely-identified seed", () => {
             try {
               out = chain[i].run(poly);
             } catch (e) {
-              // Some chains form shapes an operation can't act on (e.g. snub needs a
-              // rectification). Skip rather than fail — that's a topology limit, not a
+              // Some chains form shapes an operation can't act on (snub needs a
+              // rectification, say). Skip rather than fail: a topology limit, not a
               // color-uniqueness result.
               skipped = true;
               break;

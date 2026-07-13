@@ -15,7 +15,7 @@ import { config } from "../config";
 
 const BLACK: GeomColor = [0, 0, 0];
 
-// A nominal per-split-vertex slide magnitude. Only the slide DIRECTIONS (and their
+// A nominal per-split-vertex slide magnitude. Only the slide directions (and their
 // relative sizes) matter: the handle step below rescales every slide uniformly so the
 // dragged vertex's split reaches `snubEdgeFraction` of an edge, so this cancels out.
 const SEP = 0.42;
@@ -46,21 +46,21 @@ function twoColorFaces(dcel: DCEL): Map<number, 0 | 1> {
 }
 
 /**
- * Snub as a twist extension of a RECTIFICATION.
+ * Snub as a twist extension of a rectification.
  *
- * Model (the Conway snub): each face of the rectification maps to a rotated + shrunk
- * face of the snub. Every degree-4 vertex SPLITS INTO A PAIR of vertices, each shared
- * by two of the four surrounding faces; the pairing (which two faces stay joined
- * across which shared edge) is the chirality. Each split vertex slides along its
- * pair's shared "kept" edge — the shrink cancels the rotation, so the path is a
- * straight line and the two split vertices separate along the two opposite kept edges.
- * The two faces that separate at a vertex leave a gap filled by a triangle.
+ * Model (the Conway snub): each face of the rectification maps to a rotated and shrunk
+ * face of the snub. Every degree-4 vertex splits into a pair of vertices, each shared by
+ * two of the four surrounding faces; the pairing (which faces stay joined across which
+ * shared edge) is the chirality. Each split vertex slides along its pair's shared kept
+ * edge: the shrink cancels the rotation, so the path is a straight line and the two split
+ * vertices separate along the two opposite kept edges. The two faces that separate at a
+ * vertex leave a gap filled by a triangle.
  *
- * So: `R-face → rotated face`, `R-vertex → 2 vertices + a new edge`, `R-edge → one
- * gap triangle` at the end where its two faces split. `draggedVid` is the rectify
- * vertex the base drag ended on; `originVertex` is the ORIGINAL (pre-rectify) vertex
- * position the drag started from — the direction back toward it is the "un-rectify"
- * line, which the two chiral drag handles straddle at ±45° (see below).
+ * So: R-face → rotated face, R-vertex → 2 vertices + an edge, R-edge → one gap triangle
+ * at the end where its two faces split. `draggedVid` is the rectify vertex the base drag
+ * ended on; `originVertex` is the original (pre-rectify) vertex position the drag
+ * started from; the direction back toward it is the un-rectify line, which the two
+ * chiral drag handles straddle at ±45° (see below).
  */
 export function buildSnub(
   poly: Polyhedron,
@@ -102,8 +102,8 @@ export function buildSnub(
         if (idx === undefined) {
           idx = snubVerts.length;
           indexOf.set(key, idx);
-          // The pair's shared "kept" edge: H[aIdx] for chir 0, the previous edge for
-          // chir 1. The split vertex slides along it.
+          // The pair's shared kept edge, which the split vertex slides along: H[aIdx] for
+          // chir 0, the previous edge for chir 1.
           const keptIdx = chir === 0 ? aIdx : (aIdx - 1 + m) % m;
           const kept = H[keptIdx];
           const slide = kept.next.origin.position.clone().sub(v.position).multiplyScalar(SEP);
@@ -116,10 +116,10 @@ export function buildSnub(
       }
     }
 
-    // Snub colors come from the config.colors.operations.snub rules. Because snub is a
-    // twist of the RECTIFICATION, those rules are phrased in RECTIFY space, so their
-    // tokens resolve straight off the rectification's own stored colors (`old`): oldFace
-    // = old.face, oldVertex = old.vertex, oldEdge = old.edge. See each pass below.
+    // Snub colors come from the config.colors.operations.snub rules. Snub twists the
+    // rectification, so those rules are phrased in rectify space and their tokens resolve
+    // straight off the rectification's own stored colors (`old`): oldFace = old.face,
+    // oldVertex = old.vertex, oldEdge = old.edge.
 
     const edgeColor = new Map<string, GeomColor>();
     // Faces: each rectification face → the loop of its corners' split vertices.
@@ -133,11 +133,11 @@ export function buildSnub(
       faces.push(loop);
       // the rotated rectify face keeps its color.
       faceColor.push(old.face[f.id]);
-      // Each boundary edge of this rotated face takes snub.snubEdge, with THIS face as
-      // its oldFace. It also borders exactly one gap triangle (built below); its
-      // oldVertex is the rectify vertex that triangle opens at — the same vertex that
-      // triangle's newFace uses — which is the endpoint where this face and its
-      // neighbour across the edge split into distinct vertices.
+      // Each boundary edge of this face takes snub.snubEdge, with this face as its
+      // oldFace. It also borders exactly one gap triangle (built below); its oldVertex is
+      // the rectify vertex that triangle opens at (the same one that triangle's newFace
+      // uses), i.e. the endpoint where this face and its neighbour across the edge split
+      // into distinct vertices.
       h = f.halfedge;
       do {
         const splitVid =
@@ -147,7 +147,7 @@ export function buildSnub(
           oldFace: old.face[f.id],
           oldVertex: old.vertex[splitVid],
           // The rectify edge this boundary edge is a shrunk copy of (unused by the
-          // current rule, but the natural single source if it ever wants oldEdge).
+          // current rule, but the natural source should it want oldEdge).
           oldEdge: old.edge.get(edgeKey(h.origin.id, h.next.origin.id)) ?? BLACK,
         }));
         h = h.next;
@@ -209,16 +209,16 @@ export function buildSnub(
   const variants = [buildVariant(0), buildVariant(1)];
 
   // ---- Handle geometry. The dragged vertex is the rectify vertex `P`; the base drag
-  // reached it by collapsing the original edge back toward `originVertex`, so the
-  // direction P→originVertex is the "un-rectify" line. The two chiral drag handles
-  // are that line rotated ±45° in P's tangent plane — 90° apart, bisected by the
-  // un-rectify line — each parallel to the new edge its snub chirality opens.
+  // reached it by collapsing the original edge toward `originVertex`, so the direction
+  // P→originVertex is the un-rectify line. The two chiral drag handles are that line
+  // rotated ±45° in P's tangent plane (90° apart, bisected by the un-rectify line), each
+  // parallel to the new edge its snub chirality opens.
   //
-  // The split vertices travel exactly these tangent handles: we drop the inward
-  // (radial) part of each raw kept-edge slide — that inward pull is what made the
-  // whole solid visibly shrink — and rotate every slide by the same tangential twist
-  // `alpha` that carries the DRAGGED vertex's slide onto its 45° handle. So the drag
-  // marker sits precisely on the dragged vertex all the way out to the full snub.
+  // The split vertices travel exactly these handles: drop the inward (radial) part of
+  // each raw kept-edge slide, which would otherwise shrink the solid visibly, then
+  // rotate every slide by the same tangential twist `alpha` that carries the dragged
+  // vertex's slide onto its 45° handle. The drag marker then sits exactly on the dragged
+  // vertex all the way out to the full snub.
   const draggedV = dcel.vertices[draggedVid];
   let anchorFace = draggedV.halfedge.face;
   let bestD = Infinity;
@@ -265,9 +265,9 @@ export function buildSnub(
       const n = sv.source.clone().normalize();
       sv.slide = tangentTo(sv.slide, n).applyAxisAngle(n, alpha);
     }
-    // Rescale every slide uniformly so the two vertices P splits into (`anchorIdx` and
-    // the other split vertex sharing P) end up `targetSep` apart at the full snub —
-    // sizing both the handle and the committed geometry to the true snub edge.
+    // Rescale every slide so the two vertices P splits into (`anchorIdx` and the other
+    // split vertex sharing P) end up `targetSep` apart at the full snub, sizing both the
+    // handle and the committed geometry to the true snub edge.
     const otherIdx = outAt.get(draggedVid)!
       .map((h) => va.heVert.get(h.id)!)
       .find((i) => i !== anchorIdx)!;
@@ -305,9 +305,9 @@ export function buildSnub(
     }
     sign = best.i === 0 ? 1 : -1;
     curT = best.t;
-    // Highlight the active handle line so the controller renders it exactly like
-    // every other drag line (the same white tube). Like the truncation line, it spans
-    // only the UN-dragged remainder — from the dragged vertex (best.point) to the end.
+    // Highlight the active handle line so the controller renders it like every other drag
+    // line. As with the truncation line, it spans only the un-dragged remainder: from the
+    // dragged vertex (best.point) to the end.
     const ln = lines[best.i];
     return {
       t: curT,

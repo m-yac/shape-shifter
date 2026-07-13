@@ -6,25 +6,23 @@ import { Screen } from "../ui/screen";
  *  LETTER INTRO — a worn typewritten letter that rises in before the program.
  * =============================================================================
  *
- *  On load a stack of letter pages (config.letterText) slides up quickly from
- *  below the monitor. The front page covers the center; the remaining pages peek
- *  out behind it (down and to the right). The reader can:
+ *  On load a stack of letter pages (config.letterText) slides up from below the
+ *  monitor. The front page covers the center; the rest peek out behind it, down and to
+ *  the right. The reader can:
  *
- *    - click a peeking page, or the RIGHT edge of the front page  -> page forward
- *    - click the LEFT edge of the front page                      -> page back
- *    - click the CENTER of a page, or off to the side             -> put it away
+ *    - click a peeking page, or the right edge of the front page  -> page forward
+ *    - click the left edge of the front page                      -> page back
+ *    - click the center of a page, or off to the side             -> put it away
  *
- *  The letter is mounted ON TOP of the whole monitor (above the plastic bezel)
- *  in a clipping layer the exact size of the bezel. "Putting it away" drops the
- *  stack down until it only covers the bottom bezel — the screen itself stays
- *  unobstructed — and lets the program boot (the `onDismiss` callback fires once,
- *  the first time). Clicking the peeking stack afterwards raises it again so the
- *  reader can keep paging; clicking the center / off the side drops it once more.
- *  The program keeps running underneath the whole time.
+ *  The letter is mounted on the plastic bezel, above the whole monitor, in a clipping
+ *  layer the size of the bezel. Putting it away drops the stack until it covers only
+ *  the bottom bezel, leaving the screen clear, and lets the program boot (`onDismiss`
+ *  fires once, on the first drop). Clicking the peeking stack raises it again for more
+ *  paging. The program keeps running underneath throughout.
  *
- *  Every pointer interaction with the letter calls stopImmediatePropagation, so
- *  the global "any key/click skips the intro" handlers in main.ts never fire as
- *  a side effect of reading or dismissing the letter.
+ *  Every pointer interaction with the letter calls stopImmediatePropagation, so the
+ *  global skip-the-intro handlers in main.ts don't fire as a side effect of reading or
+ *  dismissing the letter.
  * =============================================================================
  */
 
@@ -55,8 +53,8 @@ export class LetterIntro {
     this.layer = document.createElement("div");
     this.layer.className = "letter-layer";
 
-    // Transparent catcher behind the pages: a click on it ("off the side" of the
-    // letter) puts the letter away. Only active while the letter is raised.
+    // Transparent catcher behind the pages: a click off the side of the letter puts it
+    // away. Only active while the letter is raised.
     this.backdrop = document.createElement("div");
     this.backdrop.className = "letter-backdrop";
     this.backdrop.addEventListener("pointerup", (e) => {
@@ -87,8 +85,8 @@ export class LetterIntro {
     });
 
     this.layer.append(this.backdrop, this.wrap);
-    // Mounted on the bezel (not inside the glass) so it rides above the whole
-    // monitor and can cover the bottom bezel.
+    // Mounted on the bezel, not inside the glass, so it rides above the whole monitor
+    // and can cover the bottom bezel.
     this.screen.bezel.appendChild(this.layer);
 
     this.screen.onLayout(() => this.relayout());
@@ -107,7 +105,7 @@ export class LetterIntro {
     const L = config.letter;
     const w = this.screen.width;
     const h = this.screen.height;
-    // The layer fills the bezel; its own box gives us the monitor dimensions.
+    // The layer fills the bezel, so its own box gives the monitor dimensions.
     this.layerH = this.layer.clientHeight;
 
     const pw = Math.round(w * L.widthFrac);

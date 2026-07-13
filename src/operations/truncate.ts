@@ -15,7 +15,7 @@ import { closestLineParam, distancePointToRay } from "../util/lines";
 
 const BLACK: GeomColor = [0, 0, 0];
 
-/** A point is "in view" if any of the given (outward) normals faces the camera. */
+/** A point is in view if any of the given (outward) normals faces the camera. */
 export type InViewTest = (point: Vector3, normals: Vector3[]) => boolean;
 
 /** Outward unit normals of the two faces sharing half-edge `h`. */
@@ -29,22 +29,22 @@ function edgeFaceNormals(h: HalfEdge): Vector3[] {
 }
 
 /**
- * Per-half-edge collapse fraction for an "equal radial depth" truncation.
+ * Per-half-edge collapse fraction for an equal-radial-depth truncation.
  *
  * Each undirected edge collapses at a single point `v + s·(w−v)`; during a
- * Truncate→Rectify drag the two cut ends ride at `s·t` (from v) and `(1−s)·t`
- * (from w) and weld at t=1. A uniform s=½ leaves the exposed vertex n-gons badly
- * non-planar on solids with non-coplanar vertex stars (e.g. Catalan solids like
- * the triakis tetrahedron). Choosing s per edge so a vertex's cut points share a
- * radial depth (|v| + s·(w−v)·v̂ constant across its edges) flattens them — for
- * the triakis tetra this is exact.
+ * Truncate→Rectify drag the two cut ends ride at `s·t` (from v) and `(1−s)·t` (from w)
+ * and weld at t=1. A uniform s=½ leaves the exposed vertex n-gons badly non-planar on
+ * solids with non-coplanar vertex stars (e.g. Catalan solids like the triakis
+ * tetrahedron). Choosing s per edge so a vertex's cut points share a radial depth
+ * (|v| + s·(w−v)·v̂ constant across its edges) flattens them; for the triakis tetra it
+ * is exact.
  *
- * The collapse point on edge v→w has radial depth |v| + s·(w−v)·v̂; equalizing to
- * a per-vertex target |v|+δ_v gives s = δ_v / ((w−v)·v̂). We solve the δ (one per
- * vertex) by least squares so the two endpoints of every edge agree on the single
- * collapse point, then read the reconciled s. Returns a directed fraction for
- * every half-edge id, measured from that half-edge's own origin; a half-edge and
- * its twin sum to 1, so their cut ends meet exactly at t=1.
+ * The collapse point on edge v→w has radial depth |v| + s·(w−v)·v̂; equalizing to a
+ * per-vertex target |v|+δ_v gives s = δ_v / ((w−v)·v̂). The δ (one per vertex) are
+ * solved by least squares so the two endpoints of every edge agree on a single
+ * collapse point, then the reconciled s is read off. Returns a directed fraction per
+ * half-edge id, measured from that half-edge's own origin; a half-edge and its twin
+ * sum to 1, so their cut ends meet exactly at t=1.
  */
 export function computeCollapseFractions(poly: Polyhedron): Map<number, number> {
   const dcel = poly.dcel;
@@ -176,7 +176,7 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
     previewFaces.push(outgoingHalfEdges(v).map((h) => cutIndex.get(h.id)!));
   }
 
-  // Edges with BOTH ends truncated collapse at the midpoint (→ Rectify).
+  // Edges with both ends truncated collapse to a single point (→ Rectify).
   const weldPairs: Array<[number, number]> = [];
   for (const he of dcel.halfedges) {
     if (!he.twin || he.id >= he.twin.id) continue;
@@ -186,11 +186,11 @@ function buildTruncationData(poly: Polyhedron, truncated: Set<number>): Truncati
   }
 
   // Colors (config.colors.operations.truncate / rectify):
-  //   cut vertex, TRUNCATED form ← truncate.newVertex.
-  //   cut vertex, WELDED (Rectify) form ← rectify.newVertex:
-  //     the two ends of an edge carry the SAME oldEdge but DIFFERENT oldVertex, so the
-  //     truncate color can't survive welding (weldVertexPairs needs the pair to agree);
-  //     the rectify color does. We keep both colorings and pick per commit path.
+  //   cut vertex, truncated form ← truncate.newVertex.
+  //   cut vertex, welded (Rectify) form ← rectify.newVertex:
+  //     the two ends of an edge carry the same oldEdge but different oldVertex, so the
+  //     truncate color cannot survive welding (weldVertexPairs needs the pair to agree),
+  //     while the rectify color can. Both colorings are kept; the commit path picks one.
   //   kept vertex keeps its color.
   //   exposed n-gon ← truncate.newFace.
   //   original faces keep theirs.
@@ -258,23 +258,23 @@ function truncationPositions(
 /**
  * Truncate → Rectify, driven by dragging a vertex inward along a connected edge.
  *
- * Each edge collapses at a per-edge point `s` (see `computeCollapseFractions`)
- * rather than its midpoint, keeping the exposed vertex n-gons planar. `s` is a
- * directed fraction per half-edge (a half-edge and its twin sum to 1).
+ * Each edge collapses at a per-edge point `s` (see `computeCollapseFractions`) rather
+ * than at its midpoint, keeping the exposed vertex n-gons planar. `s` is a directed
+ * fraction per half-edge (a half-edge and its twin sum to 1).
  *
- * Staging: the preview always shows the FULL truncation (every vertex). The
- * SELECTED arity group cuts from t=0 (`cutFrac = s·t`); every OTHER vertex stays
- * at zero depth (visually sharp) until t=0.5, then cuts too (`s·clamp(2t−1)`),
- * so the drag reads as an n-truncate, transitions to a full truncation at t=0.5,
- * and reaches a full Rectify at t=1 (every edge's two ends meet at its `s` and
- * weld). A release with t<0.5 commits the clean n-truncation of just the set.
+ * Staging: the preview always shows the full truncation (every vertex). The selected
+ * arity group cuts from t=0 (`cutFrac = s·t`); every other vertex stays at zero depth
+ * (visually sharp) until t=0.5, then cuts too (`s·clamp(2t−1)`). So the drag reads as
+ * an n-truncate, becomes a full truncation at t=0.5, and reaches a full Rectify at t=1
+ * (every edge's two ends meet at its `s` and weld). A release with t<0.5 commits the
+ * clean n-truncation of just the set.
  *
  * @param poly       current polyhedron
  * @param draggedVid the vertex grabbed (the drag handle, always in the selection)
  * @param selected   the arity group / multi-select subset (null → whole solid)
  * @param collapse   precomputed per-half-edge collapse fractions (from
- *   `computeCollapseFractions`); solved here if omitted. Callers that drag the same
- *   solid repeatedly should pass a memoized map — the solve is costly.
+ *   `computeCollapseFractions`); solved here if omitted. The solve is costly, so callers
+ *   that drag the same solid repeatedly should pass a memoized map.
  */
 export function buildTruncate(
   poly: Polyhedron,

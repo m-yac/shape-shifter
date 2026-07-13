@@ -46,17 +46,17 @@ describe("relaxation solver", () => {
     const topo = extractTopology(join);
     const { planar, mesh } = runToCompletion(join);
     expect(planar).toBe(true);
-    // faces stay flat ...
+    // Faces stay flat ...
     expect(planarityError(mesh)).toBeLessThan(5e-3);
-    // ... and adjacent faces stay well away from coplanar (true dihedral ~120°,
-    // i.e. normal angle ~60°). No flattening.
+    // ... and adjacent faces stay well away from coplanar: the true dihedral is ~120°,
+    // i.e. a normal angle of ~60°.
     const minAngleDeg = (minAdjacentFaceAngle(mesh, topo.edgeFaces) * 180) / Math.PI;
     expect(minAngleDeg).toBeGreaterThan(30);
   });
 
   it("relaxes the welded gyro of the cube to a valid, planar solid (dodecahedron)", () => {
-    // The gyro starting geometry is rough (no closed-form coplanar distance); this is
-    // the real check that the relaxer can finish it into a valid, planar solid.
+    // The gyro's starting geometry is rough — there is no closed-form coplanar distance
+    // for it — so the relaxer has to carry it the rest of the way to a planar solid.
     const cube = new Polyhedron(getSeed("cube"));
     const gyro = new Polyhedron(buildGyro(cube, 0, cube.vertices[0].clone()).commit(1, true).mesh);
     const { planar, mesh } = runToCompletion(gyro);
@@ -77,10 +77,10 @@ describe("relaxation solver", () => {
     const topo = extractTopology(kis);
     const { planar, mesh } = runToCompletion(kis);
     expect(planar).toBe(true);
-    // true tetrakis hexahedron dihedral ~143°, i.e. normal angle ~37°
+    // True tetrakis hexahedron dihedral ~143°, i.e. a normal angle of ~37°.
     const minAngleDeg = (minAdjacentFaceAngle(mesh, topo.edgeFaces) * 180) / Math.PI;
     expect(minAngleDeg).toBeGreaterThan(20);
-    // a non-degenerate solid keeps a sensible bounding radius
+    // A non-degenerate solid keeps a sensible bounding radius.
     const maxR = Math.max(...mesh.vertices.map((p: Vector3) => p.length()));
     expect(maxR).toBeGreaterThan(0.9);
   });

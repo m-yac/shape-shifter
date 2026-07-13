@@ -166,9 +166,9 @@ describe("gyro lift investigation", () => {
       const Gpoly = new Polyhedron(relax(new Polyhedron(preview)));
       const G = Gpoly.mesh;
 
-      // --- Join-frame lift (the frame the preview morph actually works in): fit the
-      // canonical gyro back onto the join's original vertices, then read q lift above
-      // its home join-face plane, normalized by |v0| = e/2 (joins are edge-transitive).
+      // --- Join-frame lift, the frame the preview morph works in: fit the canonical
+      // gyro back onto the join's original vertices, then read each q's lift above its
+      // home join-face plane, normalized by |v0| = e/2 (joins are edge-transitive).
       const map = umeyama(G.vertices.slice(0, Vj), J.vertices.slice(0, Vj));
       const Gf = G.vertices.map(map);
       const jfLift: number[] = [];
@@ -182,10 +182,10 @@ describe("gyro lift investigation", () => {
         jfLift.push(q.clone().sub(faceInfo[best].c).dot(faceInfo[best].nrm));
       }
 
-      // --- Twist angle actually realized by the gyro. Each join vertex's star rotates
-      // about its radial axis between the join and the canonical gyro. Measure that
-      // rotation (in the vertex tangent plane) at every join vertex, so we can compare
-      // it to the drag arc's angular limit  arcSpan = 2π/(divisor·n).
+      // --- Twist angle the gyro realizes. Each join vertex's star rotates about its
+      // radial axis between the join and the canonical gyro. Measure that rotation, in
+      // the vertex tangent plane, at every join vertex, to compare against the drag
+      // arc's angular limit arcSpan = 2π/(divisor·n).
       const jadj = new Map<number, Set<number>>();
       for (const he of J.dcel.halfedges) {
         const a = he.origin.id, b = he.next.origin.id;
@@ -211,9 +211,9 @@ describe("gyro lift investigation", () => {
         (twistByDeg.get(deg) ?? twistByDeg.set(deg, []).get(deg)!).push(Math.abs(net));
       }
 
-      // Angular sweep of the DRIVEN q vertices about the apex, in join space: from their
-      // start (edge midpoint, positions(0)) to their gyro target (positions(1), our lift
-      // formula). This is what the drag arc should span so its limit lands the lift.
+      // Angular sweep of the driven q vertices about the apex, in join space: from their
+      // start (the edge midpoint, positions(0)) to their gyro target (positions(1), i.e.
+      // the lift formula). The drag arc must span this for its limit to land the lift.
       const pos0 = plan.positions(0), pos1 = plan.positions(1);
       const gadj = new Map<number, Set<number>>();
       for (const he of Gpoly.dcel.halfedges) {
@@ -255,8 +255,8 @@ describe("gyro lift investigation", () => {
       const rOrig = mean(G.vertices.slice(0, Vj).map((p) => p.length()));
       const rQ = mean(G.vertices.slice(Vj).map((p) => p.length()));
 
-      // For each q: outward lift above the plane of its ORIGINAL neighbors, and the
-      // "base half-edge" = distance from q to the midpoint of its two original neighbors.
+      // For each q: the outward lift above the plane of its original neighbors, and the
+      // base half-edge, the mean distance from q to those neighbors.
       const liftE: number[] = [];
       const liftBase: number[] = [];
       const seedNbrDist: number[] = [];

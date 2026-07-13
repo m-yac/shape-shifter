@@ -3,9 +3,9 @@ import { areIsomorphic, type GraphData } from "./isomorphism";
 
 /**
  * Background isomorphism check. The main thread sends the current polyhedron's
- * labeled graph plus the candidate named polyhedron's graph; we reply with
- * whether they are isomorphic (which verifies the name with a ✓). Runs off the
- * main thread so a large brute-force never blocks dragging.
+ * labeled graph plus the candidate named polyhedron's graph, and gets back whether
+ * they are isomorphic, which is what earns the name its ✓. Off the main thread so a
+ * large brute-force never blocks dragging.
  */
 interface Request {
   id: number;

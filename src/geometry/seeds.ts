@@ -2,8 +2,8 @@ import { Vector3 } from "three";
 import { type Mesh, buildDCEL, facesAroundVertex } from "./HalfEdge";
 
 /**
- * Seed polyhedra (the 5 Platonic solids). Faces only need correct *membership*;
- * `buildDCEL` fixes winding/orientation, so we don't worry about it here.
+ * Seed polyhedra (the 5 Platonic solids). A face literal only needs the right vertex
+ * membership; `buildDCEL` fixes winding and orientation.
  *
  * To add more seeds: append an entry and list its name in `config.seeds.enabled`.
  */
@@ -28,8 +28,8 @@ export function normalize(mesh: Mesh): Mesh {
   };
 }
 
-/** The dual polyhedron: face-centroids become vertices; each vertex becomes a
- *  face (using the cyclic face order already provided by the half-edge walk). */
+/** The dual polyhedron: face centroids become vertices, and each vertex becomes a face,
+ *  using the cyclic face order the half-edge walk already provides. */
 export function dual(mesh: Mesh): Mesh {
   const dcel = buildDCEL(mesh);
   const vertices = dcel.faces.map((f) => {

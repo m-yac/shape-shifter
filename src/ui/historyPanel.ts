@@ -6,14 +6,14 @@ import { Screen, Popup, fadeIn } from "./screen";
 const HISTORY_COLS = config.ui.historyCols;
 
 /**
- * Right-side HISTORY panel: a box-drawing popup whose body lists the operations
- * performed. The seed is the first line; each edit below it is prefixed with
- * "└─►" and, if it produced a recognised polyhedron, the name on an indented
- * line in parentheses. Entries after the current point (the redo tail) are
- * dimmed; clicking any entry jumps the app to that state.
+ * Right-side HISTORY panel: a box-drawing popup listing the operations performed.
+ * The seed is the first line; each edit below it is prefixed with "└─►" and, if it
+ * produced a recognised polyhedron, carries the name on an indented line in
+ * parentheses. Entries after the current point (the redo tail) are dimmed;
+ * clicking any entry jumps the app to that state.
  *
- * The box hugs its content height (growing as history grows) and scrolls inside
- * its frame once it would exceed the screen; it re-fits on every screen layout.
+ * The box hugs its content height and scrolls inside its frame once it would
+ * exceed the screen; it re-fits on every screen layout.
  */
 export class HistoryPanel {
   private readonly popup: Popup;
@@ -53,8 +53,8 @@ export class HistoryPanel {
     const s = this.screen;
     const { entries, current } = this.last;
 
-    // Stay hidden until the user's first operation (unless force-revealed by an
-    // intro skip): with only the seed entry there's no history worth showing.
+    // With only the seed entry there's no history worth showing, so stay hidden
+    // until the first operation (unless force-revealed by an intro skip).
     if (!this.forced && entries.length <= 1) {
       this.popup.el.style.display = "none";
       return;
@@ -66,9 +66,9 @@ export class HistoryPanel {
     // body scrolls (snapping to the grid) once the content exceeds this height.
     const maxRows = Math.max(3, s.rows - this.reservedBottomRows());
 
-    // Size the body to its final width (with a generous height so nothing scrolls
+    // Size the body to its final width (with a generous height, so nothing scrolls
     // yet) and fill it, then measure: a long label/name wraps onto extra grid rows
-    // (see the hanging indent in CSS), so we can't assume one row per entry line.
+    // (see the hanging indent in CSS), so an entry line isn't always one row.
     this.popup.resize(cols, maxRows);
     const body = this.popup.body;
     body.replaceChildren();
@@ -84,8 +84,8 @@ export class HistoryPanel {
       label.textContent = entry.isSeed ? entry.label : `└─► ${entry.label}`;
       item.appendChild(label);
 
-      // Show the resulting shape's name beneath operations (the seed line already
-      // *is* its name, so it's not repeated). Invalid states have no name.
+      // Show the resulting shape's name beneath an operation. The seed line is
+      // already its name, and invalid states have none.
       if (!entry.isSeed && entry.name) {
         const name = document.createElement("div");
         name.className = "history-name";

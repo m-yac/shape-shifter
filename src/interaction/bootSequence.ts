@@ -8,15 +8,12 @@ import { GlitchOverlay } from "../ui/glitch";
  *  BOOT SEQUENCE — a faux 90s VGA BIOS power-on, then a program launch.
  * =============================================================================
  *
- *  Played in the #console overlay while the app starts up. The names are
- *  quietly geometry-themed (a "Vertex" CPU, a "Symmetry Coprocessor", drives
- *  called TESSERACT...) so it reads like the BIOS of a machine built to do
- *  nothing but fold polyhedra.
+ *  Played in the #console overlay while the app starts up. The script itself lives in
+ *  config.bootText; this file plays it.
  *
- *  The whole thing is written as a generator "script": each `yield <seconds>`
- *  is a pause before the next beat, so the sequence below reads top-to-bottom
- *  like a storyboard. `update()` advances that script against the wall clock
- *  and returns true once it has finished.
+ *  The sequence is a generator: each `yield <seconds>` is a pause before the next beat,
+ *  so it reads top-to-bottom like a storyboard. `update()` advances it against the wall
+ *  clock and returns true once it has finished.
  * =============================================================================
  */
 
@@ -35,7 +32,7 @@ interface BootLine {
     | "clear" // wipe the screen
     | "reveal" // clear + go transparent + fade in + show cursor (the closing setup)
     | "shape" // start the 3D shape fading in behind the text (fires onFadeIn)
-    | "vcenter"; // pad with blank lines so the printed lines BELOW it are centered
+    | "vcenter"; // pad with blank lines so the printed lines below it are centered
   text?: string;
   center?: boolean; // type this line out from the horizontal center
   lnAfterDelay?: boolean;
@@ -121,9 +118,9 @@ export class BootSequence {
   // --- the script -----------------------------------------------------------
 
   private *run(): Script {
-    // All three screens are plain step lists played the same way; the structural
-    // beats (clearing the screen, revealing the 3D view, centering, the shape
-    // fade-in, the glitch choreography) are expressed as steps in config.bootText.
+    // Every screen is a plain step list played the same way; the structural beats
+    // (clearing the screen, revealing the 3D view, centering, the shape fade-in, the
+    // glitch choreography) are steps in config.bootText.
     for (const screen of config.bootText) {
       yield* this.playScript(screen);
     }
@@ -180,7 +177,7 @@ export class BootSequence {
           this.onFadeIn(); // the 3D shape starts fading in behind the message
           break;
         case "vcenter": {
-          // Pad with blank rows so the printed lines that FOLLOW are vertically
+          // Pad with blank rows so the printed lines that follow are vertically
           // centered on the screen.
           const rows = countRows(steps.slice(idx + 1));
           const top = Math.max(0, Math.floor((this.screen.rows - rows) / 2));
@@ -239,7 +236,7 @@ export class BootSequence {
     yield 0.15;
   }
 
-  /** "Type" `text` one character at a time with a slightly irregular cadence. */
+  /** Type out `text` one character at a time, with a slightly irregular cadence. */
   private *type(text: string): Script {
     for (const ch of text) {
       this.con.print(ch);
@@ -247,8 +244,8 @@ export class BootSequence {
     }
   }
 
-  /** Type `text` starting from a horizontally-centered column (it grows out from
-   *  the center, ending up centered on the line). */
+  /** Type `text` from a horizontally-centered start column, so it grows out from the
+   *  center and ends up centered on the line. */
   private *typeCentered(text: string): Script {
     const pad = Math.max(0, Math.floor((this.screen.cols - text.length) / 2));
     this.con.print(" ".repeat(pad));

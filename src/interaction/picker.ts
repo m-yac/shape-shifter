@@ -4,21 +4,19 @@ import { config } from "../config";
 
 /**
  * Turns mouse position into either a picked marker (vertex / face-center) or a
- * world-space pick ray. Hover detection is done in SCREEN space (pixel radius)
- * so it stays forgiving regardless of how small the markers look, exactly as the
- * spec asks ("when the mouse gets close enough").
+ * world-space pick ray. Hover detection works in screen space (a pixel radius), so it
+ * stays forgiving however small the markers look on screen.
  */
 export class Picker {
   private raycaster = new Raycaster();
 
   /**
-   * Does any of `normals` point toward the camera by MORE than
-   * `pickNormalMarginDeg` past perpendicular? Normals must be unit-length and
-   * oriented outward. With a unit view direction, n·view == cos(angle), so being
-   * "within the margin of 90°" means |cos| <= sin(margin); we require
-   * n·view > sin(margin) to count as facing. Used to cull occluded markers and
-   * to decide which edges a vertex can be dragged along (their far endpoint must
-   * itself be facing the camera).
+   * Does any of `normals` point toward the camera by more than `pickNormalMarginDeg`
+   * past perpendicular? Normals must be unit-length and oriented outward. With a unit
+   * view direction, n·view == cos(angle), so lying within the margin of 90° means
+   * |cos| <= sin(margin); facing therefore requires n·view > sin(margin). Culls
+   * occluded markers, and decides which edges a vertex can be dragged along (their far
+   * endpoint must itself face the camera).
    */
   static facesCamera(position: Vector3, normals: Vector3[], camera: Camera): boolean {
     const view = camera.position.clone().sub(position).normalize();
@@ -114,7 +112,7 @@ export class Picker {
     return best ? { marker: best, pixelDist: bestDist } : null;
   }
 
-  /** Convenience: world point along a ray (for debugging). */
+  /** World point along a ray (for debugging). */
   static pointOnRay(ray: Ray, t: number): Vector3 {
     return ray.origin.clone().add(ray.direction.clone().multiplyScalar(t));
   }

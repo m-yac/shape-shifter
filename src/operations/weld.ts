@@ -3,16 +3,14 @@ import { type Mesh } from "../geometry/HalfEdge";
 import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 
 /**
- * Merge the given vertex-index pairs into single vertices (union-find), then
- * rebuild faces dropping the collapsed (now-degenerate) edges. This is how the
- * "max" end of the Truncate drag becomes a true Rectify: each original edge
- * carried two cut vertices that coincide at the midpoint, and welding them
- * deletes the old edge — exactly "new vertices combine along old edges".
+ * Merge the given vertex-index pairs into single vertices (union-find), then rebuild faces
+ * dropping the collapsed, now-degenerate edges. This is how the max end of the Truncate
+ * drag becomes a true Rectify: each original edge carried two cut vertices that coincide at
+ * the midpoint, and welding them deletes the old edge.
  *
- * Colors are threaded through: a welded vertex takes a representative member's
- * color (the welding pairs share a color by construction), surviving faces keep
- * their color, and edges are re-keyed to the new vertex indices (collapsed edges
- * dropped).
+ * Colors are threaded through: a welded vertex takes a representative member's color (the
+ * welding pairs share a color by construction), surviving faces keep their color, and edges
+ * are re-keyed to the new vertex indices, with collapsed edges dropped.
  */
 export function weldVertexPairs(
   mesh: Mesh,

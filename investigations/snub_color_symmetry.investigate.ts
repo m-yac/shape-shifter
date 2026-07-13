@@ -1,33 +1,33 @@
 import { describe, it, vi } from "vitest";
 
 /**
- * Why the icosahedral family's colors are asymmetric.
+ * Why the icosahedral family's colors can come out asymmetric.
  *
- * The library builds EVERY solid from the tetrahedron, so the icosahedron arrives as
- * snub(rectify(tetra)). Its 20 faces then carry THREE distinct provenance triples (the
+ * The library builds every solid from the tetrahedron, so the icosahedron arrives as
+ * snub(rectify(tetra)). Its 20 faces then carry three distinct provenance triples (the
  * 4 tetra-face octa faces, the 4 tetra-vertex octa faces, and the 12 snub gap triangles)
- * and its 30 edges three more — all of which render `yellow` / `blue`, so the icosahedron
- * itself looks right. But a later operation combines those triples, and the combinations
- * do NOT all land on the same swatch: some collide with a synthesized group of a
- * higher-precedence tier. Hence e.g. the Subdivided dodecahedron's 60 new triangles come
- * out part `tint(yellow)`, part `avg(blue,avg(red,yellow))`.
+ * and its 30 edges three more. All render yellow / blue, so the icosahedron itself looks
+ * right. But a later operation combines those triples, and the combinations need not all
+ * land on the same swatch: one can collide with a synthesized group of a higher-precedence
+ * tier, splitting e.g. the Subdivided dodecahedron's 60 new triangles between
+ * `tint(yellow)` and `avg(blue,avg(red,yellow))`.
  *
- * The invariant we WANT (call it the color CONGRUENCE): the swatch of a new element must
- * depend only on the SWATCHES of the old elements it derives from, never on which
- * representative triple of that swatch's orbit was used. This file measures it: every
- * solid is built twice —
+ * The invariant to preserve — the color congruence — is that a new element's swatch
+ * depends only on the swatches of the old elements it derives from, never on which
+ * representative triple of that swatch's orbit was used. To measure it, every solid is
+ * built twice:
  *
- *   REAL  — the tetrahedron-rooted chain the library actually runs;
- *   IDEAL — the same chain, but with the Platonic root's colors CANONICALIZED first
- *           (every element replaced by one representative triple per swatch), which is
- *           what you get by operating on a freshly-loaded dodecahedron.
+ *   REAL  — the tetrahedron-rooted chain the library runs;
+ *   IDEAL — the same chain with the Platonic root's colors canonicalized first (every
+ *           element replaced by one representative triple per swatch), i.e. what you get
+ *           by operating on a freshly-loaded dodecahedron.
  *
- * Both produce the same mesh in the same element order, so the swatches can be compared
- * element by element. Any REAL≠IDEAL element is a congruence violation.
+ * Both produce the same mesh in the same element order, so the swatches compare element
+ * by element, and any REAL ≠ IDEAL element is a congruence violation.
  *
- * It then SWEEPS candidate `config.colors.operations.snub` rules for one that is
- * congruent everywhere while leaving the IDEAL swatches (the colors the solids are
- * supposed to have) untouched.
+ * The file then sweeps candidate `config.colors.operations.snub` rules for one that is
+ * congruent everywhere while leaving the IDEAL swatches — the colors the solids are
+ * supposed to have — untouched.
  */
 
 // The rule shapes we sweep. `newEdge` is pinned to {oldVertex: 1} throughout.
@@ -43,7 +43,7 @@ interface Loaded {
 }
 
 /** The library's own solids (data/namedPolyhedra), as root + operation chain. Their
- *  swatches are the SPEC: a candidate rule set may not change any of them. */
+ *  swatches are the spec: a candidate rule set may not change any of them. */
 const LIBRARY: Array<[string, string[]]> = [
   ["tetrahedron", []], ["tetrahedron", ["truncate"]], ["tetrahedron", ["kis"]],
   ["tetrahedron", ["chamfer"]], ["tetrahedron", ["subdivide"]],
@@ -102,8 +102,8 @@ async function load(over?: { snub?: Partial<SnubRules>; subdivide?: Rule extends
   const kisN = (n: number) => (p: any) => {
     const sel = new Set<number>(p.dcel.faces.filter((f: any) => faceLen(f) === n).map((f: any) => f.id));
     if (sel.size === 0 || sel.size === p.dcel.faces.length) throw new Error(`no ${n}-gon subset`);
-    // A PARTIAL kis only builds apexes on the selected faces below t = 0.5 (above it the
-    // unselected faces start rising too, and every face gets one) — so commit at 0.25.
+    // A partial kis only builds apexes on the selected faces below t = 0.5; above it the
+    // unselected faces start rising too and every face gets one. So commit at 0.25.
     return wrap(buildKis(p, [...sel][0], sel).commit(0.25, false));
   };
   const snub = (p: any) => {
@@ -133,8 +133,8 @@ async function load(over?: { snub?: Partial<SnubRules>; subdivide?: Rule extends
     };
   };
 
-  /** Replace every element's color by ONE representative per swatch — the coloring a
-   *  freshly-loaded seed of this solid has (single triple per orbit). */
+  /** Replace every element's color by one representative per swatch: the coloring a
+   *  freshly-loaded seed of this solid has, a single triple per orbit. */
   const canonicalize = (p: any, scheme: string): any => {
     C.setColorScheme(scheme as any);
     const rep = new Map<string, any>();
@@ -168,8 +168,8 @@ async function load(over?: { snub?: Partial<SnubRules>; subdivide?: Rule extends
     kis3: kisN(3), kis4: kisN(4), kis5: kisN(5),
   };
 
-  // Every chain worth checking: the library's own solids plus the deeper ones the user
-  // reaches by hand (rectify → 3-kis, etc.).
+  // Every chain worth checking: the library's own solids plus the deeper ones a player
+  // reaches by hand (rectify → 3-kis, and so on).
   const CHAINS: Array<[string, string, string[]]> = [];
   for (const root of Object.keys(roots)) {
     for (const op of ["", "truncate", "rectify", "kis", "join", "snub", "gyro", "chamfer", "subdivide"])
@@ -235,8 +235,8 @@ function violations(L: Loaded, entry: { scheme: string; real: any; ideal: any })
   return { real: r, ideal: i, out };
 }
 
-/** The full report for one candidate: which chains break congruence (and how), and
- *  which LIBRARY solids come out a different color than they are supposed to be. */
+/** The full report for one candidate: which chains break congruence and how, and which
+ *  library solids come out a different color than they are supposed to be. */
 async function report(label: string, cand: Partial<SnubRules>, baseIdeal: Map<string, unknown>) {
   const L = await load({ snub: cand });
   const bad = new Map<string, string[]>(); // "kind: want → got" → chains
@@ -276,10 +276,10 @@ describe("snub color symmetry", () => {
     }
   });
 
-  // Subdivide IS "rectify, then kis the vertex-faces": rectify turns every old vertex
-  // into a face and every old edge into a vertex, and kissing just those vertex-faces
-  // fans them back out — the exact subdivision. So subdivide's color rules are forced by
-  // the rectify + kis rules. This checks the two paths agree, element for element.
+  // Subdivide is rectify, then kis the vertex-faces: rectify turns every old vertex into
+  // a face and every old edge into a vertex, and kissing just those vertex-faces fans
+  // them back out into the subdivision. So subdivide's color rules are forced by the
+  // rectify + kis rules. This checks the two paths agree, element for element.
   it("subdivide should equal partial-kis of a rectification", async () => {
     const check = async (label: string, over?: any) => {
       const L = await load(over);
@@ -307,19 +307,19 @@ describe("snub color symmetry", () => {
     });
   }, 300_000);
 
-  // The collision behind the whole bug is an ALGEBRAIC IDENTITY, and it holds in the full
+  // The collision behind the asymmetry is an algebraic identity, and it holds in the full
   // 14-D ID space, not just the collapsed one:
   //
-  //   the gap triangle   X   = the rectify edge  = (Fi + Fj)/2   — the average of the two
+  //   the gap triangle   X   = the rectify edge  = (Fi + Fj)/2   the average of the two
   //                                                 rectify faces it sits between
-  //   a boundary edge    B   = (Fi + X)/2        — snubEdge, "the average of its 2 faces"
+  //   a boundary edge    B   = (Fi + X)/2        snubEdge, the average of its two faces
   //   so   0.75·X + 0.25·V   ==   0.5·B + 0.25·Fj + 0.25·V
-  //        ^ tint(face)            ^ avg(edge, avg(face,vert))   ← wins (lower tier)
+  //        ^ tint(face)            ^ avg(edge, avg(face,vert))   <- wins, lower tier
   //
-  // i.e. because X is the exact midpoint of two OTHER face colors, a tint of it is
-  // indistinguishable from a blend involving an edge. Nothing downstream can undo that;
+  // Because X is the exact midpoint of two other face colors, a tint of it is
+  // indistinguishable from a blend involving an edge. Nothing downstream can undo that:
   // the gap triangle has to stop being that midpoint. These candidates push it off the
-  // midpoint by mixing in the rectify VERTEX it opens at.
+  // midpoint by mixing in the rectify vertex it opens at.
   it("diagnoses principled candidates", async () => {
     const base = await load();
     const baseIdeal = new Map<string, unknown>();
@@ -327,8 +327,8 @@ describe("snub color symmetry", () => {
       const s = base.swatchesOf(e.ideal, e.scheme);
       baseIdeal.set(name, [counts(s.face), counts(s.vert), counts(s.edge)]);
     }
-    // snubEdge follows the "an edge is the average of the two faces it separates" rule:
-    // 0.5·(rotated face) + 0.5·(gap triangle) = 0.5·oldFace + 0.5·newFace.
+    // snubEdge follows the rule that an edge is the average of the two faces it
+    // separates: 0.5·(rotated face) + 0.5·(gap triangle) = 0.5·oldFace + 0.5·newFace.
     const withAvgEdge = (a: number): Partial<SnubRules> => ({
       newFace: a === 0 ? { oldEdge: 1 } : { oldEdge: 1 - a, oldVertex: a },
       snubEdge: { oldFace: 0.5, oldEdge: 0.5 * (1 - a), ...(a > 0 ? { oldVertex: 0.5 * a } : {}) },
@@ -343,10 +343,9 @@ describe("snub color symmetry", () => {
   }, 900_000);
 
   it("sweeps snub rules for a congruent set that keeps the library's swatches", async () => {
-    // Baseline: the swatches every LIBRARY solid is SUPPOSED to have (the IDEAL build
-    // under the current rules — the Subdivided dodecahedron's 60 triangles all
-    // `tint(yellow)`, not the broken mix it currently shows). A candidate must reproduce
-    // these exactly AND be congruent.
+    // Baseline: the swatches every library solid is supposed to have, i.e. the IDEAL
+    // build under the current rules, in which the Subdivided dodecahedron's 60 triangles
+    // are all `tint(yellow)`. A candidate must reproduce these exactly and be congruent.
     const base = await load();
     const baseIdeal = new Map<string, unknown>();
     for (const [name, e] of base.chains()) {
@@ -355,13 +354,13 @@ describe("snub color symmetry", () => {
     }
 
     // The candidate space. Every rule is a convex combination of the tokens its call site
-    // in snub.ts actually supplies:
-    //   newFace   (gap triangle)  ← the rectify EDGE it opens across, the rectify VERTEX
+    // in snub.ts supplies:
+    //   newFace   (gap triangle)  ← the rectify edge it opens across, the rectify vertex
     //                               it opens at
-    //   snubEdge  (boundary edge) ← the rotated FACE it borders, the rectify EDGE it is a
-    //                               shrunk copy of, the rectify VERTEX it runs to
-    //   newVertex (split vertex)  ← the rectify VERTEX, the rectify EDGE it slides along
-    //   newEdge   (center edge)   ← pinned to {oldVertex: 1}, as requested
+    //   snubEdge  (boundary edge) ← the rotated face it borders, the rectify edge it is a
+    //                               shrunk copy of, the rectify vertex it runs to
+    //   newVertex (split vertex)  ← the rectify vertex, the rectify edge it slides along
+    //   newEdge   (center edge)   ← pinned to {oldVertex: 1}
     const Q = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
     const mixes = (toks: string[]): Rule[] => {
       const out: Rule[] = [];
@@ -404,9 +403,9 @@ describe("snub color symmetry", () => {
         }
 
     // Rank by: (1) never recolor a library solid, (2) fewest violating chains overall.
-    // (Every chain here is a solid the player can actually reach in ≤ 2 operations, and
-    // the same named solid is reachable from either dual root — snub(ico) and snub(dodec)
-    // are both the Snub Icosidodecahedron — so ALL of them ought to come out congruent.)
+    // Every chain here is a solid the player can reach in ≤ 2 operations, and the same
+    // named solid is reachable from either dual root — snub(ico) and snub(dodec) are both
+    // the Snub Icosidodecahedron — so every one of them should come out congruent.
     scored.sort((a, b) => a.libRecolor - b.libRecolor || a.total - b.total || a.libBad - b.libBad);
     console.log(`\n=== SWEEP: ${scored.length} candidates, best first ===`);
     for (const s of scored.slice(0, 12))

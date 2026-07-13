@@ -21,8 +21,8 @@ function planarityError(mesh: Mesh): number {
   return r > 0 ? err / r : err;
 }
 
-/** Reproduce what DragController.startSolve does: reset the live vertices from the
- *  polyhedron's pristine `raw` mesh, then relax from there. */
+/** What DragController.startSolve does: reset the live vertices from the polyhedron's
+ *  pristine `raw` mesh, then relax from there. */
 function regularizeFromRaw(poly: Polyhedron): { planar: boolean; mesh: Mesh } {
   const live = poly.mesh.vertices;
   for (let i = 0; i < live.length; i++) live[i].copy(poly.raw.vertices[i]);
@@ -41,7 +41,7 @@ describe("regularize-from-raw recovery", () => {
     const before = poly.raw.vertices.map((v) => v.clone());
     // Shove every live vertex far out of place.
     for (const v of poly.mesh.vertices) v.add(new Vector3(17, -23, 31));
-    // The raw copy is independent — it didn't move with the live vertices.
+    // The raw copy is independent, so it doesn't move with the live vertices.
     for (let i = 0; i < before.length; i++) {
       expect(poly.raw.vertices[i].distanceTo(before[i])).toBeLessThan(1e-9);
     }

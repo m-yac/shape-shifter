@@ -9,32 +9,29 @@ import { extractTopology } from "../src/solver/topology";
 
 /*
  * ─────────────────────────────────────────────────────────────────────────────
- * Truncation / rectification planarity investigation.
+ * Truncation / rectification planarity.
  *
- * When you truncate a solid, `truncate.ts` slides every cut vertex the SAME
- * fraction along each incident edge (`cutFrac` is per-origin-vertex). On a
- * canonical Archimedean/Platonic solid that's fine, but on a solid with
- * non-coplanar vertex stars — e.g. the triakis tetrahedron, whose degree-6
- * "big" vertices are ringed by 3 same-radius neighbours alternating with 3
- * outward-poking apexes — the exposed vertex n-gon it creates is WILDLY
- * non-planar (the app only hides it because it canonicalizes right after).
+ * A truncation that slides every cut vertex the same fraction along each incident edge
+ * (one `cutFrac` per origin vertex) is fine on a canonical Archimedean / Platonic solid.
+ * But on a solid with non-coplanar vertex stars — the triakis tetrahedron, whose
+ * degree-6 vertices are ringed by 3 same-radius neighbours alternating with 3
+ * outward-poking apexes — the exposed vertex n-gon comes out wildly non-planar.
  *
- * This script measures that non-planarity and searches for a per-EDGE cut speed
- * that flattens the created faces. Key facts it establishes:
+ * This script measures that non-planarity and searches for a per-edge cut speed that
+ * flattens the created faces. What it establishes:
  *
- *   • The truncated ORIGINAL faces are always planar (their cut points lie on
- *     the original face's own edges, i.e. in its plane) — so all the trouble is
- *     in the exposed vertex n-gons (the "vertex figures").
+ *   • The truncated original faces are always planar: their cut points lie on the
+ *     original face's own edges, hence in its plane. All the trouble is in the exposed
+ *     vertex n-gons (the vertex figures).
  *
- *   • Parametrize each EDGE by a single collapse param s ∈ (0,1): the rectify
- *     vertex sits at v + s·(w−v). During the drag the two cut ends ride at
- *     frac = s·t (from v) and (1−s)·t (from w); at t=1 they meet and weld. Then
- *     each vertex figure at parameter t is exactly `t ×` its rectify figure
- *     (a homothety centred on v), so IF the rectify figure is planar every
- *     intermediate truncation is planar too. => solve the problem at t=1 only.
+ *   • Parametrize each edge by a single collapse param s ∈ (0,1): the rectify vertex
+ *     sits at v + s·(w−v). During the drag the two cut ends ride at frac = s·t (from v)
+ *     and (1−s)·t (from w), meeting and welding at t=1. Each vertex figure at parameter
+ *     t is then exactly t × its rectify figure — a homothety centred on v — so a planar
+ *     rectify figure makes every intermediate truncation planar. Solve at t=1 only.
  *
- *   • Choosing s per edge so each vertex's cut points sit at equal radial depth
- *     makes the vertex figure planar. For the triakis tetra this is exact.
+ *   • Choosing s per edge so a vertex's cut points sit at equal radial depth makes the
+ *     vertex figure planar. On the triakis tetrahedron this is exact.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -78,11 +75,11 @@ function planarity(verts: Vector3[], face: number[]): number {
 }
 
 /*
- * A self-contained truncation, mirroring src/operations/truncate.ts but with the
- * cut speed generalized from per-vertex to per-EDGE. Every vertex is truncated
- * (the preview topology the app actually shows). Each undirected edge carries a
- * collapse param s (keyed by its smaller half-edge id, oriented from that
- * half-edge's origin `v` toward its dest `w`): the cut point is v + s·(w−v).
+ * A self-contained truncation, mirroring src/operations/truncate.ts but with the cut
+ * speed generalized from per-vertex to per-edge. Every vertex is truncated, the preview
+ * topology the app shows. Each undirected edge carries a collapse param s, keyed by its
+ * smaller half-edge id and oriented from that half-edge's origin `v` toward its dest
+ * `w`: the cut point is v + s·(w−v).
  */
 function buildTrunc(J: Polyhedron) {
   const dcel = J.dcel;
@@ -160,8 +157,8 @@ function worstOrig(T: ReturnType<typeof buildTrunc>, s: (k: number) => number, t
   for (const f of T.origFaces) m = Math.max(m, planarity(P, f));
   return m;
 }
-// smooth objective for the numeric optimizer (Σ planarity²; the minimax "worst"
-// is flat and traps coordinate descent at the symmetric s=0.5 saddle).
+// Smooth objective for the numeric optimizer: Σ planarity². The minimax worst-case is
+// flat and traps coordinate descent at the symmetric s=0.5 saddle.
 function sseFigure(T: ReturnType<typeof buildTrunc>, s: (k: number) => number, t: number) {
   const P = T.positions(s, t);
   let e = 0;
@@ -182,7 +179,7 @@ describe("truncate / rectify planarity", () => {
     it(name, () => {
       const J = build();
       const T = buildTrunc(J);
-      const uniform = () => 0.5; // current truncate.ts behaviour
+      const uniform = () => 0.5; // the per-vertex cut speed, as a per-edge s
 
       // vertex classes by degree (+radius) so we can read s per symmetry class
       const radius = new Map<number, number>();
@@ -198,19 +195,18 @@ describe("truncate / rectify planarity", () => {
       // (0) original faces stay planar regardless of s — confirm.
       console.log(`║ orig-face worst planarity @rectify (uniform s=.5): ${worstOrig(T, uniform, 1).toExponential(2)}  (expect ~0)`);
 
-      // (1) BASELINE: uniform s=0.5. Show the vertex figures are badly non-planar,
-      //     and that the error is ~constant in t (the homothety fact).
+      // (1) Baseline, uniform s=0.5: the vertex figures are badly non-planar, and the
+      //     error is ~constant in t (the homothety above).
       console.log(`║ ── baseline uniform s=0.5: worst vertex-figure planarity vs t ──`);
       for (const t of [0.25, 0.5, 0.75, 1.0]) {
         console.log(`║   t=${t.toFixed(2)}  worst=${worstFigure(T, uniform, t).toFixed(4)}`);
       }
 
-      // (2) NUMERIC GROUND TRUTH: optimize s per symmetry CLASS (edges grouped by
-      //     their sorted endpoint (degree,radius) signature, oriented from the
-      //     low-radius end). Per-edge coordinate descent is trapped at the s=0.5
-      //     saddle — moving one of a vertex's k equivalent edges just unbalances
-      //     its figure — so we move each class collectively. This is an
-      //     independent check on the closed-form solution in (3).
+      // (2) Numeric ground truth: optimize s per symmetry class, edges grouped by their
+      //     sorted endpoint (degree, radius) signature and oriented from the low-radius
+      //     end. Per-edge coordinate descent is trapped at the s=0.5 saddle — moving one
+      //     of a vertex's k equivalent edges only unbalances its figure — so each class
+      //     moves collectively. An independent check on the closed form in (3).
       const classKeys = new Map<string, Array<{ key: number; flip: boolean }>>();
       for (const e of T.edges) {
         const ra = radius.get(e.va)!, rb = radius.get(e.wb)!;
@@ -253,14 +249,14 @@ describe("truncate / rectify planarity", () => {
         console.log(`║     ${label}:  s(from low-r end)=${classS.get(label)!.toFixed(4)}`);
       }
 
-      // (3) PROPOSED FORMULA — "equal radial depth". For each vertex v (outward
-      //     radial r=v̂) choose the cut points to share a radial depth. The cut
-      //     point on edge v→w is v + s·(w−v); its radial depth is
-      //     |v| + s·(w−v)·r. Equalizing across a vertex's edges gives
+      // (3) Proposed formula, equal radial depth. For each vertex v (outward radial
+      //     r=v̂) choose the cut points to share a radial depth. The cut point on edge
+      //     v→w is v + s·(w−v), at radial depth |v| + s·(w−v)·r. Equalizing across a
+      //     vertex's edges gives
       //         s_i = (c_v − |v|) / ((w_i − v)·r_v).
-      //     The per-vertex depth offset (c_v − |v|) = δ_v is the one free knob.
-      //     Solve the δ_v (one per vertex) by least squares so the two endpoints
-      //     of every edge agree on its single collapse point, then read s.
+      //     The per-vertex depth offset δ_v = (c_v − |v|) is the one free knob. Solve
+      //     the δ_v by least squares so both endpoints of every edge agree on its single
+      //     collapse point, then read s.
       const depthDrop = (from: Vector3, to: Vector3) => {
         const r = from.clone().normalize();
         return to.clone().sub(from).dot(r); // (w−v)·v̂  (negative: edge dives inward)

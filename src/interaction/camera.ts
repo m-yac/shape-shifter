@@ -6,10 +6,10 @@ export const CAMERA_XY = Math.cos(0.4 * Math.PI);
 export const CAMERA_Z  = Math.sin(0.4 * Math.PI);
 
 /**
- * Perspective camera + orbit controls. Both the left and right buttons orbit the
- * shape; the wheel zooms. When the left button actually grabs a vertex / face,
- * the drag controller temporarily disables these controls (so dragging on empty
- * space rotates, but dragging on a handle performs the operation).
+ * Perspective camera and orbit controls. Both mouse buttons orbit the shape; the wheel
+ * zooms. When the left button grabs a vertex / face handle, the drag controller
+ * disables these controls for the duration, so dragging empty space rotates while
+ * dragging a handle performs the operation.
  */
 export class CameraRig {
   readonly camera: PerspectiveCamera;

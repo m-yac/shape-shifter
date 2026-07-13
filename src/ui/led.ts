@@ -1,20 +1,15 @@
 /**
  * =============================================================================
- *  LED — the bottom-bezel "working" indicator.
+ *  LED — the bottom-bezel activity indicator.
  * =============================================================================
  *
- *  A single red lamp on the bottom bezel that mimics a disk/activity light on an
- *  old computer: lit when the machine is idle, but flicked OFF for one frame
- *  whenever something is "happening" (a character printed to the screen, or the
- *  user dragging), so it blinks rapidly during boot text and while dragging.
+ *  A red lamp on the bottom bezel, like the disk-activity light on an old
+ *  computer: lit while idle, flicked off for one frame whenever something
+ *  happens (a character printed, a drag move), so it blinks rapidly during the
+ *  boot text and while dragging. Dark until `powerOn`, called by the intro.
  *
- *  It starts dark and only comes alive with the monitor's power-on flash
- *  (`powerOn`, called by the intro). A module-level singleton so any module can
- *  `pulse()` it without threading a reference through every constructor.
- *
- *    pulse()  — mark that activity happened this frame (no-op until powered)
- *    tick()   — call once per frame (from the render loop); applies the blink
- *    powerOn()— first turn-on, with the screen flash
+ *  A module-level singleton, so any module can `pulse()` it without threading a
+ *  reference through every constructor.
  * =============================================================================
  */
 class Led {
@@ -42,14 +37,13 @@ class Led {
   }
 
   /**
-   * Apply one frame of the blink. Idle (no pulses) → stays lit. A single pulse →
-   * one frame dark then lit again. Continuous pulses (dragging) → alternates every
-   * frame, so the lamp flickers rapidly.
+   * Apply one frame of the blink. No pulses: stays lit. One pulse: one frame dark,
+   * then lit again. Continuous pulses (dragging): alternates every frame.
    */
   tick(): void {
     if (!this.powered) return;
-    if (this.pending && this.on) this.on = false; // a pulse while lit drops it this frame
-    else this.on = true; // otherwise (re)light
+    if (this.pending && this.on) this.on = false;
+    else this.on = true;
     this.pending = false;
     this.apply();
   }

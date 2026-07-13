@@ -80,10 +80,10 @@ function faceVertexCount(n: number): number {
 }
 
 /**
- * Fan-triangulated face geometry (non-indexed). Every triangle of a face is
- * given that face's single Newell normal, so a face shades uniformly with no
- * crease along the triangulation diagonal even if it is very slightly non-planar.
- * Each triangle vertex also receives its face's RGB color (per-face coloring).
+ * Fan-triangulated face geometry (non-indexed). Every triangle of a face gets
+ * that face's single Newell normal, so a slightly non-planar face still shades
+ * uniformly with no crease along the triangulation diagonal. Each triangle
+ * vertex also carries its face's RGB color.
  */
 export function faceGeometryArrays(
   mesh: Mesh,
@@ -98,10 +98,10 @@ export function faceGeometryArrays(
     const n = newellNormal(f.map((i) => mesh.vertices[i]));
     // Orient outward (same centroid convention as the markers / highlights): the
     // solid is centered at the origin, so a face's outward direction is its
-    // centroid direction. Operations like truncate emit some faces with reversed
-    // winding (e.g. the freshly exposed vertex n-gons); without this their normal
-    // would point inward and the face would shade as if lit from behind. We also
-    // reverse the triangle winding to match, so winding and normal always agree.
+    // centroid direction. The stored winding isn't guaranteed outward — truncate
+    // emits the exposed vertex n-gons reversed — and an inward normal shades the
+    // face as if lit from behind. The triangle winding is reversed to match, so
+    // winding and normal always agree.
     const loop = n.dot(faceCentroidOf(mesh.vertices, f)) < 0 ? [...f].reverse() : f;
     if (loop !== f) n.negate();
     const p0 = mesh.vertices[loop[0]];
@@ -118,12 +118,11 @@ export function faceGeometryArrays(
   return { positions, normals, colors };
 }
 
-/** Wireframe positions + per-edge color (from `edgeColors` palette indices). The
- *  resolver maps an index to RGB; defaults to the dark palette (the screen look),
- *  but the _light.png export passes `darkRGBLight`. When a `tubes` array is passed,
- *  every edge whose color is NOT the default swatch is instead pushed onto it (as a
- *  tube spec) and omitted from the line geometry, so those edges can be drawn as
- *  thicker, more-visible tubes; without it every edge goes into the lines. */
+/** Wireframe positions + per-edge color. `resolve` maps a geometric color to RGB;
+ *  it defaults to the dark palette (the screen look), and the _light.png export
+ *  passes `darkRGBLight`. Given a `tubes` array, every edge whose color is not the
+ *  default swatch is pushed onto it as a tube spec and left out of the line
+ *  geometry; without it every edge goes into the lines. */
 export function edgeGeometryArrays(
   mesh: Mesh,
   edgeColors: Map<string, GeomColor>,
@@ -192,9 +191,9 @@ export class SceneView {
   private dragMarker: ThreeMesh;
   private faceHighlight: ThreeMesh;
   // The gyro rotation-arc handle: a white tube (matching the drag range line) bent
-  // along the arc the swept spoke rides. `twistArc` is the full-extent arc drawn at a
-  // reduced opacity; `twistArcProgress` is the solid sub-arc (midpoint → cursor) shown
-  // while actively twisting, indicating how far the gyro has been rotated.
+  // along the arc the swept spoke rides. `twistArc` is the full-extent arc at reduced
+  // opacity; `twistArcProgress` is the solid sub-arc (midpoint → cursor) shown while
+  // twisting, i.e. how far the gyro has been rotated.
   private twistArc: ThreeMesh;
   private twistArcProgress: ThreeMesh;
 
@@ -205,18 +204,17 @@ export class SceneView {
   private faceMat: MeshStandardMaterial;
   private faceHighlightMat: MeshBasicMaterial;
 
-  // Transient emissive "glow" pulse (used on a new-shape discovery). The bloom
-  // pass turns the raised emissive into a bright halo. 0 duration => inactive.
+  // Transient emissive glow pulse (the new-shape discovery flash). The bloom pass
+  // turns the raised emissive into a bright halo. 0 duration = inactive.
   private glowStart = 0;
   private glowDur = 0;
   private glowPeak = 0;
 
-  // Per-face display colors (one RGB per current face) and the triangle-vertex
-  // count of each face, so the color buffer can be rewritten in place during a
-  // fade without rebuilding positions.
+  // Per-face display colors and each face's triangle-vertex count, so a fade can
+  // rewrite the color buffer in place without rebuilding positions.
   private displayFaceColors: Color[] = [];
   private faceVertCounts: number[] = [];
-  // Palette index per displayed edge (keyed by edgeKey); drawn via the dark palette.
+  // Geometric color per displayed edge, keyed by edgeKey.
   private displayEdgeColors: Map<string, GeomColor> = new Map();
   // Active face-color fade (release → final colors). null when idle.
   private colorFade: { from: Color[]; to: Color[]; start: number; durMs: number } | null = null;
@@ -232,8 +230,8 @@ export class SceneView {
       vertexColors: true,
       transparent: config.render.faceOpacity < 1,
       opacity: config.render.faceOpacity,
-      // Normals are supplied per face (one Newell normal per face), so we don't
-      // want flatShading recomputing per-triangle normals (that caused the crease).
+      // Normals are supplied per face, so flatShading must not recompute them
+      // per triangle (that creases the face along the triangulation diagonal).
       flatShading: false,
       roughness: 0.6,
       metalness: 0.0,
@@ -253,13 +251,13 @@ export class SceneView {
     this.edges.visible = config.render.showEdges;
     this.edgeTubes.setVisible(config.render.showEdges);
 
-    // White tube for the drag "range" line (current point → max). Unit cylinder
+    // White tube for the drag range line (current point → max). Unit cylinder
     // (radius 1, height 1 along +Y); positioned/scaled per drag and per frame.
     this.dragTube = new ThreeMesh(
       new CylinderGeometry(1, 1, 1, 16),
       new MeshBasicMaterial({
         color: config.render.dragLineColor,
-        // transparent so it joins the same render pass as the (transparent) faces;
+        // transparent so it joins the same render pass as the transparent faces;
         // the high renderOrder + no depth test then keep it drawn last, on top.
         transparent: true,
         depthTest: false,
@@ -294,7 +292,7 @@ export class SceneView {
     this.faceHighlight.visible = false;
     this.faceHighlight.renderOrder = 1;
 
-    // Twist arc: a white tube drawn on top, styled exactly like the drag range line.
+    // Twist arc: a white tube drawn on top, styled like the drag range line.
     this.twistArc = new ThreeMesh(
       new BufferGeometry(),
       new MeshBasicMaterial({
@@ -339,9 +337,9 @@ export class SceneView {
   }
 
   /**
-   * Rebuild everything from a committed polyhedron. By default this snaps the
-   * face colors to the polyhedron's committed colors; pass `keepFade` (used when
-   * finishing a relax that is still color-fading) to leave an active fade running.
+   * Rebuild everything from a committed polyhedron. Snaps the face colors to the
+   * polyhedron's committed colors; `keepFade` leaves an active fade running
+   * instead (used when finishing a relax that is still color-fading).
    */
   setPolyhedron(poly: Polyhedron, _invalid: boolean, keepFade = false): void {
     if (!keepFade) this.colorFade = null;
@@ -357,11 +355,11 @@ export class SceneView {
   }
 
   /**
-   * Temporarily swap the surface to the "light" export look (light face palette,
-   * dark legible edges, opaque faces, no emissive glow, markers hidden) and return
-   * a closure that restores the on-screen look exactly. Used by the _light.png save.
-   * Builds throwaway geometry and keeps the live geometry aside, so it never
-   * disturbs the display state (colors, fades, vertex counts).
+   * Temporarily swap the surface to the light export look (light face palette,
+   * dark legible edges, opaque faces, no emissive glow, markers hidden) for the
+   * _light.png save, and return a closure that restores the on-screen look. Builds
+   * throwaway geometry and sets the live geometry aside, so the display state
+   * (colors, fades, vertex counts) is left alone.
    */
   applyExportLight(poly: Polyhedron): () => void {
     const oldFaceGeo = this.faceMesh.geometry;
@@ -389,8 +387,8 @@ export class SceneView {
     this.faceMat.transparent = config.render.light.faceOpacity < 1;
     this.faceMat.emissiveIntensity = 0;
     this.markerGroup.visible = false;
-    // The export draws every edge (colored included) as a plain line, so hide the
-    // live colored-edge tubes for the duration.
+    // The export draws every edge, colored ones included, as a plain line, so hide
+    // the live colored-edge tubes for the duration.
     this.edgeTubes.setVisible(false);
 
     return () => {
@@ -406,16 +404,15 @@ export class SceneView {
     };
   }
 
-  /** Start a face-color fade from `from` to `to` over `seconds`. The geometry is
-   *  expected to already show `from` (caller renders the committed mesh first). */
+  /** Start a face-color fade from `from` to `to` over `seconds`. The geometry must
+   *  already show `from` (the caller renders the committed mesh first). */
   startColorFade(from: Color[], to: Color[], seconds: number): void {
     this.displayFaceColors = from.map((c) => c.clone());
     this.colorFade = { from, to, start: performance.now(), durMs: Math.max(1, seconds * 1000) };
     this.writeFaceColors();
   }
 
-  /** Start an emissive glow pulse that peaks at `strength` and fades over
-   *  `seconds` (used for the new-shape discovery flash). */
+  /** Emissive glow pulse peaking at `strength`, fading over `seconds`. */
   pulseGlow(strength: number, seconds: number): void {
     this.faceMat.emissive.copy(this.faceMat.color);
     this.glowPeak = strength;
@@ -464,8 +461,8 @@ export class SceneView {
     this.dragMarker.visible = false;
   }
 
-  /** Update the face + wireframe surface (used live and on commit). Records the
-   *  per-face colors + triangle counts so a fade can rewrite colors in place. */
+  /** Update the face + wireframe surface (live and on commit). Records the per-face
+   *  colors + triangle counts so a fade can rewrite colors in place. */
   private updateSurface(
     mesh: Mesh,
     faceColors: Color[],
@@ -534,10 +531,10 @@ export class SceneView {
       return mesh;
     };
 
-    // Per-face Newell normals, oriented OUTWARD (the solid is centered at the
-    // origin, so a face's outward direction is its centroid direction). The
-    // stored winding isn't guaranteed outward, hence the flip — same reasoning
-    // as setFaceHighlight. The picker uses these to cull faces that point away.
+    // Per-face Newell normals, oriented outward (the solid is centered at the
+    // origin, so a face's outward direction is its centroid direction; the stored
+    // winding isn't guaranteed outward, hence the flip). The picker uses these to
+    // cull faces that point away.
     const faceNormals = poly.faces.map((f) => {
       const n = newellNormal(f.map((i) => poly.vertices[i]));
       const c = faceCentroidOf(poly.vertices, f);
@@ -593,9 +590,10 @@ export class SceneView {
     }
   }
 
-  /** Show a transient morph preview (hide markers + face overlay). `faceColors`
-   *  overrides the per-face colors (drag); omit to keep the current colors (solve
-   *  frames, where a fade may be running). `hiddenEdges` drops vanishing edges. */
+  /** Show a transient morph preview (markers + face overlay hidden). `faceColors`
+   *  overrides the per-face colors during a drag; omit it to keep the current ones
+   *  (solve frames, where a fade may be running). `hiddenEdges` drops vanishing
+   *  edges. */
   showPreview(mesh: Mesh, opts?: PreviewOpts): void {
     this.markerGroup.visible = false;
     this.clearFaceHighlight();
@@ -609,8 +607,8 @@ export class SceneView {
 
   /** Rescale markers + the drag tube so their apparent on-screen size is stable. */
   updateMarkerScales(camera: Camera, refDistance: number): void {
-    // Colored-edge tubes: same distance-based radius scaling (the group is at the
-    // origin, so their endpoints are already world-space).
+    // Colored-edge tubes: same distance-based radius scaling. The group sits at the
+    // origin, so their endpoints are already world-space.
     this.edgeTubes.updateScales(camera, refDistance, config.render.coloredEdgeTubeRadius);
     for (const m of [...this.vertexMarkers, ...this.faceMarkers, ...this.edgeMarkers]) {
       const d = camera.position.distanceTo(m.mesh.position);
@@ -668,8 +666,8 @@ export class SceneView {
   setFaceHighlight(points: Vector3[], color: number = config.render.faceHighlightColor): void {
     this.faceHighlightMat.color.setHex(color);
     const n = newellNormal(points);
-    // Ensure the lift is OUTWARD (away from the origin) regardless of the face's
-    // stored winding, otherwise the overlay sinks behind the surface and vanishes.
+    // The lift must go outward (away from the origin) whatever the face's stored
+    // winding, otherwise the overlay sinks behind the surface and vanishes.
     const c = new Vector3();
     for (const p of points) c.add(p);
     c.multiplyScalar(1 / points.length);
@@ -706,11 +704,11 @@ export class SceneView {
   }
 
   /**
-   * Draw the gyro rotation arc: a tube (radius `tubeRadius`, matching the drag range
-   * line) bent along the arc `a.ref` sweeps ±`a.halfSweepRad` around `a.center`/
-   * `a.axis` (the apex + its tangent-plane normal), so both chiralities are shown at
-   * `opacity`. When `showProgress` is set, a solid (full-opacity) sub-arc is overlaid
-   * from the midpoint (zero twist) out to `a.ride` — how far the gyro has been rotated.
+   * Draw the gyro rotation arc: a tube of radius `tubeRadius` bent along the arc
+   * `a.ref` sweeps ±`a.halfSweepRad` around `a.center` / `a.axis` (the apex and its
+   * tangent-plane normal), showing both chiralities at `opacity`. With
+   * `showProgress`, a full-opacity sub-arc is overlaid from the midpoint (zero
+   * twist) out to `a.ride`, the amount rotated so far.
    */
   setTwistArc(a: TwistArc, opacity: number, tubeRadius: number, showProgress: boolean): void {
     const segs = Math.max(2, config.render.twistArcSegments);

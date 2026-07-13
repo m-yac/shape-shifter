@@ -61,16 +61,16 @@ function faceLoop(f: HEFace): number[] {
  * Per-face apex height for a planar-faced Join (the dual of truncate's
  * `computeCollapseFractions`).
  *
- * Kis raises a pyramid of height h_f (along the face normal) on every face; at
- * Join two pyramid triangles straddling a shared edge merge into one quad. That
- * quad `[P1, apex_f, P2, apex_g]` is planar iff P1, P2, apex_f, apex_g are
- * coplanar, i.e. the scalar triple product
+ * Kis raises a pyramid of height h_f (along the face normal) on every face; at Join two
+ * pyramid triangles straddling a shared edge merge into one quad. That quad
+ * `[P1, apex_f, P2, apex_g]` is planar iff P1, P2, apex_f, apex_g are coplanar, i.e. the
+ * scalar triple product
  *   R(h_f,h_g) = (apex_f−P1)·((P2−P1)×(apex_g−P1)) = A·h_f·h_g + β·h_f + α·h_g + C
- * vanishes (apex_f = c_f + h_f·n_f). A single per-face height that hits R=0 on
- * *every* incident edge does not exist for a non-canonical solid (each face has
- * one apex but several edges), so — exactly as truncate solves one radial-depth
- * δ per vertex by least squares over the edges — we solve one height h_f per face
- * by least squares over the join quads. For the triakis tetra this is exact.
+ * vanishes (apex_f = c_f + h_f·n_f). A single per-face height hitting R=0 on every
+ * incident edge does not exist for a non-canonical solid (each face has one apex but
+ * several edges), so, as truncate solves one radial-depth δ per vertex by least squares
+ * over the edges, one height h_f per face is solved by least squares over the join
+ * quads. For the triakis tetra it is exact.
  *
  * The residual is bilinear in (h_f,h_g), so a per-face update is linear once the
  * neighbours are fixed: with p = A·h_g+β and q = α·h_g+C over f's edges,
@@ -85,8 +85,8 @@ export function computeJoinHeights(poly: Polyhedron): Map<number, number> {
     nrm.set(f.id, faceNormalHE(f));
   }
 
-  // Symmetric (h_f = h_g) seed: current behaviour — max join height over edges,
-  // fallback to half the centroid→vertex distance for a face with no neighbours.
+  // Symmetric (h_f = h_g) seed: the max join height over the face's edges, falling back
+  // to half the centroid→vertex distance for a face with no neighbours.
   const seed = new Map<number, number>();
   for (const f of dcel.faces) {
     let h = 0;
@@ -184,11 +184,11 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
   }
   const vertexCount = apexIdx;
 
-  // Colors: kis is the exact DUAL of truncate, so its rules are the dualized
-  // (vertex↔face) truncate rules (see colorUtil.dualRule). apex vertex ←
-  // dual(truncate.newFace); new triangle ← dual(truncate.newVertex) (its flat start
-  // color is the old face); spoke edges ← dual(truncate.newEdge). (The Join quad
-  // recolors to dual(rectify.newVertex) in joinTopology.)
+  // Colors: kis is the dual of truncate, so its rules are the dualized (vertex↔face)
+  // truncate rules (see colorUtil.dualRule). Apex vertex ← dual(truncate.newFace); new
+  // triangle ← dual(truncate.newVertex), its flat start color being the old face; spoke
+  // edges ← dual(truncate.newEdge). The Join quad recolors to dual(rectify.newVertex)
+  // in joinTopology.
   const C = config.colors.operations;
   const previewFaces: number[][] = [];
   const triOwner: number[] = [];
@@ -216,9 +216,9 @@ function buildKisData(poly: Polyhedron, kissed: Set<number>, heights: Map<number
         oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK,
       }));
       faceStart.push(old.face[f.id]);
-      // At the Join this triangle merges (across base edge a-b) into a quad recolored
-      // to dual(rectify.newVertex), from the base edge; preview that at the weld so
-      // releasing into the Join doesn't snap.
+      // At the Join this triangle merges (across base edge a-b) into a quad recolored to
+      // dual(rectify.newVertex) from that base edge; preview it at the weld so releasing
+      // into the Join doesn't snap.
       faceJoin.push(combine(dualRule(C.rectify.newVertex), {
         oldEdge: old.edge.get(edgeKey(a, b)) ?? BLACK,
       }));
@@ -313,14 +313,14 @@ function joinTopology(poly: Polyhedron, data: KisData): { faces: number[][]; fac
 /**
  * Kis → Join, driven by dragging a face center outward along its normal.
  *
- * Each face rises to a per-face apex height (see `computeJoinHeights`) chosen so
- * the merged Join quads stay planar, rather than a single symmetric join height.
+ * Each face rises to a per-face apex height (see `computeJoinHeights`) chosen so the
+ * merged Join quads stay planar, rather than to a single symmetric join height.
  *
- * Staging (dual of truncate): the preview always raises a pyramid on EVERY face.
- * The SELECTED arity group rises from t=0 (`frac = t`); every OTHER face stays flat
+ * Staging (dual of truncate): the preview always raises a pyramid on every face. The
+ * selected arity group rises from t=0 (`frac = t`); every other face stays flat
  * (`frac = clamp(2t−1)`) until t=0.5, then rises too, so the drag reads as an n-kis,
- * becomes a full kis at t=0.5, and a full Join at t=1. A release with t<0.5 commits
- * the clean n-kis of just the selected set.
+ * becomes a full kis at t=0.5, and a full Join at t=1. A release with t<0.5 commits the
+ * clean n-kis of just the selected set.
  */
 export function buildKis(
   poly: Polyhedron,
@@ -347,14 +347,14 @@ export function buildKis(
   }
 
   function previewFaceColors(t: number, weld?: boolean): Color[] {
-    // At the Join weld each pair of triangles merges into one recolored quad — show
-    // that quad color now so releasing into the Join is seamless (the merge seams are
-    // hidden by the caller, so both halves reading the same color look like one quad).
+    // At the Join weld each pair of triangles merges into one recolored quad; show that
+    // quad color now so releasing into the Join is seamless (the caller hides the merge
+    // seams, so both halves reading the same color look like one quad).
     if (weld) return full.faceJoin.map((c) => paletteRGB(c));
-    // Otherwise each triangle stages across its three colors by its OWNING face's
-    // height fraction (so on a partial n-kis the unselected faces don't tint until
-    // they start rising at t=0.5): flat face color → kis color (half height) → Join
-    // quad color (full height).
+    // Otherwise each triangle stages across its three colors by its owning face's height
+    // fraction, so on a partial n-kis the unselected faces don't tint until they start
+    // rising at t=0.5: flat face color → kis color (half height) → Join quad color
+    // (full height).
     const frac = fracFor(t);
     const out: Color[] = new Array(full.previewFaces.length);
     for (let i = 0; i < out.length; i++) {

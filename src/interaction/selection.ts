@@ -78,7 +78,7 @@ export class Selection {
     }
   }
 
-  /** The active set for a drag of the given kind (null = "affect everything"). */
+  /** The active set for a drag of the given kind; null means affect every element. */
   setFor(kind: MarkerKind): Set<number> | null {
     if (this.kind === kind && this.ids.size > 0) return new Set(this.ids);
     return null;

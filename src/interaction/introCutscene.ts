@@ -65,7 +65,7 @@ export class IntroCutscene {
     this.view.scene.fog = this.fog;
     this.view.setPolyhedron(this.poly, false);
 
-    // The monitor is powering on now — light the activity LED with the screen flash.
+    // The monitor is powering on: light the activity LED with the screen flash.
     led.powerOn();
   }
 
@@ -80,8 +80,8 @@ export class IntroCutscene {
     this.whenFinished();
   }
 
-  /** Abort the whole intro (e.g. the user pressed a key): drop the boot screen
-   *  and jump straight to the shape, fully visible, with the app UI shown. */
+  /** Abort the intro (e.g. the user pressed a key): drop the boot screen and jump
+   *  straight to the shape, fully visible, with the app UI shown. */
   skip(): void {
     if (this.finished) return;
     this.consoleEl.style.display = "none";
@@ -98,10 +98,10 @@ export class IntroCutscene {
     this.fog.near = (config.camera.startDistance + 1) * t8;
   }
 
-  /** Blend the console background from the warm monitor color to the backlight over
-   *  the first `warmupDuration` seconds: the monitor "powering on" before any text.
-   *  Runs only until warm-up completes, then leaves the background to the boot
-   *  sequence (which goes transparent for the closing message). */
+  /** Blend the console background from the warm monitor color to the backlight over the
+   *  first `warmupDuration` seconds: the monitor powering on before any text. Runs only
+   *  until warm-up completes, then leaves the background to the boot sequence, which
+   *  goes transparent for the closing message. */
   private updateWarmup(t: number): void {
     if (this.warmupDone) return;
     const k = Math.min(1, t / config.intro.warmupDuration);
@@ -121,24 +121,23 @@ export class IntroCutscene {
     }
     const t = (now - this.startTime) / 1000;
 
-    // Phase 1: the boot sequence runs on its own clock over a solid console
-    // (with a brief power-on flash) until it has finished. The console does NOT
-    // fade out; the boot makes its own background transparent for the closing
-    // message, which stays on screen over the fading-in shape.
+    // Phase 1: the boot sequence runs on its own clock over a solid console, after a
+    // brief power-on flash. The console doesn't fade out here; the boot makes its own
+    // background transparent for the closing message, which stays on screen over the
+    // fading-in shape.
     if (!this.bootDone) {
       this.updateWarmup(t);
       this.bootDone = this.boot.update();
     }
 
-    // Phase 2: the shape fades in behind the closing message (triggered by the
-    // boot partway through typing it). The message fades out so it's gone just
-    // before the shape finishes; once it has fully faded in, control passes on.
+    // Phase 2: the shape fades in behind the closing message, triggered by the boot
+    // partway through typing it. Once the shape has fully faded in, control passes on.
     if (this.fadeStart === 0) return; // not yet at the fade-in beat
     const elapsed = (now - this.fadeStart) / 1000;
     const total = config.intro.shapeFadeInDuration;
 
-    // Start fading the closing message out early, so the fade completes a touch
-    // before the shape's fade-in does (rather than lingering past it).
+    // Start fading the closing message out early, so it is gone a touch before the
+    // shape's fade-in completes rather than lingering past it.
     const fadeOutSeconds = 0.6;
     const finishGap = 0.4; // leave the message gone this long before the shape lands
     if (!this.consoleFadingOut && total - elapsed <= fadeOutSeconds + finishGap) {

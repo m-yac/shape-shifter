@@ -4,11 +4,10 @@
  * =============================================================================
  *
  *  The #console div sits above the 3D view and, on launch, plays the boot
- *  sequence (see interaction/bootSequence.ts). Rather than poking at the
- *  element's textContent directly, every "screen" drives the display through
- *  this small interface: a buffer of lines plus an optional blinking block
- *  cursor on the last line. Text is preformatted (`white-space: pre`), so a
- *  "\n" starts a new row and columns line up with the character grid.
+ *  sequence (see interaction/bootSequence.ts). It holds a buffer of lines plus
+ *  an optional blinking block cursor on the last line. Text is preformatted
+ *  (`white-space: pre`), so a newline starts a new row and columns line up with
+ *  the character grid.
  * =============================================================================
  */
 import { fadeIn } from "./screen";
@@ -19,13 +18,13 @@ export class Console {
   private cursorOn = true; // is the cursor shown at all
   private cursorLit = true; // current blink phase
   private lastBlink = 0;
-  private readonly cursorChar = "█"; // full block █
+  private readonly cursorChar = "█";
 
   /**
    * @param el       the overlay element to render into.
    * @param maxRows  how many rows fit on screen; once the buffer grows past it
-   *                 the display scrolls (only the last `maxRows()` lines show),
-   *                 just like a real terminal. Defaults to "no limit".
+   *                 the display scrolls, showing only the last `maxRows()` lines.
+   *                 Defaults to unlimited.
    */
   constructor(
     private readonly el: HTMLElement,
@@ -54,10 +53,10 @@ export class Console {
     return this.print(text + "\n");
   }
 
-  /** Replace the text of the current (last) line — handy for in-place updates
-   *  like a counter or a progress bar. */
+  /** Replace the text of the current (last) line, for in-place updates like a
+   *  counter or a progress bar. */
   setLine(text: string): this {
-    led.pulse(); // in-place updates (counters, progress) flick the LED too
+    led.pulse();
     this.lines[this.lines.length - 1] = text;
     return this.render();
   }
@@ -93,8 +92,8 @@ export class Console {
     if (this.cursorOn && this.cursorLit) {
       out[out.length - 1] += this.cursorChar;
     }
-    // Scroll: show only the last `maxRows` lines so text that runs off the
-    // bottom pushes earlier lines up out of view.
+    // Scroll: show only the last `maxRows` lines, so text running off the bottom
+    // pushes earlier lines up out of view.
     const max = this.maxRows();
     const visible = out.length > max ? out.slice(out.length - max) : out;
     this.el.textContent = visible.join("\n");

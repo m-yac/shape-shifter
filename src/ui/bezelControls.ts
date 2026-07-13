@@ -12,9 +12,8 @@ import { led } from "./led";
  *    left:   [red activity LED]  [ Help & Info ]
  *    right:  Save  [ PNG ]  [ STL ]
  *
- *  The LED is owned by the `led` singleton (this just builds + registers its
- *  element). The buttons fire the callbacks passed in. "Help & Info" is wired but
- *  intentionally does nothing yet.
+ *  The LED belongs to the `led` singleton; this builds and registers its element.
+ *  The buttons fire the callbacks passed in.
  * =============================================================================
  */
 
@@ -25,8 +24,8 @@ export interface BezelControlHandlers {
 }
 
 export class BezelControls {
-  /** The "Help & Info" button element, exposed so the help dialog can tell a click
-   *  on it apart from a click-anywhere-to-dismiss. */
+  /** The Help & Info button, exposed so the help dialog can tell a click on it
+   *  apart from a click-anywhere-to-dismiss. */
   readonly helpButton: HTMLElement;
 
   constructor(bezel: HTMLElement, handlers: BezelControlHandlers) {
