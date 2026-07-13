@@ -252,30 +252,29 @@ export const config = {
     // tetrahedral orbits are the tetrahedron's one-hot element IDs; the octa/ico ones
     // are those pushed through the `operations` rules below.)
 
-    // How to color new elements for each operation. Tokens oldVertex/oldFace/
-    // oldEdge resolve to the color of the OLD element a new element derives from;
-    // the "nth" wording picks a specific neighbor of that old element.
+    // How to color new elements for each operation
     operations: {
       // Operations on a vertex, where n is in {1, ..., degree}:
       // - oldVertex is the color of the vertex being operated on
       // - oldEdge is the color of the nth edge adjacent to it
       // - oldFace is the color of the nth face adjacent to it
-      // (Dual operations are automatically derived.) SNUB is the exception: it twists a
-      // rectification, so its "old" tokens are in rectify space — see its block below.
+      // (Dual operations are automatically derived)
       truncate: {
-        // new face color = old vertex color
+        // Each new face comes from an old vertex, so is given its color
         newFace: {oldVertex: 1.0},
-        // nth new edge color = (nth old face color + old vertex color) / 2
+        // Each new edge borders an old face and a new face, so is given the
+        // average of the two colors
         newEdge: {oldFace: 0.5, oldVertex: 0.5},
-        // nth new vertex color = (nth old edge color + old vertex color) / 2
+        // Each new vertex comes from an old vertex moved part-way along an
+        // edge, so is given the average of the two colors
         newVertex: {oldEdge: 0.5, oldVertex: 0.5},
       },
       rectify: {
-        // new face color = old vertex color
+        // Each face and edge shares the same origin and adjacency as its
+        // analog in truncation, so are colored the same as the above
         newFace: {oldVertex: 1.0},
-        // nth new edge color = (nth old face color + old vertex color) / 2
         newEdge: {oldFace: 0.5, oldVertex: 0.5},
-        // nth new vertex color = nth old edge color
+        // Each new vertex comes from an old edge, so is given its color
         newVertex: {oldEdge: 1.0},
       },
       // NB: Snub is built as an operation on the vertices of a rectified
@@ -290,21 +289,20 @@ export const config = {
       //   chiral direction
       // (Dual operation is automatically derived)
       snub: {
-        // mth new face color = mth old edge color
-        // (where the edge being referred to is the rectify edge the gap opens across)
+        // Each new face comes from an old rectify edge which is "opened up",
+        // so it is given its color
         newFace: {oldEdge: 1.0},
-        // new (center) edge = old vertex color
+        // Each new edge between two of the new faces comes from an old
+        // rectify vertex which is "opened up", so it is given its color
         newEdge: {oldVertex: 1.0},
-        // nth new (boundary) edge = (mth old edge color + nth old face color) / 2
-        // Each boundary edge is a shrunk copy of the rectify edge it runs along (its
-        // old edge), bordering the rotated face it belongs to (its old face).
-        snubEdge: {oldFace: 0.5, oldEdge: 0.5},
-        // mth new vertex color =
-        //   (old vertex color * 3 +
-        //     color of the old edge the split vertex slides along) / 2
-        // Splitting a rectify vertex into an edge turns two of its four edges into the
-        // gap triangles bordering that new edge; the split vertex slides along one of
-        // the OTHER two edges, and uses that edge's color.
+        // Each other new edge borders an old face and a new face, so is given
+        // the average of the two colors, but weighted towards the old face
+        // to avoid collisions (FIXME: find a real reason)
+        snubEdge: {oldFace: 0.75, oldEdge: 0.25},
+        // Each new vertex comes an old vertex that is moved halfway along an
+        // old edge as the old vertex is "opened up", so it is given the
+        // average of the two colors, but weighted towards the old vertex
+        // to avoid collisions (FIXME: find a real reason)
         newVertex: {oldVertex: 0.75, oldEdge: 0.25},
       },
       // Operation on an edge, where n is in {1,2}:
@@ -312,17 +310,33 @@ export const config = {
       // - oldVertex is the color of the nth vertex adjacent to it
       // - oldFace is the color of the nth face adjacent to it
       // (Dual operation is automatically derived)
+      // NB: Subdividing should be equivalent to rectifying, then kis-ing (the
+      // dual operation to truncating) only the new faces that were created by
+      // the rectification. This explanation is used for all the rules below.
       subdivide: {
-        // nth new face color = (nth old face color + nth old vertex color) / 2
-        newFace: {oldFace: 0.5, oldVertex: 0.5},
-        // nth subdivided-face edge color =
-        //   (nth old face color + nth new face color) / 2 =
-        //   (nth old face color * 3 + old vertex color) / 4
-        subdivFaceEdge: {oldFace: 0.75, oldVertex: 0.25},
-        // nth subdivided-edge edge color =
-        //   (old edge color + old vertex color) / 2
+        // Each new face comes from kis-ing one of the new rectify faces, so
+        // following the newVertex rule of truncate, it is given the average of
+        // the rectify edge and the rectify face colors, which following the
+        // rectify rules, have the average of the colors of the old face
+        // and old vertex, and the color of the old vertex, respectively
+        newFace: {oldFace: 0.25, oldVertex: 0.75},
+        // Each new edge that splits an old edge comes from kis-ing one of the
+        // new rectify faces, so following the newEdge rule of truncate, it is
+        // given the average of the rectify vertex and rectify face colors,
+        // which following the rectify rules, have the color of the old edge
+        // and old vertex, respectively
         subdivEdgeEdge: {oldEdge: 0.5, oldVertex: 0.5},
-        // new vertex color = old edge color
+        // Each new edge that splits an old face comes from rectifying one of
+        // the old vertices, so following the newEdge rule of rectify it is
+        // given the average of the old face and old vertex colors
+        subdivFaceEdge: {oldFace: 0.5, oldVertex: 0.5},
+        // Each new vertex comes from rectifying one of the old vertices, so
+        // following the newVertex rule of rectify, it is given the color of
+        // the old edge
+        // (NB: The new vertices created from kis-ing are not new in this
+        // context, since they are just the old vertices that were turned into
+        // faces via rectify - they keep their color via the newFace rule of
+        // truncate)
         newVertex: {oldEdge: 1.0},
       },
     },

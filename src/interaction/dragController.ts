@@ -9,6 +9,8 @@ import {
   schemeForMesh,
   paletteRGB,
   darkRGB,
+  collapse,
+  paletteSwatch,
   type GeomColor,
   type SchemeName,
 } from "../geometry/colors";
@@ -397,7 +399,8 @@ export class DragController {
     const tally = (nums: GeomColor[], resolve: (g: GeomColor) => { getHexString(): string }) => {
       const out: Record<string, number> = {};
       for (const n of nums) {
-        const k = `geom[${n.join(",")}]=#${resolve(n).getHexString()}`;
+        const swatch = paletteSwatch(n);
+        const k = `geom[${collapse(n).join(",")}]=#${resolve(n).getHexString()}${swatch ? ` (${swatch})` : ""}`;
         out[k] = (out[k] ?? 0) + 1;
       }
       return out;

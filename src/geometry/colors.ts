@@ -261,7 +261,7 @@ const tetVertIds: GeomColor[] = Array.from({ length: N_TET_VERT }, (_, i) => one
  * triple (and so the same swatch), while the scheme lookup below stays in this tiny 3D
  * provenance space instead of ever enumerating the huge 14-D combination space.
  */
-function collapse(c: GeomColor): GeomColor {
+export function collapse(c: GeomColor): GeomColor {
   let f = 0, e = 0, v = 0;
   for (let i = 0; i < c.length; i++) {
     if (i < N_TET_FACE) f += c[i];
@@ -425,7 +425,7 @@ for (const [name, aug] of Object.entries(augmentedSchemes)) {
  *  matches no scheme group — or is missing — falls back to the default swatch). The ID
  *  vector is collapsed to its 3D provenance triple first (see `collapse`), which is what
  *  the scheme lookup is keyed on. */
-function paletteSwatch(geom: GeomColor | undefined): string {
+export function paletteSwatch(geom: GeomColor | undefined): string {
   if (!geom) return defaultSwatch;
   return schemeLookup[currentScheme].get(colorKey(collapse(geom))) ?? defaultSwatch;
 }
