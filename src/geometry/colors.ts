@@ -73,29 +73,34 @@ const defaultSwatch = config.colors.defaultSwatch as SwatchName;
 // `config.render.palette` and each `config.colors.schemes[*]` are augmented with
 // synthesized swatches/groups so a computed color that isn't a pure symmetry orbit still
 // resolves to a sensible swatch instead of the default. Three kinds are added, each
-// catching a different weighted combination the operation rules can produce (listed in
-// precedence order — highest first):
+// catching a different weighted combination the operation rules can produce, and each
+// switched on/off by a `config.colors` knob (listed in precedence order — highest first):
 //
-//   1. avg(<a>,<b>)  [0.5 + 0.5]. For every unordered pair of DISTINCT groups we add a
-//      group whose triples are an equal average (0.5 each) of a triple from each group —
-//      e.g. octahedral face (yellow) + vert (red) gives [0.5,0,0.5] / [0,0.5,0.5]. It
-//      renders as an equal 3-way split of the two base swatches AND the default swatch —
-//      the default share is what marks it as an adjacency color.
+//   1. avg(<c1>,…,<ck>)  [1/k each]. For every unordered set of k DISTINCT groups, for k
+//      from 2 up to `avgArguments`, a group whose triples are the equal average of a triple
+//      from each — e.g. octahedral face (yellow) + vert (red) gives [0.5,0,0.5] / [0,0.5,0.5].
+//      A PAIR renders as an equal 3-way split of the two base swatches AND the default
+//      swatch — the default share is what marks it as an adjacency color. A k >= 3 avg is a
+//      genuine k-way mix, so it renders as the equal 1/k blend of just its base swatches (no
+//      default share). The 3-argument one is what a snub's gap triangle is (snub.newFace
+//      borders an old edge and the vertex it opens at, and its neighbours carry the third
+//      share) — without it those faces name nothing and fall back to the default. A smaller
+//      k wins over a bigger one. (`avgArguments` < 2 disables the whole family.)
 //
-//   2. avg(<base>,avg(<n1>,<n2>))  [0.5 base + 0.25 + 0.25]. For each group we add a group
-//      whose triples are that base weighted 0.5 plus 0.25 of one triple from each of the
-//      two other groups. It renders as the SAME 0.5 : 0.25 : 0.25 blend of the base swatch
-//      and its two neighbor swatches (no default involved).
+//   2. avg(<base>,avg(<n1>,<n2>))  [0.5 base + 0.25 + 0.25], if `secondOrderAvgSwatches`.
+//      For each group we add a group whose triples are that base weighted 0.5 plus 0.25 of
+//      one triple from each of two other groups. It renders as the SAME 0.5 : 0.25 : 0.25
+//      blend of the base swatch and those two neighbor swatches (no default involved).
 //
-//   3. tint(<base>)  [0.75 base + 0.25 other]. For each face/vert/edge group we add a
-//      group whose triples are that group's triples weighted 0.75 plus 0.25 of any OTHER
-//      single group's triple, or of an equal average of two other groups' triples. It
-//      renders as the base swatch mixed 0.75/0.25 toward the default swatch — a slight
-//      tint of the base color.
+//   3. tint(<base>)  [0.75 base + 0.25 other], if `tintSwatches`. For each face/vert/edge
+//      group we add a group whose triples are that group's triples weighted 0.75 plus 0.25
+//      of any OTHER single group's triple, or of an equal average of up to `avgArguments`
+//      other groups' triples. It renders as the base swatch mixed 0.75/0.25 toward the
+//      default swatch — a slight tint of the base color.
 //
 // The plain groups are preferred over all synthesized kinds when a computed triple matches
-// more than one; among the synthesized, the equal average wins, then the nested average,
-// then tint(<base>).
+// more than one; among the synthesized, the equal PAIR average wins, then the nested
+// average, then tint(<base>), then the higher-arity averages in increasing k.
 
 /** The palette (config swatches + synthesized tint / nested-average / equal-average). */
 const palette: Record<string, PaletteEntry> = { ...config.render.palette };
@@ -114,11 +119,22 @@ function blendOklab(base: OKLab, toward: OKLab, t: number): OKLab {
   };
 }
 
-/** 0.5 `base` + 0.25 `n1` + 0.25 `n2` in OKLab. Blending n1<->n2 at 0.5 gives their
- *  perceptual midpoint, then base<->that at 0.5 weights base 0.5 and each neighbor 0.25 —
- *  matching the weights `nestedAvgTriples` uses. */
+/** The equal mix of OKLab colors — their componentwise mean, which in this perceptually-
+ *  uniform space is the color the eye reads as evenly between them. */
+function meanOklab(cs: ReadonlyArray<OKLab>): OKLab {
+  const n = cs.length;
+  return {
+    l: cs.reduce((s, c) => s + c.l, 0) / n,
+    a: cs.reduce((s, c) => s + c.a, 0) / n,
+    b: cs.reduce((s, c) => s + c.b, 0) / n,
+  };
+}
+
+/** 0.5 `base` + 0.25 `n1` + 0.25 `n2` in OKLab: blending base toward the midpoint of the
+ *  two neighbors at 0.5 weights base 0.5 and each neighbor 0.25 — matching the weights
+ *  `nestedAvgTriples` uses. */
 function tint3Oklab(base: OKLab, n1: OKLab, n2: OKLab): OKLab {
-  return blendOklab(base, blendOklab(n1, n2, 0.5), 0.5);
+  return blendOklab(base, meanOklab([n1, n2]), 0.5);
 }
 
 /** Ensure a `tint(<base>)` swatch exists and return its name: the base swatch mixed
@@ -157,26 +173,20 @@ function ensureNestedAvgSwatch(base: string, n1: string, n2: string): string {
   return name;
 }
 
-/** Equal 1/3 : 1/3 : 1/3 mix of OKLab colors `p`, `q` and the default swatch's `d`.
- *  Mixing p<->q at 0.5 gives (p+q)/2, then lerping that toward d by 1/3 gives (p+q)/3 + d/3. */
-function blend3Oklab(p: OKLab, q: OKLab, d: OKLab): OKLab {
-  return blendOklab(blendOklab(p, q, 0.5), d, 1 / 3);
-}
-
-/** Ensure an `avg(<a>,<b>)` swatch exists and return its name. To read as an ADJACENCY
- *  color (rather than a plain two-color mix), it is an equal 3-way split of swatches
- *  a, b AND the default swatch. The two names are sorted so the pair is
- *  order-independent. */
-function ensurePairSwatch(a: string, b: string): string {
-  const [x, y] = [a, b].sort();
-  const name = `avg(${x},${y})`;
+/** Ensure an `avg(<c1>,…,<ck>)` swatch exists and return its name: the equal mix of the k
+ *  base swatches. A PAIR additionally gives the default swatch an equal share, so it reads
+ *  as an ADJACENCY color (a 3-way split) rather than a plain two-color mix; a k >= 3 avg is
+ *  a genuine k-way mix and gives the default no share. The names are sorted so the swatch
+ *  is order-independent. */
+function ensureAvgSwatch(swatches: ReadonlyArray<string>): string {
+  const sorted = [...swatches].sort();
+  const name = `avg(${sorted.join(",")})`;
   if (!(name in palette)) {
-    const p = config.render.palette[x as SwatchName];
-    const q = config.render.palette[y as SwatchName];
-    const d = config.render.palette[defaultSwatch];
+    const entries = sorted.map((s) => config.render.palette[s as SwatchName]);
+    if (entries.length === 2) entries.push(config.render.palette[defaultSwatch]);
     palette[name] = {
-      face: blend3Oklab(p.face, q.face, d.face),
-      l_face: blend3Oklab(p.l_face, q.l_face, d.l_face),
+      face: meanOklab(entries.map((e) => e.face)),
+      l_face: meanOklab(entries.map((e) => e.l_face)),
     };
   }
   return name;
@@ -193,41 +203,50 @@ function weightedSum(terms: ReadonlyArray<readonly [GeomColor, number]>): GeomCo
   return out;
 }
 
-/** `tint(base)` triples: each base triple weighted 0.75, plus 0.25 of either a single
- *  other group's triple, or an equal average of two other groups' triples (0.125 each). */
-function tintTriples(base: Group, others: Group[]): GeomColor[] {
-  const out: GeomColor[] = [];
-  for (const bt of base.triples) {
-    for (const o of others)
-      for (const ot of o.triples)
-        out.push(weightedSum([[bt, 0.75], [ot, 0.25]]));
-    for (let i = 0; i < others.length; i++)
-      for (let j = i + 1; j < others.length; j++)
-        for (const o1 of others[i].triples)
-          for (const o2 of others[j].triples)
-            out.push(weightedSum([[bt, 0.75], [o1, 0.125], [o2, 0.125]]));
-  }
+/** Every unordered size-`k` subset of `items`, as arrays (in input order). */
+function subsets<T>(items: ReadonlyArray<T>, k: number): T[][] {
+  if (k === 0) return [[]];
+  const out: T[][] = [];
+  for (let i = 0; i <= items.length - k; i++)
+    for (const rest of subsets(items.slice(i + 1), k - 1)) out.push([items[i], ...rest]);
   return out;
 }
 
-/** Each base triple given a tint of the two other groups: base·0.5 + 0.25 of one triple
- *  from each of `other1` and `other2` (i.e. (base·2 + o1 + o2) / 4). */
+/** Every weighted combination taking one triple from each group, each at `weight`; i.e. the
+ *  cross product of the groups' triple lists, summed. The combinator the three synthesized
+ *  families' triple sets are built from. */
+function combineGroups(groups: ReadonlyArray<Group>, weight: (i: number) => number): GeomColor[] {
+  let combos: GeomColor[] = [[]];
+  groups.forEach((grp, i) => {
+    const next: GeomColor[] = [];
+    for (const acc of combos)
+      for (const t of grp.triples) next.push(weightedSum([[acc, 1], [t, weight(i)]]));
+    combos = next;
+  });
+  return combos;
+}
+
+/** Every equal average (1/k each) of one triple from each of `k` groups. */
+function avgTriples(groups: ReadonlyArray<Group>): GeomColor[] {
+  return combineGroups(groups, () => 1 / groups.length);
+}
+
+/** `tint(base)` triples: each base triple weighted 0.75, plus 0.25 shared equally among one
+ *  triple from each of a subset of the OTHER groups (a single other at 0.25, a pair at
+ *  0.125 each, …). `maxOthers` caps that subset's size — it is `avgArguments`, since a
+ *  subset bigger than one IS an `avg(...)` of the others. */
+function tintTriples(base: Group, others: ReadonlyArray<Group>, maxOthers: number): GeomColor[] {
+  const out: GeomColor[] = [];
+  for (let k = 1; k <= Math.min(maxOthers, others.length); k++)
+    for (const combo of subsets(others, k))
+      out.push(...combineGroups([base, ...combo], (i) => (i === 0 ? 0.75 : 0.25 / k)));
+  return out;
+}
+
+/** Each base triple given a tint of two other groups: base·0.5 + 0.25 of one triple from
+ *  each of `other1` and `other2` (i.e. (base·2 + o1 + o2) / 4). */
 function nestedAvgTriples(base: Group, other1: Group, other2: Group): GeomColor[] {
-  const out: GeomColor[] = [];
-  for (const t of base.triples)
-    for (const ot1 of other1.triples)
-      for (const ot2 of other2.triples)
-        out.push(weightedSum([[t, 0.5], [ot1, 0.25], [ot2, 0.25]]));
-  return out;
-}
-
-/** Every equal average (0.5 each) of a triple from each of two groups. */
-function combinedTriples(a: Group, b: Group): GeomColor[] {
-  const out: GeomColor[] = [];
-  for (const t of a.triples)
-    for (const ot of b.triples)
-      out.push(weightedSum([[t, 0.5], [ot, 0.5]]));
-  return out;
+  return combineGroups([base, other1, other2], (i) => (i === 0 ? 0.5 : 0.25));
 }
 
 // --- TETRAHEDRAL ONE-HOT IDs (the identity root) ----------------------------
@@ -370,48 +389,67 @@ for (const [name, groups] of Object.entries(resolvedSchemes))
     ]),
   );
 
-// Per-scheme: the plain face/vert/edge groups plus the synthesized equal-average /
-// nested-average / tint groups. Each augmented group carries its precedence `tier` (lower
-// wins):
-//   0 = plain, 1 = avg(<a>,<b>), 2 = avg(<base>,avg(<n1>,<n2>)), 3 = tint(<base>).
+// How many groups an `avg(...)` may mix, and whether the nested-average / tint families are
+// derived at all (see the header above and `config.colors`). `avgArguments` < 2 turns off
+// the `avg(...)` family — and with it the nested average, which is one.
+const { avgArguments, secondOrderAvgSwatches, tintSwatches } = config.colors;
+const maxAvgArgs = avgArguments >= 2 ? avgArguments : 0;
+
+// Per-scheme: the plain face/vert/edge groups plus the synthesized average / nested-average
+// / tint groups. Each augmented group carries its precedence `tier` (lower wins):
+//   0 = plain, 1 = avg(<a>,<b>), 2 = avg(<base>,avg(<n1>,<n2>)), 3 = tint(<base>),
+//   4+ = the higher-arity avg(<c1>,…,<ck>), in increasing k.
 type AugGroup = Group & { tier: number };
+const avgTier = (k: number) => (k === 2 ? 1 : k + 1);
 const augmentedSchemes: Record<string, AugGroup[]> = {};
 for (const [name, groups] of Object.entries(collapsedSchemes)) {
   const g = groups as Record<string, Group>;
   const keys = Object.keys(g);
   const aug: AugGroup[] = keys.map((k) => ({ ...g[k], tier: 0 }));
+
+  // avg(<c1>,…,<ck>): the equal 1/k mix of k distinct groups (the 3-argument one is a
+  // snub's gap triangles).
+  for (let k = 2; k <= Math.min(maxAvgArgs, keys.length); k++)
+    for (const combo of subsets(keys, k).map((ks) => ks.map((key) => g[key])))
+      aug.push({
+        swatch: ensureAvgSwatch(combo.map((grp) => grp.swatch)),
+        triples: avgTriples(combo),
+        tier: avgTier(k),
+      });
+
   for (let i = 0; i < keys.length; i++) {
-    for (let j = i + 1; j < keys.length; j++) {
-      const a = g[keys[i]], b = g[keys[j]];
-      // avg(<a>,<b>): equal 0.5/0.5 blend.
-      aug.push({ swatch: ensurePairSwatch(a.swatch, b.swatch), triples: combinedTriples(a, b), tier: 1 });
-      for (let k = 0; k < keys.length; k++) {
-        if (k == i || k == j) continue;
-        const c = g[keys[k]];
-        // avg(<c>,avg(<a>,<b>)): 0.5 c + 0.25 a + 0.25 b.
-        aug.push({
-          swatch: ensureNestedAvgSwatch(c.swatch, a.swatch, b.swatch),
-          triples: nestedAvgTriples(c, a, b),
-          tier: 2,
-        });
-      }
-    }
-    // tint(<base>): base·0.75 + 0.25 of any other group (a single one or an average pair).
     const base = g[keys[i]];
     const others = keys.filter((_, k) => k !== i).map((k) => g[k]);
-    aug.push({ swatch: ensureTintSwatch(base.swatch), triples: tintTriples(base, others), tier: 3 });
+    // avg(<base>,avg(<n1>,<n2>)): 0.5 base + 0.25 n1 + 0.25 n2, for each pair of others.
+    if (secondOrderAvgSwatches && maxAvgArgs >= 2)
+      for (const [n1, n2] of subsets(others, 2))
+        aug.push({
+          swatch: ensureNestedAvgSwatch(base.swatch, n1.swatch, n2.swatch),
+          triples: nestedAvgTriples(base, n1, n2),
+          tier: 2,
+        });
+    // tint(<base>): base·0.75 + 0.25 of an average of n other groups, n = 1..avgArguments.
+    // A single other (n = 1) is not an `avg(...)` at all, so it survives even when the
+    // `avg(...)` family is switched off.
+    if (tintSwatches)
+      aug.push({
+        swatch: ensureTintSwatch(base.swatch),
+        triples: tintTriples(base, others, Math.max(avgArguments, 1)),
+        tier: 3,
+      });
   }
   augmentedSchemes[name] = aug;
 }
 
 // Per-scheme lookup: rounded-triple key → the swatch name of its group. Inserted in
 // ascending precedence tier so a key claimed by a higher-precedence (lower-tier) group is
-// never overwritten by a synthesized one: plain, then equal average, then nested average,
-// then tint.
+// never overwritten by a synthesized one: plain, then equal pair average, then nested
+// average, then tint, then the higher-arity averages.
 const schemeLookup: Record<string, Map<string, string>> = {};
 for (const [name, aug] of Object.entries(augmentedSchemes)) {
   const map = new Map<string, string>();
-  for (const tier of [0, 1, 2, 3])
+  const tiers = [...new Set(aug.map((grp) => grp.tier))].sort((a, b) => a - b);
+  for (const tier of tiers)
     for (const grp of aug)
       if (grp.tier === tier)
         for (const tr of grp.triples) {
