@@ -24,6 +24,9 @@ export const config = {
       gyro: true, // continue a full-join face drag onto the twist arc
       chamfer: true, // drag an edge midpoint sideways along a bordering face
       subdivide: true, // drag an edge midpoint outward along the edge normal
+      whirl: true, // continue a full-join chamfer drag onto the twist arc
+      volute: true, // continue a full-rectify subdivide drag onto the twist arc
+      propeller: true, // the welded end of both twists (drag the whirl / volute fully out)
     },
 
     multiSelect: true, // Cmd (macOS) / Ctrl: select several elements before dragging
@@ -167,13 +170,9 @@ export const config = {
     // so the divisor must exceed 2 to stop short of it.
     twistArcDivisor: 2.5,
 
-    // The gyro rotation arc's radius, as a fraction of the swept spoke's length in
-    // the apex tangent plane: how far out from the apex the arc sits.
+    // The gyro / whirl rotation arc's radius, as a fraction of the swept spoke's length
+    // in the arc's own plane: how far out from the apex the arc sits.
     gyroArcRadiusFraction: 0.35,
-
-    // The base drag's `t` at which the twist arc begins to fade in, hinting that a
-    // snub/gyro becomes available once the drag welds at t=1.
-    arcFadeStartT: 0.5,
 
     // Snub: the full-twist length of each chiral drag line, set so the two vertices a
     // rectify vertex splits into end up this fraction of a rectification edge apart,
@@ -200,6 +199,20 @@ export const config = {
     // While twisting, the dragged face / vertex-star also shrinks toward the axis to
     // give the split gaps room; this is the scale it reaches at the full twist.
     twistShrink: 0.72,
+
+    // Whirl and volute both run to a weld — the propeller — so neither has a depth to
+    // tune: the drag's t is the fraction of the way to that weld, and the geometry is
+    // solved backwards from it.
+    //
+    // A whirl cuts each join apex back into the face it was collapsed from, the corners
+    // sliding out along the apex's gyro edges (the spokes to its surrounding new
+    // vertices). At t=1 each corner reaches its spoke's far end and welds into the vertex
+    // there: every hexagon loses two corners and closes into a quad, and the apex's n-gon
+    // is left ringed by the vertices it slid onto. Dually, a volute raises each vertex
+    // figure into a pyramid whose apex heads back out toward the vertex it was cut from;
+    // at t=1 it reaches the height where every fan triangle is coplanar with the snub gap
+    // triangle beside it, and the two weld into that same quad. Both limits are the
+    // propeller (Conway's `p`, which is its own dual), so the two drags meet there.
   },
 
   // ---------------------------------------------------------------------------
@@ -526,8 +539,13 @@ export const config = {
         "- Join: keep dragging until until the old edges disappear",
         "- Gyro: drag left or right to twist the new vertices",
         "",
-        "- Chamfer: drag the middle of an edge sideways across a face",
-        "- Subdivide: drag the middle of an edge straight outwards",
+        "- Chamfer: drag the middle of an edge sideways across a face (the limit is Join)",
+        "- Whirl: drag left or right to twist the joined faces back in",
+        "- Propeller: keep dragging until the old faces are fully expanded",
+        "",
+        "- Subdivide: drag the middle of an edge straight outwards (the limit is Rectify)",
+        "- Volute: drag left or right to twist the rectified vertices back in",
+        "- Propeller (again): keep dragging until the new faces rejoin where they came from",
         "",
         "Try messing with the \"Regular\" option to get some funky effects, and check out the library!"
       ],
@@ -583,6 +601,8 @@ export const config = {
       gyro: ["Gyro-ing", "Gyro-ing"],
       chamfer: ["Chamfering", "Joining"],
       subdivide: ["Subdividing", "Rectifying"],
+      whirl: ["Whirling", "Propelling"],
+      volute: ["Voluting", "Propelling"],
     } as Record<string, [unwelded: string, welded: string]>,
 
     // The OPTIONS panel. Each line is "Label: <content>": `buttons` fire on click,
@@ -631,7 +651,9 @@ export const config = {
     //   • label — the action verb shown in the HISTORY rows: Truncate, Rectify, Kis.
     //   • name  — the modifier prepended to the nearest named ancestor to derive a shape
     //             name (Truncated Cube), shown in the readout and exported filenames.
-    // `weld` is the unwelded vs welded (rectify / join, full snub / gyro) end of the drag.
+    // `weld` is the unwelded vs welded end of the drag: the rectify / join a base op runs
+    // into, or the propeller a whirl / volute does. A full snub / gyro welds nothing, so
+    // both of its entries read the same.
     // operations/naming.ts adds the selection qualifier programmatically:
     //   whole  → the bare verb;
     //   arity  → an "a,b-" prefix listing the affected arities (degree-n vertices, n-gon
@@ -647,6 +669,10 @@ export const config = {
       gyro:     { unwelded: ["Gyro", "Gyro"], welded: ["Gyro", "Gyro"] },
       chamfer:  { unwelded: ["Chamfer", "Chamfered"], welded: ["Join", "Joined"] },
       subdivide: { unwelded: ["Subdivide", "Subdivided"], welded: ["Rectify", "Rectified"] },
+      // Whirl and volute share a welded end: both weld into the propeller, so either
+      // drag names the same shape (Propeller Cube) whichever way it was reached.
+      whirl:    { unwelded: ["Whirl", "Whirled"], welded: ["Propeller", "Propeller"] },
+      volute:   { unwelded: ["Volute", "Voluted"], welded: ["Propeller", "Propeller"] },
     },
   },
 

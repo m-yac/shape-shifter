@@ -17,8 +17,8 @@ import {
 import { type MorphPlan } from "../operations/types";
 import { buildTruncate, closestIncidentEdge, computeCollapseFractions } from "../operations/truncate";
 import { buildKis } from "../operations/kis";
-import { buildSnub } from "../operations/snub";
-import { buildGyro } from "../operations/gyro";
+import { buildSnub, buildVolute } from "../operations/snub";
+import { buildGyro, buildWhirl } from "../operations/gyro";
 import { buildChamfer } from "../operations/chamfer";
 import { buildSubdivide } from "../operations/subdivide";
 import { faceCentroidHE, faceNormalHE } from "../geometry/polyhedron";
@@ -60,8 +60,6 @@ function sameIdSet(a: Set<number>, b: Set<number>): boolean {
 // it so coincident vertices / faces don't produce degenerate geometry.
 const MAX_T_WITHOUT_WELD = config.interaction.maxTWithoutWeld;
 
-// The base drag's t past which the twist arc begins to fade in.
-const ARC_FADE_START = config.operations.arcFadeStartT;
 // How far along the twist arc the cursor must move before the snub/gyro engages;
 // below this, a welded release commits the plain rectify / join instead.
 const TWIST_ENGAGE_T = 0.04;
@@ -69,9 +67,9 @@ const TWIST_ENGAGE_T = 0.04;
 // back down the truncation line below this t. Hysteresis: nudging onto the arc must
 // not snap back to truncating.
 const WELD_UNLATCH_T = 0.75;
-// The twist plan is rebuilt only when its weld anchor (rectify vertex / join apex)
-// moves more than this. The anchor is piecewise-constant per incident edge/face, so
-// it rebuilds when the base handle switches, not every frame.
+// Two twist handles count as the same one when their weld anchors (rectify vertex / join
+// apex) sit this close. The anchor is piecewise-constant per base handle, so this keys the
+// per-drag cache of built twists.
 const TWIST_ANCHOR_EPS = 1e-5;
 
 interface Pending {
@@ -99,14 +97,16 @@ interface Drag {
   // The base operation (truncate / kis / edge op) tracks the mouse for t ∈ [0,1].
   base: PlanSlot;
   sel: Set<number> | null; // participating subset (the n-truncate / n-kis arity group)
-  // The twist form (snub / gyro) extends a full rectify/join: built once the base drag
-  // passes `arcFadeStartT` (so the arc can hint), and drives the morph once the base
-  // welds (t=1) and the cursor moves onto the arc. Null when unavailable.
+  // The twist form (snub / gyro / whirl / volute) extending a full rectify/join: built
+  // once the base drag welds, and driving the morph once the cursor moves onto its handle.
+  // Null until then, and while the drag has no twist at all.
   twist: PlanSlot | null;
-  // The weld anchor `twist` was built for (rectify vertex / join apex). Building the
-  // plan runs snub's two chiral variants / gyro's planarity solve, too costly per
-  // frame, so it is kept while the anchor holds still.
-  twistAnchor: Vector3 | null;
+  // Every twist built during this drag, keyed by the base plan and weld anchor it extends,
+  // with the base-return line that leads back down to it. Building one runs snub's two
+  // chiral variants / gyro's planarity solve, far too costly to redo per frame — or even
+  // per weld, since a drag can weld, retreat and weld again — so each distinct handle is
+  // built at most once and then reused.
+  twists: TwistEntry[];
   twisting: boolean; // the cursor has engaged the twist arc (snub/gyro active)
   weldLatched: boolean; // base reached the full rectify/join (latched with hysteresis)
   lastRay: Ray | null; // last pick ray, so a re-preview can run in place
@@ -146,11 +146,21 @@ interface EdgeAxisInfo {
   }>;
 }
 
-/** The live axis state of an edge (chamfer / subdivide) drag. */
+/** The live axis state of an edge (chamfer / subdivide) drag. `slots` memoizes the built
+ *  plan of each axis, so swapping back and forth between them doesn't rebuild. */
 interface EdgeAxisState {
   edge: [number, number];
   info: EdgeAxisInfo;
   which: "A" | "B" | "normal";
+  slots: Map<"A" | "B" | "normal", PlanSlot | null>;
+}
+
+/** One built twist handle, cached for the drag that built it (see `Drag.twists`). */
+interface TwistEntry {
+  base: MorphPlan; // the base plan it extends
+  anchor: Vector3; // the weld point it hangs off (rectify vertex / join apex)
+  slot: PlanSlot | null; // null when the twist turned out to be unavailable
+  returnLine: { origin: Vector3; far: Vector3 } | null;
 }
 
 /**
@@ -678,11 +688,7 @@ export class DragController {
   }
 
   private allMarkers(): Marker[] {
-    return [
-      ...this.view.vertexMarkers,
-      ...this.view.faceMarkers,
-      ...this.view.edgeMarkers,
-    ];
+    return this.view.allMarkers;
   }
 
   /** Per-vertex degree (number of incident faces = edge count on a closed solid)
@@ -822,38 +828,42 @@ export class DragController {
   }
 
   /**
-   * Snap to `ray`, store the resulting t/weld, and refresh the preview, drag marker,
-   * range line and twist arc. The base truncate/kis tracks the cursor for t ∈ [0,1];
-   * once it welds (t=1) into a full rectify/join and the cursor moves onto the twist
-   * arc, the snub/gyro plan takes over (`twisting`).
+   * The twist handle this drag extends into, or null when it has none. The two weld ends
+   * each carry their own handle, whichever base op reached them: a Rectify (truncate, or
+   * subdivide) is extended by snub's pair of straight chiral lines at the rectify vertex,
+   * a Join (kis, or chamfer) by gyro's rotation arc at the join apex. So the edge drags
+   * pick up the twists too — subdivide → volute, chamfer → whirl — with the same handle
+   * in the same place as the vertex/face drag that welds the same way.
+   */
+  private twistStyle(d: Drag): "lines" | "arc" | null {
+    const ops = config.features.operations;
+    if (!d.base.allowMax) return null;
+    if (d.kind === "vertex") return ops.snub ? "lines" : null;
+    if (d.kind === "face") return ops.gyro ? "arc" : null;
+    const axis = d.edgeAxis?.which;
+    if (axis === "normal") return ops.volute ? "lines" : null;
+    return ops.whirl ? "arc" : null;
+  }
+
+  /**
+   * Snap to `ray`, store the resulting t/weld, and refresh the preview, drag marker, range
+   * line and twist arc. The base op (truncate / kis / chamfer / subdivide) tracks the
+   * cursor for t ∈ [0,1]; once it welds (t=1) into a full rectify/join and the cursor moves
+   * onto the twist handle, the twist plan takes over (`twisting`).
    */
   private updateDragPreview(ray: Ray): void {
     const d = this.drag!;
     d.lastRay = ray;
 
-    // Edge drags (chamfer / subdivide) have no twist: track the base directly and
-    // re-pick the nearest axis each frame so the cursor can switch operations.
-    if (d.kind === "edge") {
-      this.updateEdgeAxis(ray);
-      const snap = d.base.plan.snap(ray);
-      let t = snap.t;
-      let weld = false;
-      if (t >= 1) {
-        if (d.base.allowMax) weld = true;
-        else t = MAX_T_WITHOUT_WELD;
-      }
-      // Record the drag parameter: a release with d.t still 0 reads as a negligible
-      // drag and snaps back instead of committing.
-      d.t = weld ? 1 : t;
-      d.weld = weld;
-      this.showBasePreview(d, snap, weld, true);
-      this.readout.setDrag({
-        kind: d.base.plan.kind, weld: d.weld, t: d.t, selIds: null, selKind: "edge",
-      });
-      return;
-    }
+    // Edge drags re-pick their axis every frame, so the cursor can switch between chamfer,
+    // subdivide and back mid-drag — but only up to the weld. Past it the twist handles are
+    // live, and they stand off the axes in directions the *other* axes also point in, so
+    // re-picking would let the cursor slide from a chamfer straight into a volute (or a
+    // subdivide into a whirl), swapping the operation out from under a twist that is
+    // already engaged. So the axis freezes at the weld: to reach another one you have to
+    // head back down the line you came up (which un-welds and thaws the choice again).
+    if (d.kind === "edge" && !d.twisting && !d.weldLatched) this.updateEdgeAxis(ray);
 
-    const ops = config.features.operations;
     const baseSnap = d.base.plan.snap(ray);
     let baseT = baseSnap.t;
     let weld = false;
@@ -862,11 +872,7 @@ export class DragController {
       else baseT = MAX_T_WITHOUT_WELD;
     }
 
-    // Whether this drag has a twist form at all: snub for a vertex, gyro for a face,
-    // and only when the weld end it extends is enabled.
-    const twistOp =
-      d.base.allowMax &&
-      ((d.kind === "vertex" && ops.snub) || (d.kind === "face" && ops.gyro));
+    const style = this.twistStyle(d);
     // Latch the welded (rectify/join) state until the cursor retreats back down the
     // truncation line, so nudging onto the arc doesn't snap back to truncating. Never
     // unlatch while actively twisting: there the cursor is off on a snub line, far from
@@ -875,43 +881,36 @@ export class DragController {
     if (weld) d.weldLatched = true;
     else if (!d.twisting && baseT < WELD_UNLATCH_T) d.weldLatched = false;
 
-    // Build (or refresh) the twist plan once the base drag is deep enough. It is frozen
-    // while actively twisting so its anchor can't jump, and otherwise reused while its
-    // weld anchor holds still: rebuilding runs the snub / gyro solve, too costly to
-    // redo every mouse-move.
-    const twistAvail = !!twistOp && (baseT > ARC_FADE_START || d.weldLatched);
-    if (!twistAvail) {
+    // The twist handle is live only once the base drag has actually reached its weld: the
+    // rectify / join is the shape the twist grows out of, so there is nothing to twist
+    // before it. It is frozen while actively twisting, so its anchor can't jump.
+    if (!style || !d.weldLatched) {
       d.twist = null;
-      d.twistAnchor = null;
       d.twisting = false;
     } else if (!d.twisting) {
-      const anchor = baseSnap.highlight?.b;
-      const stale =
-        !d.twist || !d.twistAnchor || !anchor ||
-        d.twistAnchor.distanceTo(anchor) > TWIST_ANCHOR_EPS;
-      if (stale) {
-        d.twist = this.buildTwist(d, anchor);
-        d.twistAnchor = d.twist && anchor ? anchor.clone() : null;
-      }
+      d.twist = this.twistFor(d, baseSnap.highlight?.b);
     }
 
-    // Snub (vertex twist) rides straight line handles alongside the base un-rectify
-    // line. Once rectified, the un-rectify line and the two chiral snub lines are all
-    // equally pickable: the cursor snaps to whichever is nearest, the same way a
-    // truncate drag switches between incident edges.
-    if (d.kind === "vertex") {
+    // Snub / volute ride straight line handles alongside the base un-rectify line. Once
+    // rectified, that line and the two chiral twist lines are all equally pickable: the
+    // cursor snaps to whichever is nearest, the same way a truncate drag switches between
+    // incident edges.
+    if (style === "lines") {
       this.updateSnubStage(d, ray, baseSnap, baseT, weld);
+      this.updateArc(d); // the straight handles have no arc; clears a stale one
       return;
     }
 
-    // Gyro (face twist) rides an arc handle near the join apex. Before the join latches
-    // it is just the kis drag. Once latched, the un-join line (the face normal the drag
-    // climbed) competes with the arc by ray distance: dragging back down it un-joins,
-    // like snub's un-rectify line, while veering onto the arc twists. The arc engages
-    // only once the cursor has moved far enough along it past the join rest.
+    // Gyro / whirl ride an arc handle near the join apex. Before the join latches it is
+    // just the kis (or chamfer) drag. Once latched, the un-join line (the face normal, or
+    // the chamfer's inset seam, that the drag climbed) competes with the arc by ray
+    // distance: dragging back down it un-joins, like snub's un-rectify line, while veering
+    // onto the arc twists. The arc engages only once the cursor has moved far enough along
+    // it past the join rest. A drag with no twist at all also lands here, and just shows
+    // its base.
     if (!d.weldLatched || !d.twist) {
       d.twisting = false;
-      d.t = baseT;
+      d.t = weld ? 1 : baseT;
       d.weld = weld;
       this.showBasePreview(d, baseSnap, weld, true);
     } else {
@@ -919,9 +918,7 @@ export class DragController {
       const baseDist = this.baseReturnDist(d, ray);
       const twistDist = distancePointToRay(twistSnap.point, ray);
       if (twistDist <= baseDist && twistSnap.t > TWIST_ENGAGE_T) {
-        d.twisting = true;
-        d.t = Math.max(0, Math.min(1, twistSnap.t));
-        d.weld = true;
+        this.engageTwist(d, twistSnap.t);
         this.showTwistPreview(d, twistSnap.point);
       } else {
         d.twisting = false;
@@ -937,6 +934,66 @@ export class DragController {
 
     const active = this.activeSlot(d);
     this.readout.setDrag({ kind: active.plan.kind, weld: d.weld, t: d.t, selIds: d.sel, selKind: d.kind });
+  }
+
+  /**
+   * Take up the twist at the parameter its handle snapped to.
+   *
+   * Two of the four twists weld at their far end: a whirl's apex cuts run out onto the gyro
+   * vertices they were heading for, and a volute's fans rise flush with the gap triangles
+   * beside them, and either weld gives the propeller. So `t = 1` there means what it means
+   * on a base drag — the welded max — and, like the rectify / join, it can be switched off,
+   * in which case the drag stops just short rather than reaching coincident vertices. A
+   * snub / gyro welds nothing at its end, so its `allowMax` is simply always on.
+   */
+  private engageTwist(d: Drag, snapT: number): void {
+    let t = Math.max(0, Math.min(1, snapT));
+    let weld = false;
+    if (t >= 1) {
+      if (d.twist!.allowMax) weld = true;
+      else t = MAX_T_WITHOUT_WELD;
+    }
+    d.twisting = true;
+    d.t = t;
+    d.weld = weld;
+  }
+
+  /** The preview edges to leave undrawn: the ones the plan never draws at all (the gyro's
+   *  dissolved join edges), plus, at the weld, the ones collapsing into it — so each pair
+   *  of about-to-merge faces reads as the single face it is about to become. */
+  private hiddenEdgeKeys(plan: MorphPlan, weld: boolean): Set<string> {
+    const keys = new Set<string>();
+    for (const [a, b] of plan.hiddenEdges ?? []) keys.add(edgeKey(a, b));
+    if (weld) for (const [a, b] of plan.vanishingEdges) keys.add(edgeKey(a, b));
+    return keys;
+  }
+
+  /**
+   * The twist handle extending the base drag's weld at `anchor`: built on first use, then
+   * reused for the rest of the drag. A drag can weld, retreat and weld again — or, on a
+   * vertex, weld down one incident edge and then another — so the same handles are asked
+   * for repeatedly, and building one is far too costly to repeat. Restoring the cached
+   * base-return line alongside it keeps the two in step: each is the way back down to the
+   * weld the other hangs off.
+   */
+  private twistFor(d: Drag, anchor: Vector3 | undefined): PlanSlot | null {
+    if (!anchor) return null;
+    const hit = d.twists.find(
+      (e) => e.base === d.base.plan && e.anchor.distanceTo(anchor) <= TWIST_ANCHOR_EPS,
+    );
+    if (hit) {
+      d.baseReturnLine = hit.returnLine;
+      return hit.slot;
+    }
+    d.baseReturnLine = null;
+    const slot = this.buildTwist(d, anchor); // also sets d.baseReturnLine
+    d.twists.push({
+      base: d.base.plan,
+      anchor: anchor.clone(),
+      slot,
+      returnLine: d.baseReturnLine,
+    });
+    return slot;
   }
 
   /** Perpendicular distance from the cursor ray to the fixed base-return segment (or
@@ -980,9 +1037,7 @@ export class DragController {
       const baseDist = this.baseReturnDist(d, ray);
       const twistDist = distancePointToRay(twistSnap.point, ray);
       if (twistDist <= baseDist && twistSnap.t > TWIST_ENGAGE_T) {
-        d.twisting = true;
-        d.t = Math.max(0, Math.min(1, twistSnap.t));
-        d.weld = true;
+        this.engageTwist(d, twistSnap.t);
         this.showTwistPreview(d, twistSnap.point, twistSnap.highlight);
       } else {
         d.twisting = false;
@@ -1014,9 +1069,7 @@ export class DragController {
   ): void {
     const t = twistCapable ? d.t : (weld ? 1 : snap.t);
     const plan = d.base.plan;
-    const hiddenEdges = weld
-      ? new Set(plan.vanishingEdges.map(([a, b]) => edgeKey(a, b)))
-      : undefined;
+    const hiddenEdges = this.hiddenEdgeKeys(plan, weld);
     this.view.showPreview(
       { vertices: plan.positions(t), faces: plan.previewFaces },
       { faceColors: plan.previewFaceColors(t, weld), edgeColors: plan.previewEdgeColors, hiddenEdges },
@@ -1036,15 +1089,10 @@ export class DragController {
    */
   private showTwistPreview(d: Drag, ridePoint: Vector3, highlight?: { a: Vector3; b: Vector3 }): void {
     const plan = d.twist!.plan;
-    // A twist always extends a completed weld (rectify → snub, join → gyro), so the
-    // vanishing edges (gyro's dissolved original join edges) are never real edges of the
-    // twisting solid. Hide them across the whole twist, not just at the welded end, or
-    // they linger as faint fixed lines over the rotating gyro. Snub's vanishingEdges is
-    // empty, so this is a no-op there.
-    const hiddenEdges = new Set(plan.vanishingEdges.map(([a, b]) => edgeKey(a, b)));
+    const hiddenEdges = this.hiddenEdgeKeys(plan, d.weld);
     this.view.showPreview(
       { vertices: plan.positions(d.t), faces: plan.previewFaces },
-      { faceColors: plan.previewFaceColors(d.t), edgeColors: plan.previewEdgeColors, hiddenEdges },
+      { faceColors: plan.previewFaceColors(d.t, d.weld), edgeColors: plan.previewEdgeColors, hiddenEdges },
     );
     this.view.setDragMarker(ridePoint, config.render.dragMarkerColor);
     if (highlight) this.view.setEdgeHighlight(highlight.a, highlight.b, config.render.dragLineColor);
@@ -1141,7 +1189,7 @@ export class DragController {
     this.shapes.setSolving(false);
     this.drag = {
       base, sel,
-      twist: null, twistAnchor: null, twisting: false, weldLatched: false, lastRay: null,
+      twist: null, twists: [], twisting: false, weldLatched: false, lastRay: null,
       kind, id,
       hasSelection: persistent,
       selCount: sel ? sel.size : null,
@@ -1179,30 +1227,82 @@ export class DragController {
   }
 
   /**
-   * Build the twist (snub / gyro) plan extending the full rectify/join. The base drag
-   * is committed to its welded max to get the rectified/joined polyhedron; the snub
-   * then rotates its faces (arc centred on the dragged vertex's new figure), the gyro
-   * its vertices (arc near the join apex the drag ended on). `weldPoint` is the base
-   * drag's current max target: the rectify vertex or join apex.
+   * Build the twist plan extending the base drag's full rectify/join. The base drag is
+   * committed to its welded max to get the rectified/joined polyhedron, then the twist
+   * that extends that weld end is built on it: a Rectify (from truncate, or subdivide) is
+   * twisted by the snub — or, off a subdivide, the volute, which is the snub with the
+   * vertex figures kissed back into the vertices they were cut from; a Join (from kis, or
+   * chamfer) by the gyro — or, off a chamfer, the whirl, the gyro with the join apexes
+   * truncated back into the faces they were collapsed from. Those two restore what the
+   * weld collapsed, so they have somewhere to arrive: both weld again at the far end of
+   * the twist, and both weld into the propeller, so an edge drag can run all the way from
+   * one solid to its propeller in a single gesture, along either branch.
+   *
+   * `weldPoint` is the base drag's current max target — the rectify vertex or join apex —
+   * which is both where the twist's handle sits and where the drag left the cursor.
    */
   private buildTwist(d: Drag, weldPoint: Vector3 | undefined): PlanSlot | null {
     if (!weldPoint) return null;
     try {
       const { mesh, colors } = d.base.plan.commit(1, true);
       const R = new Polyhedron(mesh, colors);
-      if (d.kind === "vertex") {
-        // The rectify vertex nearest where the drag ended is the dragged corner.
+      const kind = d.base.plan.kind;
+      // A snub / gyro just ends at its full twist, so its far end is always reachable. A
+      // whirl / volute welds there instead, into the propeller, so that end is a weld the
+      // `propeller` feature can withhold — the drag then stops just short of it.
+      const twistMax = config.features.operations.propeller;
+
+      if (kind === "truncate" || kind === "subdivide") {
+        // The rectify vertex nearest where the drag ended is the dragged corner: the
+        // truncated vertex's, or the subdivided edge's.
         let rVid = 0;
         let best = Infinity;
         R.vertices.forEach((p, i) => {
           const dist = p.distanceTo(weldPoint);
           if (dist < best) { best = dist; rVid = i; }
         });
+        if (kind === "subdivide") {
+          // The un-subdivide line: back down the radial the drag climbed, to where the
+          // subdivision first put this edge's vertex (its collapse point on the edge).
+          const rest = this.edgeRestPoint(d);
+          d.baseReturnLine = { origin: weldPoint.clone(), far: rest.clone() };
+          // A rectify keeps the original faces first and appends one figure per original
+          // vertex, so the face count splits the two. That radial is also what the volute
+          // reads its handle bisector back down, so it needs the camera to see it — the
+          // climb has no direction of its own in the rectify vertex's tangent plane.
+          return {
+            plan: buildVolute(
+              R, rVid, this.current.faces.length,
+              rest, this.camera.position.clone(), this.inView,
+            ),
+            allowMax: twistMax,
+          };
+        }
         const originVertex = this.current.vertices[d.id].clone();
         // The un-rectify line: from the rectify vertex out to the original vertex.
         d.baseReturnLine = { origin: R.vertices[rVid].clone(), far: originVertex.clone() };
         return { plan: buildSnub(R, rVid, originVertex, this.inView), allowMax: true };
       }
+
+      if (kind === "chamfer") {
+        // The un-chamfer line: from the join apex back down the inset seam the drag swept
+        // across the tracked face, to the dragged edge's midpoint where it started.
+        d.baseReturnLine = {
+          origin: weldPoint.clone(),
+          far: d.edgeAxis!.info.midpoint.clone(),
+        };
+        // A join keeps the original vertices first and appends one apex per original face,
+        // so the vertex count splits the two. The arc handle is the gyro's, placed the same
+        // way: both drags arrive at the same join apex, so both turn the same wheel there.
+        return {
+          plan: buildWhirl(
+            R, this.current.vertices.length, weldPoint.clone(),
+            this.camera.position.clone(), this.inView,
+          ),
+          allowMax: twistMax,
+        };
+      }
+
       // The un-join line: from the join apex back down to the original face centroid
       // (the kis normal the drag climbed), so heading back down it un-joins.
       const loop = this.current.faces[d.id];
@@ -1215,6 +1315,15 @@ export class DragController {
       console.warn("Twist unavailable:", err);
       return null;
     }
+  }
+
+  /** Where a subdivide drag's new edge vertex rests before the drag sweeps it outward:
+   *  the edge's truncation collapse point, which is what the subdivision seeds it at. */
+  private edgeRestPoint(d: Drag): Vector3 {
+    const [a, b] = d.edgeAxis!.edge;
+    const he = this.halfEdgeFor(a, b);
+    const s = (he && this.collapseFractions().get(he.id)) ?? 0.5;
+    return this.current.vertices[a].clone().lerp(this.current.vertices[b], s);
   }
 
   /** The half-edge of the undirected edge (a,b) in the current DCEL, or null. */
@@ -1291,7 +1400,7 @@ export class DragController {
       base: slot,
       sel: null,
       twist: null,
-      twistAnchor: null,
+      twists: [],
       twisting: false,
       weldLatched: false,
       lastRay: null,
@@ -1302,7 +1411,7 @@ export class DragController {
       restore: null,
       t: 0,
       weld: false,
-      edgeAxis: { edge: marker.edge, info, which },
+      edgeAxis: { edge: marker.edge, info, which, slots: new Map([[which, slot]]) },
       baseReturnLine: null,
     };
     this.mode = "dragging";
@@ -1350,7 +1459,13 @@ export class DragController {
     try {
       if (which === "normal") {
         if (!ops.subdivide) return null;
-        return { plan: buildSubdivide(this.current, edge, this.inView), allowMax: true };
+        // Hand over the memoized collapse fractions: subdivide seeds its edge vertices at
+        // truncate's collapse points, and re-running that least-squares solve on every
+        // axis switch is what a switch would otherwise cost.
+        return {
+          plan: buildSubdivide(this.current, edge, this.inView, this.collapseFractions()),
+          allowMax: true,
+        };
       }
       if (!ops.chamfer) return null;
       const track = which === "A" ? info.faceA : info.faceB;
@@ -1361,16 +1476,23 @@ export class DragController {
     }
   }
 
+  /** The built plan for one axis of an edge drag, memoized for the drag: the cursor can
+   *  cross between the three axes freely, and rebuilding each time it did would stutter. */
+  private edgeSlotFor(e: EdgeAxisState, which: "A" | "B" | "normal"): PlanSlot | null {
+    if (!e.slots.has(which)) e.slots.set(which, this.buildEdgeSlot(e.edge, which, e.info));
+    return e.slots.get(which)!;
+  }
+
   /** During an edge drag, switch to whichever axis is now nearest the cursor (the
-   *  chamfer-A / chamfer-B / subdivide choice), rebuilding the operation. Keeps the
-   *  current axis if the nearest one's op is disabled. */
+   *  chamfer-A / chamfer-B / subdivide choice). Keeps the current axis if the nearest
+   *  one's op is disabled. */
   private updateEdgeAxis(ray: Ray): void {
     const d = this.drag!;
     const e = d.edgeAxis;
     if (!e) return;
     const which = this.pickEdgeAxis(e.info, ray);
     if (!which || which === e.which) return;
-    const slot = this.buildEdgeSlot(e.edge, which, e.info);
+    const slot = this.edgeSlotFor(e, which);
     if (!slot) return;
     e.which = which;
     d.base = slot;

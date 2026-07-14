@@ -4,6 +4,9 @@ import { getSeed } from "../src/geometry/seeds";
 import { Polyhedron, faceCentroidOf, newellNormal } from "../src/geometry/polyhedron";
 import { buildTruncate } from "../src/operations/truncate";
 import { buildKis } from "../src/operations/kis";
+import { buildSubdivide } from "../src/operations/subdivide";
+import { buildWhirl } from "../src/operations/gyro";
+import { buildVolute } from "../src/operations/snub";
 import { type Mesh } from "../src/geometry/HalfEdge";
 import { RelaxSolver } from "../src/solver/solver";
 import { extractTopology } from "../src/solver/topology";
@@ -68,5 +71,29 @@ describe("regularize-from-raw recovery", () => {
     const maxR = Math.max(...mesh.vertices.map((p) => p.length()));
     expect(maxR).toBeLessThan(5);
     expect(maxR).toBeGreaterThan(0.5);
+  });
+
+  // The twists commit their raw drag geometry and are relaxed from it, so the seed each
+  // one hands over has to be one the solver can planarize — the whirl's hexagons and the
+  // volute's corner fans included.
+  it("planarizes a whirled cube", () => {
+    const cube = new Polyhedron(getSeed("cube"));
+    const J = new Polyhedron(buildKis(cube, 0, null).commit(1, true).mesh);
+    const V = cube.vertices.length;
+    const poly = new Polyhedron(buildWhirl(J, V, J.vertices[V].clone()).commit(1, true).mesh);
+    const { planar, mesh } = regularizeFromRaw(poly);
+    expect(planar).toBe(true);
+    expect(planarityError(mesh)).toBeLessThan(5e-3);
+  });
+
+  it("planarizes a voluted cube", () => {
+    const cube = new Polyhedron(getSeed("cube"));
+    const R = new Polyhedron(
+      buildSubdivide(cube, [cube.faces[0][0], cube.faces[0][1]]).commit(1, true).mesh,
+    );
+    const poly = new Polyhedron(buildVolute(R, 0, cube.faces.length).commit(1, true).mesh);
+    const { planar, mesh } = regularizeFromRaw(poly);
+    expect(planar).toBe(true);
+    expect(planarityError(mesh)).toBeLessThan(5e-3);
   });
 });

@@ -509,11 +509,25 @@ export class SceneView {
     attr.needsUpdate = true;
   }
 
+  /**
+   * Every pickable marker as one list, cached until the markers are rebuilt. The hover
+   * pick and the per-frame rescale both walk all three kinds, and rebuilding this list at
+   * each of them churned an array per pointer event — with an edge handle on every edge,
+   * that is the biggest list on screen.
+   */
+  get allMarkers(): Marker[] {
+    if (!this.markerCache)
+      this.markerCache = [...this.vertexMarkers, ...this.faceMarkers, ...this.edgeMarkers];
+    return this.markerCache;
+  }
+  private markerCache: Marker[] | null = null;
+
   private rebuildMarkers(poly: Polyhedron): void {
     for (const m of this.markerGroup.children.slice()) this.markerGroup.remove(m);
     this.vertexMarkers = [];
     this.faceMarkers = [];
     this.edgeMarkers = [];
+    this.markerCache = null;
 
     const makeMarker = (kind: MarkerKind, geo: SphereGeometry, pos: Vector3) => {
       const app = appearanceForState(kind, "normal");
@@ -610,7 +624,7 @@ export class SceneView {
     // Colored-edge tubes: same distance-based radius scaling. The group sits at the
     // origin, so their endpoints are already world-space.
     this.edgeTubes.updateScales(camera, refDistance, config.render.coloredEdgeTubeRadius);
-    for (const m of [...this.vertexMarkers, ...this.faceMarkers, ...this.edgeMarkers]) {
+    for (const m of this.allMarkers) {
       const d = camera.position.distanceTo(m.mesh.position);
       m.mesh.scale.setScalar(Math.max(d / refDistance, 0.05));
     }
@@ -723,24 +737,37 @@ export class SceneView {
       }
       return new TubeGeometry(new CatmullRomCurve3(pts), steps, tubeRadius, 8, false);
     };
-    // Full extent (both chiralities) at reduced opacity.
-    this.twistArc.geometry.dispose();
-    this.twistArc.geometry = tubeFor(-a.halfSweepRad, a.halfSweepRad, segs);
+    // Both arcs are rebuilt only when their shape actually changes. This runs on every
+    // pointer move of a twist drag, and a tube is a real chunk of geometry to throw away
+    // and rebuild at that rate; the hint arc in particular never moves at all, since the
+    // handle is fixed and the camera can't orbit mid-drag.
+    const hintKey = `${a.center.toArray()}|${axis.toArray()}|${a.ref.toArray()}|${a.halfSweepRad}|${tubeRadius}`;
+    if (hintKey !== this.arcHintKey) {
+      this.arcHintKey = hintKey;
+      this.twistArc.geometry.dispose();
+      this.twistArc.geometry = tubeFor(-a.halfSweepRad, a.halfSweepRad, segs);
+    }
     (this.twistArc.material as MeshBasicMaterial).opacity = opacity;
     this.twistArc.visible = true;
     // Solid progress sub-arc from the midpoint to the current ride.
     if (showProgress) {
       const ride = a.ride.clone().sub(a.center);
       const swept = Math.atan2(axis.dot(new Vector3().crossVectors(r, ride)), r.dot(ride));
-      const count = Math.round((segs * Math.abs(swept)) / (2 * a.halfSweepRad || 1));
-      this.twistArcProgress.geometry.dispose();
-      this.twistArcProgress.geometry = tubeFor(0, swept, count);
+      const progressKey = `${hintKey}|${swept.toFixed(4)}`;
+      if (progressKey !== this.arcProgressKey) {
+        this.arcProgressKey = progressKey;
+        const count = Math.round((segs * Math.abs(swept)) / (2 * a.halfSweepRad || 1));
+        this.twistArcProgress.geometry.dispose();
+        this.twistArcProgress.geometry = tubeFor(0, swept, count);
+      }
       (this.twistArcProgress.material as MeshBasicMaterial).opacity = 1;
       this.twistArcProgress.visible = true;
     } else {
       this.twistArcProgress.visible = false;
     }
   }
+  private arcHintKey = "";
+  private arcProgressKey = "";
 
   clearTwistArc(): void {
     this.twistArc.visible = false;

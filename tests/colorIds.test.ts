@@ -11,8 +11,8 @@ import { buildTruncate } from "../src/operations/truncate";
 import { buildKis } from "../src/operations/kis";
 import { buildSubdivide } from "../src/operations/subdivide";
 import { buildChamfer } from "../src/operations/chamfer";
-import { buildSnub } from "../src/operations/snub";
-import { buildGyro } from "../src/operations/gyro";
+import { buildSnub, buildVolute } from "../src/operations/snub";
+import { buildGyro, buildWhirl } from "../src/operations/gyro";
 
 /**
  * Do unique element IDs going in imply unique element IDs coming out, for the color
@@ -168,15 +168,22 @@ describe("single operation: unique input IDs → unique output IDs", () => {
 
 // ---------------------------------------------------------------------------
 // Snub / gyro are twists of a rectification / join, so their input is that rectified
-// or joined solid. Give it fresh unique IDs and twist.
+// or joined solid. Give it fresh unique IDs and twist. Volute / whirl are those same
+// twists with the weld's collapsed elements restored (the rectify's vertex figures
+// kissed back into vertices; the join's apexes truncated back into faces), so they take
+// the same input, plus where that weld's own elements start. Those two twists weld at
+// their far end, both into the propeller, so each is checked twice: part-way along
+// (the whirl / volute itself) and at the weld.
 // ---------------------------------------------------------------------------
-describe("snub / gyro: unique input IDs → unique output IDs", () => {
+describe("snub / gyro / volute / whirl: unique input IDs → unique output IDs", () => {
   const rectifiedMesh = (name: string) =>
     buildTruncate(new Polyhedron(getSeed(name)), 0, null).commit(1, true).mesh;
   const joinedMesh = (name: string) =>
     buildKis(new Polyhedron(getSeed(name)), 0, null).commit(1, true).mesh;
 
   for (const name of SEEDS) {
+    const seedPoly = new Polyhedron(getSeed(name));
+
     it(`snub on rectify(${name})`, () => {
       const mesh = rectifiedMesh(name);
       const collisions = structuralCollisions((s) => {
@@ -194,6 +201,29 @@ describe("snub / gyro: unique input IDs → unique output IDs", () => {
       });
       expect(collisions, `gyro collisions: ${collisions.join(", ")}`).toEqual([]);
     });
+
+    for (const [stage, t, weld] of [["volute", 0.5, false], ["propeller (via volute)", 1, true]] as const) {
+      it(`${stage} on rectify(${name})`, () => {
+        const mesh = rectifiedMesh(name);
+        const collisions = structuralCollisions((s) => {
+          const p = freshlyIdentified(mesh, s);
+          return buildVolute(p, 0, seedPoly.faces.length).commit(t, weld).colors;
+        });
+        expect(collisions, `${stage} collisions: ${collisions.join(", ")}`).toEqual([]);
+      });
+    }
+
+    for (const [stage, t, weld] of [["whirl", 0.5, false], ["propeller (via whirl)", 1, true]] as const) {
+      it(`${stage} on join(${name})`, () => {
+        const mesh = joinedMesh(name);
+        const apexStart = seedPoly.vertices.length;
+        const collisions = structuralCollisions((s) => {
+          const p = freshlyIdentified(mesh, s);
+          return buildWhirl(p, apexStart, p.vertices[apexStart].clone()).commit(t, weld).colors;
+        });
+        expect(collisions, `${stage} collisions: ${collisions.join(", ")}`).toEqual([]);
+      });
+    }
   }
 });
 
@@ -204,7 +234,13 @@ describe("snub / gyro: unique input IDs → unique output IDs", () => {
 // equal sums even though every input is distinct.
 // ---------------------------------------------------------------------------
 describe("operation chains from a uniquely-identified seed", () => {
-  type Step = { label: string; run: (p: Polyhedron) => { mesh: Mesh; colors: ColorSet } };
+  // `prev` is the shape the *previous* step acted on. Volute and whirl need it: they
+  // restore what that step's weld collapsed, and the pre-weld face / vertex count is
+  // where the rectify's figures / the join's apexes begin.
+  type Step = {
+    label: string;
+    run: (p: Polyhedron, prev: Polyhedron) => { mesh: Mesh; colors: ColorSet };
+  };
   const S = {
     truncate: { label: "truncate", run: (p: Polyhedron) => buildTruncate(p, 0, null).commit(0.3, false) },
     rectify: { label: "rectify", run: (p: Polyhedron) => buildTruncate(p, 0, null).commit(1, true) },
@@ -214,11 +250,35 @@ describe("operation chains from a uniquely-identified seed", () => {
     chamfer: { label: "chamfer", run: (p: Polyhedron) => buildChamfer(p, firstEdge(p), 0).commit(0.3, false) },
     snub: { label: "snub", run: (p: Polyhedron) => buildSnub(p, 0, p.vertices[0].clone()).commit(1, true) },
     gyro: { label: "gyro", run: (p: Polyhedron) => buildGyro(p, 0, p.vertices[0].clone()).commit(1, true) },
+    volute: {
+      label: "volute",
+      run: (p: Polyhedron, prev: Polyhedron) => buildVolute(p, 0, prev.faces.length).commit(0.5, false),
+    },
+    whirl: {
+      label: "whirl",
+      run: (p: Polyhedron, prev: Polyhedron) =>
+        buildWhirl(p, prev.vertices.length, p.vertices[prev.vertices.length].clone()).commit(0.5, false),
+    },
+    // The welded end of each of those two twists: the same propeller, reached from the
+    // rectification on one side and the join on the other.
+    "propeller(volute)": {
+      label: "propeller(volute)",
+      run: (p: Polyhedron, prev: Polyhedron) => buildVolute(p, 0, prev.faces.length).commit(1, true),
+    },
+    "propeller(whirl)": {
+      label: "propeller(whirl)",
+      run: (p: Polyhedron, prev: Polyhedron) =>
+        buildWhirl(p, prev.vertices.length, p.vertices[prev.vertices.length].clone()).commit(1, true),
+    },
   } satisfies Record<string, Step>;
 
   const chains: Step[][] = [
     [S.rectify, S.snub], // → icosahedron
     [S.join, S.gyro], // → dodecahedron
+    [S.rectify, S.volute],
+    [S.join, S.whirl],
+    [S.rectify, S["propeller(volute)"]],
+    [S.join, S["propeller(whirl)"]],
     [S.truncate, S.subdivide],
     [S.subdivide, S.subdivide],
     [S.chamfer, S.chamfer],
@@ -227,6 +287,8 @@ describe("operation chains from a uniquely-identified seed", () => {
     [S.join, S.chamfer],
     [S.subdivide, S.chamfer],
     [S.rectify, S.snub, S.truncate],
+    [S.join, S.whirl, S.truncate],
+    [S.join, S["propeller(whirl)"], S.truncate],
   ];
 
   const MAX_ELEMENTS = 4000; // stop a chain before it explodes
@@ -241,10 +303,11 @@ describe("operation chains from a uniquely-identified seed", () => {
         let skipped = false;
         for (let t = 0; t < 4 && !skipped; t++) {
           let poly = freshlyIdentified(getSeed(name), 5000 + t * 131);
+          let prev = poly; // the shape the previous step acted on (unused at i = 0)
           for (let i = 0; i < chain.length; i++) {
             let out: { mesh: Mesh; colors: ColorSet };
             try {
-              out = chain[i].run(poly);
+              out = chain[i].run(poly, prev);
             } catch (e) {
               // Some chains form shapes an operation can't act on (snub needs a
               // rectification, say). Skip rather than fail: a topology limit, not a
@@ -253,6 +316,7 @@ describe("operation chains from a uniquely-identified seed", () => {
               break;
             }
             perStepPersistent[i] = intersect(perStepPersistent[i], collidingPairs(out.colors));
+            prev = poly;
             poly = wrap(out);
             const n = poly.colors.vertex.length + poly.colors.face.length + poly.colors.edge.size;
             if (n > MAX_ELEMENTS) break;

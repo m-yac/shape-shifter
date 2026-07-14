@@ -33,11 +33,15 @@ function ringPlane(ring: Vector3[]): { c: Vector3; n: Vector3 } {
  *
  * @param poly current polyhedron
  * @param edge the dragged undirected edge (vertex-id pair), for the snap axis
+ * @param collapse per-half-edge truncation collapse fractions (see
+ *   `computeCollapseFractions`); solved here if omitted. The solve is costly, so callers
+ *   that rebuild the plan mid-drag should pass their memoized map.
  */
 export function buildSubdivide(
   poly: Polyhedron,
   edge: [number, number],
   _inView: InViewTest | null = null,
+  collapse: Map<number, number> = computeCollapseFractions(poly),
 ): MorphPlan {
   const dcel = poly.dcel;
   const old = poly.colors;
@@ -59,12 +63,9 @@ export function buildSubdivide(
   //
   // The drag then plays out on the other end: the apex sinks from v to the plane of its
   // ring (where the fan flattens and it welds away), and the solid is rescaled each frame
-  // to hold the apexes at their original mean radius. The rescale is free, as the shape
-  // is scale-invariant, and it puts the motion where the gesture expects it: the edge
-  // vertices sweep outward as you drag, while the apexes stay put (exactly so on a
-  // symmetric solid) or drift slightly on an irregular one, where that drift is the
-  // correction.
-  const collapse = computeCollapseFractions(poly);
+  // so that sinking is seen as the two halves of one gesture — the edge vertices sweeping
+  // outward under the cursor while the original vertices draw inward at the same rate (see
+  // `scaleAt`).
   const edgeIndex = new Map<string, number>(); // edgeKey -> edge vertex index
   const midData: Array<{ index: number; rest: Vector3; key: string }> = [];
   let idx = 0;
@@ -104,27 +105,43 @@ export function buildSubdivide(
 
   const meanRadius = (pts: Vector3[]) =>
     pts.reduce((s, p) => s + p.length(), 0) / Math.max(1, pts.length);
-  const R0 = meanRadius(dcel.vertices.map((v) => v.position));
-  const R1 = meanRadius(dcel.vertices.map((v) => foot.get(v.id)!));
+  const R0 = meanRadius(dcel.vertices.map((v) => v.position)); // apexes at rest
+  const R1 = meanRadius(dcel.vertices.map((v) => foot.get(v.id)!)); // apexes at the weld
+  const RM = meanRadius(midData.map((m) => m.rest)); // the edge vertices, which never move
 
   /** Apex positions at `t`, before the rescale. */
   const sunkApexes = (t: number): Vector3[] =>
     dcel.vertices.map((v) => v.position.clone().lerp(foot.get(v.id)!, t));
 
-  // The rescale that holds the apexes at their original mean radius. It interpolates the
-  // mean radius rather than averaging the interpolated radii: both agree at t=0 and t=1
-  // (and everywhere on a symmetric solid, where each vertex sinks along its own radial),
-  // but only this form inverts in closed form. A mean of norms does not, and inverting it
-  // numerically would leave `snap` unable to return exactly t=1, the only value the drag
-  // controller welds on.
-  const denom = (t: number) => R0 + t * (R1 - R0);
-  const scaleAt = (t: number) => (denom(t) > 1e-9 ? R0 / denom(t) : 1);
+  // ---- The rescale: the two halves of the gesture, split evenly. -------------
+  //
+  // Unscaled, only the apexes move (each sinking toward its ring's plane); the edge
+  // vertices sit still on the edges. The solid is scale-invariant, so the rescale is free
+  // to say where that relative motion is *seen*, and it puts half in each: the apexes
+  // travel inward exactly as far as the edge vertices travel outward, so the solid opens
+  // up around a fixed size instead of inflating. (Holding the apexes still instead — the
+  // whole motion loaded onto the edge vertices — blows the welded rectification up by
+  // R0/R1, half again on a cube and 3× on a tetrahedron, and a volute then bloomed its
+  // corners out of that already-inflated frame.)
+  //
+  // With A(t) the apexes' mean radius before the rescale, equal travel at scale k reads
+  //     R0 − k·A(t) = k·RM − RM   ⟹   k(t) = (R0 + RM) / (A(t) + RM).
+  //
+  // A(t) interpolates the mean radius rather than averaging the interpolated radii: both
+  // agree at t=0 and t=1 (and everywhere on a symmetric solid, where each vertex sinks
+  // along its own radial), but only this form inverts in closed form. A mean of norms does
+  // not, and inverting it numerically would leave `snap` unable to return exactly t=1, the
+  // only value the drag controller welds on.
+  const apexRadius = (t: number) => R0 + t * (R1 - R0);
+  const scaleAt = (t: number) =>
+    apexRadius(t) + RM > 1e-9 ? (R0 + RM) / (apexRadius(t) + RM) : 1;
   const kMax = scaleAt(1);
 
   /** Exact inverse of `scaleAt`. */
   function tForScale(k: number): number {
     if (Math.abs(R1 - R0) < 1e-12 || k <= 1) return 0;
-    return Math.max(0, Math.min(1, (R0 * (1 / k - 1)) / (R1 - R0)));
+    const a = (R0 + RM) / k - RM; // the apex radius this scale corresponds to
+    return Math.max(0, Math.min(1, (a - R0) / (R1 - R0)));
   }
 
   function positions(t: number): Vector3[] {

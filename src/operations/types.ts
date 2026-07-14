@@ -9,7 +9,9 @@ export type OperationKind =
   | "snub"
   | "gyro"
   | "chamfer"
-  | "subdivide";
+  | "subdivide"
+  | "whirl"
+  | "volute";
 
 /**
  * The rotation-arc handle a gyro plan exposes. After a face drag welds into the join the
@@ -36,10 +38,13 @@ export interface TwistArc {
  * A live, in-progress operation. Built when a drag starts; the topology is fixed
  * for the duration of the drag and only the parameter `t` (in [0, 1]) changes.
  *
- * Base ops (truncate / kis): t = 0 is a no-op end, t = 1 is the welded Rectify /
- * Join. Twist ops (snub / gyro): t is the normalized position along the twist arc
- * (0 = the plain rectify/join, 1 = the full snub/gyro at the arc's end), and the
- * chosen chirality is reported by `chirality()`.
+ * Base ops (truncate / kis / chamfer / subdivide): t = 0 is a no-op end, t = 1 is the
+ * welded Rectify / Join. Twist ops (snub / gyro, and their edge-drag counterparts volute
+ * / whirl): t is the normalized position along the twist arc (0 = the plain rectify/join,
+ * 1 = the full twist at the arc's end), and the chosen chirality is reported by
+ * `chirality()`. Whirl and volute weld at that end — the restored elements meet the twist's
+ * own and merge into the propeller — so for those two, and only those two, t = 1 is a weld
+ * like a base op's, and `commit`'s `weld` flag means it.
  */
 export interface MorphPlan {
   kind: OperationKind;
@@ -74,9 +79,17 @@ export interface MorphPlan {
   /**
    * Edges (as preview vertex-index pairs) that collapse at the weld. When the drag is at
    * the welded max these are hidden, so the about-to-merge faces read as a single face
-   * before the geometry is welded.
+   * before the geometry is welded. A twist with no weld of its own (snub / gyro) has none.
    */
   vanishingEdges: Array<[number, number]>;
+
+  /**
+   * Edges (as preview vertex-index pairs) that are never real edges of the previewed solid
+   * and so are hidden at every t, not just at the weld. Only the gyro has any: it previews
+   * each join quad as two halves, whose shared join edge is dissolved from the outset, and
+   * leaving it drawn would linger as a fixed line across the rotating gyro.
+   */
+  hiddenEdges?: Array<[number, number]>;
 
   /**
    * Snap the camera pick ray to this operation's snap geometry and report the

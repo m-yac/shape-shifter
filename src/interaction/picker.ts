@@ -7,6 +7,13 @@ import { config } from "../config";
  * world-space pick ray. Hover detection works in screen space (a pixel radius), so it
  * stays forgiving however small the markers look on screen.
  */
+// Scratch vectors for the pick loop. It runs over every marker on every pointer move —
+// with an edge handle on each edge that is hundreds of markers at mouse-event rate — so it
+// reuses these rather than allocating a pair of vectors per marker and leaving the garbage
+// collector to catch up in visible pauses.
+const _view = new Vector3();
+const _proj = new Vector3();
+
 export class Picker {
   private raycaster = new Raycaster();
 
@@ -19,7 +26,7 @@ export class Picker {
    * endpoint must itself face the camera).
    */
   static facesCamera(position: Vector3, normals: Vector3[], camera: Camera): boolean {
-    const view = camera.position.clone().sub(position).normalize();
+    const view = _view.copy(camera.position).sub(position).normalize();
     const minDot = Math.sin(
       (config.interaction.pickNormalMarginDeg * Math.PI) / 180,
     );
@@ -94,7 +101,7 @@ export class Picker {
       // convex, centered solid). Normals are pre-oriented outward in SceneView.
       if (!Picker.facesCamera(m.position, m.normals, camera)) continue;
 
-      const p = m.position.clone().project(camera);
+      const p = _proj.copy(m.position).project(camera);
       if (p.z > 1) continue; // behind far plane / camera
       const sx = (p.x * 0.5 + 0.5) * r.width;
       const sy = (-p.y * 0.5 + 0.5) * r.height;
