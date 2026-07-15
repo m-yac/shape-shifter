@@ -961,9 +961,10 @@ export class DragController {
   /** The preview edges to leave undrawn: the ones the plan never draws at all (the gyro's
    *  dissolved join edges), plus, at the weld, the ones collapsing into it — so each pair
    *  of about-to-merge faces reads as the single face it is about to become. */
-  private hiddenEdgeKeys(plan: MorphPlan, weld: boolean): Set<string> {
+  private hiddenEdgeKeys(plan: MorphPlan, weld: boolean, t: number): Set<string> {
     const keys = new Set<string>();
     for (const [a, b] of plan.hiddenEdges ?? []) keys.add(edgeKey(a, b));
+    for (const [a, b] of plan.stagedHiddenEdges?.(t) ?? []) keys.add(edgeKey(a, b));
     if (weld) for (const [a, b] of plan.vanishingEdges) keys.add(edgeKey(a, b));
     return keys;
   }
@@ -1069,7 +1070,7 @@ export class DragController {
   ): void {
     const t = twistCapable ? d.t : (weld ? 1 : snap.t);
     const plan = d.base.plan;
-    const hiddenEdges = this.hiddenEdgeKeys(plan, weld);
+    const hiddenEdges = this.hiddenEdgeKeys(plan, weld, t);
     this.view.showPreview(
       { vertices: plan.positions(t), faces: plan.previewFaces },
       { faceColors: plan.previewFaceColors(t, weld), edgeColors: plan.previewEdgeColors, hiddenEdges },
@@ -1089,7 +1090,7 @@ export class DragController {
    */
   private showTwistPreview(d: Drag, ridePoint: Vector3, highlight?: { a: Vector3; b: Vector3 }): void {
     const plan = d.twist!.plan;
-    const hiddenEdges = this.hiddenEdgeKeys(plan, d.weld);
+    const hiddenEdges = this.hiddenEdgeKeys(plan, d.weld, d.t);
     this.view.showPreview(
       { vertices: plan.positions(d.t), faces: plan.previewFaces },
       { faceColors: plan.previewFaceColors(d.t, d.weld), edgeColors: plan.previewEdgeColors, hiddenEdges },
@@ -1202,7 +1203,7 @@ export class DragController {
     const plan = base.plan;
     this.view.showPreview(
       { vertices: plan.positions(0), faces: plan.previewFaces },
-      { faceColors: plan.previewFaceColors(0), edgeColors: plan.previewEdgeColors },
+      { faceColors: plan.previewFaceColors(0), edgeColors: plan.previewEdgeColors, hiddenEdges: this.hiddenEdgeKeys(plan, false, 0) },
     );
     this.readout.setDrag({
       kind: plan.kind, weld: false, t: 0,

@@ -28,6 +28,7 @@ import {
   paletteRGB,
   faceColorsRGB,
   darkRGB,
+  isPrimarySwatch,
   faceColorsRGBLight,
   darkRGBLight,
 } from "../geometry/colors";
@@ -138,7 +139,10 @@ export function edgeGeometryArrays(
     const geom = edgeColors.get(edgeKey(a, b));
     const c = resolve(geom);
     if (tubes) {
-      tubes.push({ a: pa.clone(), b: pb.clone(), color: c });
+      const radiusScale = isPrimarySwatch(geom)
+        ? config.render.primarySwatchEdgeThickness
+        : 1;
+      tubes.push({ a: pa.clone(), b: pb.clone(), color: c, radiusScale });
       continue;
     }
     positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);

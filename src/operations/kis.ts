@@ -342,6 +342,19 @@ export function buildKis(
   const nonFrac = (t: number) => Math.max(0, Math.min(1, 2 * t - 1));
   const fracFor = (t: number) => (fid: number) => (selectedSet.has(fid) ? selFrac(t) : nonFrac(t));
 
+  // On a partial n-kis the unselected faces stay flat (nonFrac == 0) until t reaches 0.5;
+  // their spoke edges shouldn't be drawn while flat, so only the faces actually rising
+  // show their new subdivision until the drag becomes a full kis.
+  const stagedEdges: Array<[number, number]> = [];
+  if (isPartial) {
+    for (const f of dcel.faces) {
+      if (selectedSet.has(f.id)) continue;
+      const kf = full.kfaces.get(f.id)!;
+      for (const u of faceLoop(f)) stagedEdges.push([u, kf.apex]);
+    }
+  }
+  const stagedHiddenEdges = (t: number) => (nonFrac(t) > 0 ? [] : stagedEdges);
+
   function positions(t: number): Vector3[] {
     return kisPositions(poly, full, fracFor(t));
   }
@@ -408,6 +421,7 @@ export function buildKis(
     previewFaceColors,
     previewEdgeColors: full.edgeColor,
     vanishingEdges: full.joinDissolve,
+    stagedHiddenEdges,
     snap,
     commit,
   };

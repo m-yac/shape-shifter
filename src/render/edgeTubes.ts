@@ -9,11 +9,13 @@ import {
 } from "three";
 
 /** A colored edge to draw as a tube: its two endpoints (in the parent group's
- *  frame) and its color. */
+ *  frame), its color, and an optional radius multiplier (primary-swatch edges are
+ *  drawn thicker; defaults to 1). */
 export interface EdgeTubeSpec {
   a: Vector3;
   b: Vector3;
   color: Color;
+  radiusScale?: number;
 }
 
 const TUBE_UP = new Vector3(0, 1, 0);
@@ -35,8 +37,12 @@ const _world = new Vector3();
 export class EdgeTubes {
   readonly object = new Group();
   private readonly geo: CylinderGeometry;
-  private tubes: { mesh: ThreeMesh; a: Vector3; b: Vector3 }[] = [];
+  private tubes: { mesh: ThreeMesh; a: Vector3; b: Vector3; radiusScale: number }[] = [];
   private opacity = 1;
+  // Last camera parameters passed to `updateScales`, so `setEdges` can lay the meshes
+  // out immediately in the same frame the endpoints change, rather than leaving them a
+  // frame behind the surface (edges appear to detach while a shape relaxes otherwise).
+  private lastScale: { camera: Camera; refDistance: number; baseRadius: number; worldOffset: Vector3 } | null = null;
 
   constructor(radialSegments: number) {
     this.geo = new CylinderGeometry(1, 1, 1, Math.max(3, radialSegments));
@@ -65,7 +71,7 @@ export class EdgeTubes {
     while (this.tubes.length < edges.length) {
       const mesh = new ThreeMesh(this.geo, new MeshBasicMaterial({ color: 0xffffff }));
       this.object.add(mesh);
-      this.tubes.push({ mesh, a: new Vector3(), b: new Vector3() });
+      this.tubes.push({ mesh, a: new Vector3(), b: new Vector3(), radiusScale: 1 });
     }
     while (this.tubes.length > edges.length) {
       const t = this.tubes.pop()!;
@@ -76,10 +82,15 @@ export class EdgeTubes {
       const t = this.tubes[i];
       t.a.copy(edges[i].a);
       t.b.copy(edges[i].b);
+      t.radiusScale = edges[i].radiusScale ?? 1;
       const m = t.mesh.material as MeshBasicMaterial;
       m.color.copy(edges[i].color);
       this.applyOpacity(m);
     }
+    // Position/scale the (possibly reused or newly created) meshes now, using the most
+    // recent camera parameters, so they track this frame's endpoints instead of lagging
+    // a frame behind. Skipped only before the first `updateScales`.
+    if (this.lastScale) this.layout();
   }
 
   /**
@@ -95,6 +106,13 @@ export class EdgeTubes {
     baseRadius: number,
     worldOffset: Vector3 = ORIGIN,
   ): void {
+    this.lastScale = { camera, refDistance, baseRadius, worldOffset };
+    this.layout();
+  }
+
+  /** Orient + scale every tube from the stored endpoints and the last camera params. */
+  private layout(): void {
+    const { camera, refDistance, baseRadius, worldOffset } = this.lastScale!;
     for (const t of this.tubes) {
       _dir.copy(t.b).sub(t.a);
       const len = _dir.length();
@@ -105,7 +123,7 @@ export class EdgeTubes {
       t.mesh.visible = true;
       _mid.copy(t.a).add(t.b).multiplyScalar(0.5);
       const d = camera.position.distanceTo(_world.copy(_mid).add(worldOffset));
-      const radius = baseRadius * Math.max(d / refDistance, 0.05);
+      const radius = baseRadius * t.radiusScale * Math.max(d / refDistance, 0.05);
       t.mesh.position.copy(_mid);
       t.mesh.quaternion.setFromUnitVectors(TUBE_UP, _dir.normalize());
       t.mesh.scale.set(radius, len, radius);

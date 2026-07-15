@@ -92,6 +92,16 @@ export interface MorphPlan {
   hiddenEdges?: Array<[number, number]>;
 
   /**
+   * Edges (as preview vertex-index pairs) to hide at this particular t — the staged spokes
+   * of faces not yet being changed. During a partial n-kis the unselected faces stay flat
+   * until t reaches the point where they start rising; their new spoke edges shouldn't be
+   * drawn until then, so only the faces actually being kissed show their new subdivision,
+   * and once the drag becomes a full kis they all appear. Absent on ops with no per-t
+   * staging of the wireframe.
+   */
+  stagedHiddenEdges?(t: number): Array<[number, number]>;
+
+  /**
    * Snap the camera pick ray to this operation's snap geometry and report the
    * resulting parameter, the exact snapped world point (where the dragged new
    * vertex should sit), and the segment to highlight (the edge / normal line

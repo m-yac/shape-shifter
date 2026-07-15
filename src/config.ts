@@ -1065,6 +1065,12 @@ export const config = {
     coloredEdgeTubeRadius: 0.00175,
     coloredEdgeTubeSegments: 6,
 
+    // An edge whose color is a primary swatch — one of the base swatches in `palette`,
+    // rather than a synthesized `avg(...)` / `tint(...)` blend — is drawn this many times
+    // thicker than a blend-colored edge, so the pure symmetry-orbit edges stand out. 1
+    // disables the emphasis (every tube the same radius).
+    primarySwatchEdgeThickness: 2,
+
     // Pickable handle markers. Radii are the on-screen size at the default camera
     // distance; markers rescale with zoom to keep that apparent size.
     vertexMarkerColor: 0xe0e0e0,

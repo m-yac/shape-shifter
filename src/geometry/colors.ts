@@ -467,6 +467,16 @@ export function paletteSwatch(geom: GeomColor | undefined): string {
   return schemeLookup[currentScheme].get(colorKey(collapse(geom))) ?? defaultSwatch;
 }
 
+/** Whether a geometric color resolves to a primary swatch — one of the base swatches
+ *  declared in `config.render.palette`, excluding the default swatch — rather than a
+ *  synthesized `avg(...)` / `tint(...)` blend swatch. Used to draw primary-colored edges
+ *  thicker, so the distinctly-colored symmetry orbits stand out while the default-colored
+ *  ones stay as they are. */
+export function isPrimarySwatch(geom: GeomColor | undefined): boolean {
+  const swatch = paletteSwatch(geom);
+  return swatch !== defaultSwatch && swatch in config.render.palette;
+}
+
 /** Undirected edge key from two vertex indices. */
 export function edgeKey(a: number, b: number): string {
   return a < b ? `${a}_${b}` : `${b}_${a}`;
