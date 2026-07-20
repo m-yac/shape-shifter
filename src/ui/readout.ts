@@ -131,6 +131,16 @@ const DRAG_VERB = config.ui.dragVerbs as Record<
   [unwelded: string, welded: string]
 >;
 
+/** Information about a drag stored in the Readout */
+type DragInfo = {
+    kind: OperationKind;
+    weld: boolean;
+    t: number;
+    selIds: Set<number> | null;
+    selKind: MarkerKind;
+    chirality: "R" | "L" | undefined;
+  } | null
+
 /**
  * The two text overlays: the polyhedron's name and configuration signature
  * (bottom-left), and what the selection or in-progress drag affects (top-left).
@@ -151,13 +161,7 @@ export class Readout {
   // Non-null only while a drag is live. `selIds` is the participating element set
   // (null = every element of its kind / the whole solid); `selKind` is whether the
   // operation acts on vertices or faces, so the readout can describe it by arity.
-  private drag: {
-    kind: OperationKind;
-    weld: boolean;
-    t: number;
-    selIds: Set<number> | null;
-    selKind: MarkerKind;
-  } | null = null;
+  private drag: DragInfo = null;
   // private verified: boolean = false;
   private solving: boolean = false;
   // The top-left SELECTION box stays hidden until the first edit, like the SHAPES
@@ -306,6 +310,8 @@ export class Readout {
             ? DRAG_VERB[this.drag.kind][this.drag.weld ? 1 : 0]
             : "Selected";
         line = `${verb} ${describeSet(this.poly, this.drag.selIds, this.drag.selKind, this.drag.t)}`;
+        if (this.drag.chirality)
+          line = `${this.drag.chirality}-${line}`
       } else {
         line = `Selected ${describeSet(this.poly, this.selection, this.selectionKind ?? "face", 0)}`;
       }
@@ -343,15 +349,7 @@ export class Readout {
   }
 
   /** Reflect an in-progress drag (or pass null when the drag ends). */
-  setDrag(
-    drag: {
-      kind: OperationKind;
-      weld: boolean;
-      t: number;
-      selIds: Set<number> | null;
-      selKind: MarkerKind;
-    } | null,
-  ): void {
+  setDrag(drag: DragInfo): void {
     this.drag = drag;
     this.show();
   }

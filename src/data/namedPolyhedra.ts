@@ -3,9 +3,9 @@ import { Polyhedron } from "../geometry/polyhedron";
 import { seedColors, type ColorSet, type SchemeName } from "../geometry/colors";
 import { getSeed } from "../geometry/seeds";
 import { buildTruncate } from "../operations/truncate";
-import { buildSnub } from "../operations/snub";
+import { buildSnub, buildVolute } from "../operations/snub";
 import { buildKis } from "../operations/kis";
-import { buildGyro } from "../operations/gyro";
+import { buildGyro, buildWhirl } from "../operations/gyro";
 import { buildChamfer } from "../operations/chamfer";
 import { buildSubdivide } from "../operations/subdivide";
 import { type OperationKind } from "../operations/types";
@@ -35,6 +35,9 @@ export type SolidType =
   | "Catalan solid"
   | "Chamfered solid"
   | "Subdivided solid"
+  | "Whirled solid"
+  | "Voluted solid"
+  | "Propellored solid"
   | "Johnson solid"
   | "Dihedral solid";
 
@@ -123,6 +126,28 @@ const subdivide = (p: Polyhedron): Polyhedron => {
   return wrap(buildSubdivide(p, edge).commit(0.5, false));
 };
 
+// The whirl / volute twists extend the *welded* chamfer / subdivide, not the intermediate
+// ones above: a full chamfer sinks every face onto its apex (giving p's join), a full
+// subdivide sinks every vertex onto its ring (giving p's rectification). The twist then
+// re-opens what that weld collapsed. These helpers produce those welds as the base the
+// twist reads (`buildWhirl` / `buildVolute` split it at `apexStart` / `figureStart`).
+
+/** Full chamfer of `p`: the weld into p's join (original vertices first, then one apex per
+ *  original face). */
+const chamferFull = (p: Polyhedron): Polyhedron => {
+  const he = p.dcel.halfedges[0];
+  const edge: [number, number] = [he.origin.id, he.next.origin.id];
+  return wrap(buildChamfer(p, edge, he.face.id).commit(1, true));
+};
+
+/** Full subdivide of `p`: the weld into p's rectification (original faces first, then one
+ *  figure per original vertex). */
+const subdivideFull = (p: Polyhedron): Polyhedron => {
+  const he = p.dcel.halfedges[0];
+  const edge: [number, number] = [he.origin.id, he.next.origin.id];
+  return wrap(buildSubdivide(p, edge).commit(1, true));
+};
+
 // --- step-recording builds --------------------------------------------------
 // A Build is a solid together with the chain of operations that produced it from the
 // tetrahedron. The recipe helpers above stay pure (poly -> poly); these wrappers apply
@@ -171,6 +196,38 @@ const Gyro = (b: Build): Build =>
     const plan = buildGyro(j, 0, j.vertices[0].clone());
     return { poly: wrap(plan.commit(1, true)), op: wholeOp("gyro", true, plan.chirality!()) };
   });
+// Whirl / volute: chamfer / subdivide to their weld, then twist — recorded as one chiral
+// step off the same parent the chamfer / subdivide had, so the composed name reads
+// "Whirled <parent>" / "Voluted <parent>" and the chiral prefix stacks onto it. The twist's
+// own far end is a second weld (the propellor); these entries stop short of it and hold the
+// intermediate (unwelded) whirl / volute topology, the way `chamfer` / `subdivide` do.
+const Whirl = (b: Build): Build =>
+  step(b, (p) => {
+    const j = chamferFull(p); // p's join, apexes appended after its original vertices
+    const apexStart = p.vertices.length;
+    const plan = buildWhirl(j, apexStart, j.vertices[apexStart].clone());
+    return { poly: wrap(plan.commit(0.5, false)), op: wholeOp("whirl", false, plan.chirality!()) };
+  });
+const Volute = (b: Build): Build =>
+  step(b, (p) => {
+    const r = subdivideFull(p); // p's rectification, figures appended after its faces
+    const figureStart = p.faces.length;
+    const plan = buildVolute(r, 0, figureStart);
+    return { poly: wrap(plan.commit(0.5, false)), op: wholeOp("volute", false, plan.chirality!()) };
+  });
+// Propellor: the far weld of the whirl / volute twist — the point where the two drags meet
+// (Conway's `p`, which is its own dual). Built as a whirl carried all the way to that weld
+// (`commit(1, true)`); a volute of the same solid welds into the identical propellor
+// (`recolorPropellor` reconciles the two color paths), so a single path suffices. Recorded as
+// a *welded* whirl step, so the composed name reads "Propello <parent>" and the chiral
+// prefix stacks onto it, just as the intermediate Whirl reads "Whirled <parent>".
+const Propellor = (b: Build): Build =>
+  step(b, (p) => {
+    const j = chamferFull(p); // p's join, apexes appended after its original vertices
+    const apexStart = p.vertices.length;
+    const plan = buildWhirl(j, apexStart, j.vertices[apexStart].clone());
+    return { poly: wrap(plan.commit(1, true)), op: wholeOp("whirl", true, plan.chirality!()) };
+  });
 
 /** Maps a specially-named solid's polyhedron to its name, so an auto-named solid one
  *  operation away (Truncate/Chamfer/Subdivide of it) can compose "<modifier> <name>". */
@@ -197,6 +254,9 @@ const A: SolidType = "Archimedean solid";
 const C: SolidType = "Catalan solid";
 const Ch: SolidType = "Chamfered solid";
 const Sub: SolidType = "Subdivided solid";
+const Wh: SolidType = "Whirled solid";
+const Vo: SolidType = "Voluted solid";
+const Pr: SolidType = "Propellored solid";
 
 const TE: SchemeName = "tetrahedral";
 const OC: SchemeName = "octahedral";
@@ -273,6 +333,28 @@ export const NAMED: NamedPolyhedron[] = [
   E(null, Sub, OC, Subdivide(octB)),
   E(null, Sub, IC, Subdivide(dodB)),
   E(null, Sub, IC, Subdivide(icoB)),
+
+  // Whirled solids — a full chamfer twisted back open (auto-named "Whirled <parent>").
+  E(null, Wh, TE, Whirl(root)),
+  E(null, Wh, OC, Whirl(cubeB)),
+  E(null, Wh, OC, Whirl(octB)),
+  E(null, Wh, IC, Whirl(dodB)),
+  E(null, Wh, IC, Whirl(icoB)),
+
+  // Voluted solids — a full subdivide twisted back open (auto-named "Voluted <parent>").
+  E(null, Vo, TE, Volute(root)),
+  E(null, Vo, OC, Volute(cubeB)),
+  E(null, Vo, OC, Volute(octB)),
+  E(null, Vo, IC, Volute(dodB)),
+  E(null, Vo, IC, Volute(icoB)),
+
+  // Propellored solids — a whirl / volute run all the way to its weld (auto-named
+  // "Propello <parent>").
+  E(null, Pr, TE, Propellor(root)),
+  E(null, Pr, OC, Propellor(cubeB)),
+  E(null, Pr, OC, Propellor(octB)),
+  E(null, Pr, IC, Propellor(dodB)),
+  E(null, Pr, IC, Propellor(icoB)),
 ];
 
 // --- fill in the auto-generated names ---------------------------------------

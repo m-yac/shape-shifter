@@ -26,7 +26,7 @@ export const config = {
       subdivide: true, // drag an edge midpoint outward along the edge normal
       whirl: true, // continue a full-join chamfer drag onto the twist arc
       volute: true, // continue a full-rectify subdivide drag onto the twist arc
-      propeller: true, // the welded end of both twists (drag the whirl / volute fully out)
+      propellor: true, // the welded end of both twists (drag the whirl / volute fully out)
     },
 
     multiSelect: true, // Cmd (macOS) / Ctrl: select several elements before dragging
@@ -200,7 +200,7 @@ export const config = {
     // give the split gaps room; this is the scale it reaches at the full twist.
     twistShrink: 0.72,
 
-    // Whirl and volute both run to a weld — the propeller — so neither has a depth to
+    // Whirl and volute both run to a weld — the propellor — so neither has a depth to
     // tune: the drag's t is the fraction of the way to that weld, and the geometry is
     // solved backwards from it.
     //
@@ -212,7 +212,7 @@ export const config = {
     // figure into a pyramid whose apex heads back out toward the vertex it was cut from;
     // at t=1 it reaches the height where every fan triangle is coplanar with the snub gap
     // triangle beside it, and the two weld into that same quad. Both limits are the
-    // propeller (Conway's `p`, which is its own dual), so the two drags meet there.
+    // propellor (Conway's `p`, which is its own dual), so the two drags meet there.
   },
 
   // ---------------------------------------------------------------------------
@@ -322,17 +322,17 @@ export const config = {
       // - oldVertex is the color of the nth vertex adjacent to it
       // - oldFace is the color of the nth face adjacent to it
       // (Dual operation is automatically derived)
-      // NB: Subdividing should be equivalent to rectifying, then kis-ing (the
+      // NB: Subdividing should be equivalent to rectifying, then kising (the
       // dual operation to truncating) only the new faces that were created by
       // the rectification. This explanation is used for all the rules below.
       subdivide: {
-        // Each new face comes from kis-ing one of the new rectify faces, so
+        // Each new face comes from kising one of the new rectify faces, so
         // following the newVertex rule of truncate, it is given the average of
         // the rectify edge and the rectify face colors, which following the
         // rectify rules, have the average of the colors of the old face
         // and old vertex, and the color of the old vertex, respectively
         newFace: {oldFace: 1/4, oldVertex: 3/4},
-        // Each new edge that splits an old edge comes from kis-ing one of the
+        // Each new edge that splits an old edge comes from kising one of the
         // new rectify faces, so following the newEdge rule of truncate, it is
         // given the average of the rectify vertex and rectify face colors,
         // which following the rectify rules, have the color of the old edge
@@ -345,16 +345,16 @@ export const config = {
         // Each new vertex comes from rectifying one of the old vertices, so
         // following the newVertex rule of rectify, it is given the color of
         // the old edge
-        // (NB: The new vertices created from kis-ing are not new in this
+        // (NB: The new vertices created from kising are not new in this
         // context, since they are just the old vertices that were turned into
         // faces via rectify - they keep their color via the newFace rule of
         // truncate)
         newVertex: {oldEdge: 1.0},
       },
-      // NB: Unlike snub, propeller does operate directly on the original
+      // NB: Unlike snub, propellor does operate directly on the original
       // elements of the shape. Also note that it is its own dual, so if you
       // switch "vert" and "face", you should get the same set of rules
-      propeller: {
+      propellor: {
         // Each new face connects an old face to an old edge, so it is given
         // the average of the two colors
         newFace: { oldFace: 1/2, oldEdge: 1/2 },
@@ -558,11 +558,11 @@ export const config = {
         "",
         "- Chamfer: drag the middle of an edge sideways across a face (the limit is Join)",
         "- Whirl: drag left or right to twist the joined faces back in",
-        "- Propeller: keep dragging until the old faces are fully expanded",
+        "- Propellor: keep dragging until the old faces are fully expanded",
         "",
         "- Subdivide: drag the middle of an edge straight outwards (the limit is Rectify)",
         "- Volute: drag left or right to twist the rectified vertices back in",
-        "- Propeller (again): keep dragging until the new faces rejoin where they came from",
+        "- Propellor (again): keep dragging until the new faces rejoin where they came from",
         "",
         "Try messing with the \"Regular\" option to get some funky effects, and check out the library!"
       ],
@@ -618,13 +618,13 @@ export const config = {
     // operation and whether the drag has reached its welded max end.
     dragVerbs: {
       truncate: ["Truncating", "Rectifying"],
-      kis: ["Kis-ing", "Joining"],
+      kis: ["Kising", "Joining"],
       snub: ["Snubbing", "Snubbing"],
-      gyro: ["Gyro-ing", "Gyro-ing"],
+      gyro: ["Gyroing", "Gyroing"],
       chamfer: ["Chamfering", "Joining"],
       subdivide: ["Subdividing", "Rectifying"],
-      whirl: ["Whirling", "Propelling"],
-      volute: ["Voluting", "Propelling"],
+      whirl: ["Whirling", "Propellorizing"],
+      volute: ["Voluting", "Propellorizing"],
     } as Record<string, [unwelded: string, welded: string]>,
 
     // The OPTIONS panel. Each line is "Label: <content>": `buttons` fire on click,
@@ -674,7 +674,7 @@ export const config = {
     //   • name  — the modifier prepended to the nearest named ancestor to derive a shape
     //             name (Truncated Cube), shown in the readout and exported filenames.
     // `weld` is the unwelded vs welded end of the drag: the rectify / join a base op runs
-    // into, or the propeller a whirl / volute does. A full snub / gyro welds nothing, so
+    // into, or the propellor a whirl / volute does. A full snub / gyro welds nothing, so
     // both of its entries read the same.
     // operations/naming.ts adds the selection qualifier programmatically:
     //   whole  → the bare verb;
@@ -691,8 +691,8 @@ export const config = {
       gyro:     { unwelded: ["Gyro", "Gyro"], welded: ["Gyro", "Gyro"] },
       chamfer:  { unwelded: ["Chamfer", "Chamfered"], welded: ["Join", "Joined"] },
       subdivide: { unwelded: ["Subdivide", "Subdivided"], welded: ["Rectify", "Rectified"] },
-      whirl:    { unwelded: ["Whirl", "Whirled"], welded: ["Propeller", "Propellerized"] },
-      volute:   { unwelded: ["Volute", "Voluted"], welded: ["Propeller", "Propellerized"] },
+      whirl:    { unwelded: ["Whirl", "Whirl"], welded: ["Propellor", "Propello"] },
+      volute:   { unwelded: ["Volute", "Volute"], welded: ["Propellor", "Propello"] },
     },
   },
 
@@ -703,7 +703,7 @@ export const config = {
     // Distance the browse camera sits from the focused solid when the diagram opens.
     // Larger than the main view's `camera.startDistance`, so a solid and its
     // neighbours are visible at once. The main view's orientation is kept.
-    startDistance: 12,
+    startDistance: 16,
     // After a pan, the focus eases to the nearest solid, covering this fraction of
     // the remaining distance each frame (0..1; higher is snappier).
     snapSmoothing: 0.18,
@@ -734,16 +734,17 @@ export const config = {
     // Type this to reveal everything in the library until it is closed.
     revealAllCode: "idkfa",
     diagram: [
+      //
+      // Families of vertex / face operations
+      //
       // Tetrahedron family
-      [ -1,  0,  1, "Chamfered Tetrahedron", []  ],
       [  0,  6,  0, "Icosahedron", [">d3l4", ">d3r4", ":>l4d5f4", ":>r4d5b4"] ],
       [  0,  4,  0, "Octahedron", [">d2l2", ">d2r2", "u2>", ":>l2d3f2", ":>r2d3b2"] ],
       [  0,  2,  0, "Truncated Tetrahedron", ["u2"] ],
-      [  0,  0,  0, "Tetrahedron", [">u2", ">d2", ":>fl", ":>br"] ],
+      [  0,  0,  0, "Tetrahedron", [">u2", ">d2", ":>rub", ":>ldf"] ],
       [  0, -2,  0, "Triakis Tetrahedron", ["d2"] ],
       [  0, -4,  0, "Cube", [">u2l2", ">u2r2", "d2>", ":>l2u3f2", ":>r2u3b2"] ],
       [  0, -6,  0, "Dodecahedron", [">u3l4", ">u3r4", ":>l4u5f4", ":>r4u5b4"] ],
-      [  1,  0, -1, "Subdivided Tetrahedron", []  ],
       // Octahedron / Cube family
       [ -2,  2,  0, "Triakis Octahedron", ["d2l2"] ],
       [  2,  2,  0, "Truncated Octahedron", ["d2r2"] ],
@@ -763,23 +764,46 @@ export const config = {
       [ -4, -3,  0, "Pentakis Dodecahedron", ["u3l4"] ],
       [  4, -3,  0, "Truncated Dodecahedron", ["u3r4"] ],
       // Cuboctahedron / Rhombic Dodecahedron family
-      [ -2, -1,  2, "Chamfered Cube", ["f2r2u1"] ],
-      [ -2,  1,  2, "Chamfered Octahedron", ["f2r2d1"] ],
       [  2,  0,  2, "Truncated Cuboctahedron", ["f2l2"] ],
       [  0,  0, -4, "Deltoidal Icositetrahedron", ["l2>"] ],
       [  0,  0,  4, "Rhombicuboctahedron", ["r2>"] ],
       [ -2,  0, -2, "Disdyakis Dodecahedron", ["b2r2"] ],
-      [  2, -1, -2, "Subdivided Cube", ["b2l2u1"] ],
-      [  2,  1, -2, "Subdivided Octahedron", ["b2l2d1"] ],
       // Icosidodecahedron / Rhombic Triacontahedron family
-      [ -4, -1,  4, "Chamfered Dodecahedron", ["f4r4u1"] ],
-      [ -4,  1,  4, "Chamfered Icosahedron", ["f4r4d1"] ],
       [  4,  0,  4, "Truncated Icosidodecahedron", ["f4l4"] ],
       [  0,  0, -8, "Deltoidal Hexecontahedron", ["l2>"] ],
       [  0,  0,  8, "Rhombicosidodecahedron", ["r2>"] ],
       [ -4,  0, -4, "Disdyakis Triacontahedron", ["b4r4"] ],
-      [  4, -1, -4, "Subdivided Dodecahedron", ["b4l4u1"] ],
-      [  4,  1, -4, "Subdivided Icosahedron", ["b4l4d1"] ],
+      //
+      // Families of edge operations
+      //
+      // Tetrahedron family
+      [ -1,  1, -1, "Volute Tetrahedron", [":rd2>"]  ],
+      [  1,  1, -1, "Subdivided Tetrahedron", [":l2"]  ],
+      [  0, -1, -1, "Propello Tetrahedron", []  ],
+      [ -1, -1,  1, "Chamfered Tetrahedron", [":r2"]  ],
+      [  1, -1,  1, "Whirl Tetrahedron", [":lb2>"]  ],
+      // Octahedron / Cube family
+      [ -2,  4, -2, "Propello Octahedron", []  ],
+      [ -3,  1,  3, "Whirl Octahedron", [":r1u3b5>"] ],
+      [ -2,  1,  2, "Chamfered Octahedron", ["f2r2d1", ":fl"] ],
+      [  2,  1, -2, "Subdivided Octahedron", ["b2l2d1", ":br"] ],
+      [  3,  1, -3, "Volute Octahedron", [":l5u3f1>"] ],
+      [ -3, -1,  3, "Whirl Cube", [":r1d3b5>"] ],
+      [ -2, -1,  2, "Chamfered Cube", ["f2r2u1", ":fl"] ],
+      [  2, -1, -2, "Subdivided Cube", ["b2l2u1", ":br"] ],
+      [  3, -1, -3, "Volute Cube", [":l5d3f1>"] ],
+      [ -2, -4, -2, "Propello Cube", []  ],
+      // Icosahedron / Dodecahedron family
+      [ -3,  6, -3, "Propello Icosahedron", []  ],
+      [ -6,  1,  6, "Whirl Icosahedron", [":r3u5b9>"] ],
+      [ -4,  1,  4, "Chamfered Icosahedron", ["f4r4d1", ":f2l2"] ],
+      [  4,  1, -4, "Subdivided Icosahedron", ["b4l4d1", ":b2r2"] ],
+      [  6,  1, -6, "Volute Icosahedron", [":l9u5f3>"] ],
+      [ -6, -1,  6, "Whirl Dodecahedron", [":r3d5b9>"] ],
+      [ -4, -1,  4, "Chamfered Dodecahedron", ["f4r4u1", ":f2l2"] ],
+      [  4, -1, -4, "Subdivided Dodecahedron", ["b4l4u1", ":b2r2"] ],
+      [  6, -1, -6, "Volute Dodecahedron", [":l9d5f3>"] ],
+      [ -3, -6, -3, "Propello Dodecahedron", []  ],
     ]
   },
 
@@ -1053,11 +1077,11 @@ export const config = {
       icosahedral: {
         // Each face of the icosahedron comes from a face of the octahedron, or an edge
         // of it opened as a vertex via snubbing. Dually, each vertex of the dodecahedron
-        // comes from a vertex of the cube, or an edge split as a face via gyro-ing.
+        // comes from a vertex of the cube, or an edge split as a face via gyroing.
         face: { swatch: "yellow" },
         // Each vertex of the icosahedron comes from a vertex of the octahedron slid
         // along an edge via snubbing. Dually, each face of the dodecahedron from a face
-        // of the cube expanded from an edge via gyro-ing.
+        // of the cube expanded from an edge via gyroing.
         vert: { swatch: "red" },
         // Each edge of the icosahedron comes from a vertex of the octahedron or a face
         // adjacent to it. Dually, each edge of the dodecahedron from a face of the cube,

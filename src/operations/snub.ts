@@ -12,7 +12,7 @@ import {
   newellNormal,
 } from "../geometry/polyhedron";
 import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
-import { combine, dualRule, recolorPropeller, stagedFaceColors } from "./colorUtil";
+import { combine, dualRule, recolorPropellor, stagedFaceColors } from "./colorUtil";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
 import { closestLineParam, distancePointToRay } from "../util/lines";
@@ -102,7 +102,7 @@ function figureApexHome(poly: Polyhedron, fid: number): Vector3 {
 
 /**
  * One triangle of a figure's kis fan, and the snub gap triangle it welds into at the
- * propeller: `u`→`w` is the figure edge the two straddle (which dissolves in the weld),
+ * propellor: `u`→`w` is the figure edge the two straddle (which dissolves in the weld),
  * `z` the gap triangle's far corner, so the merged quad is `[apex, u, z, w]`.
  */
 interface FanTri {
@@ -122,27 +122,27 @@ interface FanTri {
  */
 interface VoluteData {
   vertexCount: number;
-  /** One kis apex per figure face: its vertex index, the propeller apex it is headed for,
+  /** One kis apex per figure face: its vertex index, the propellor apex it is headed for,
    *  and how high that lands above the figure's (moving) plane. */
   apexes: Array<{ fid: number; index: number; home: Vector3; height: number }>;
   faces: number[][];
   faceColor: GeomColor[];
   faceStart: GeomColor[];
-  /** Per preview face, the color it takes at the propeller weld: a fan triangle and its gap
+  /** Per preview face, the color it takes at the propellor weld: a fan triangle and its gap
    *  triangle merge into a blade quad, so both show that quad's recolored color there. */
   faceWeld: GeomColor[];
   vertexColor: GeomColor[];
   edgeColor: Map<string, GeomColor>;
   /** The fan triangles, in preview order, and where each welds. */
   fans: FanTri[];
-  /** The propeller: the same vertices, with each fan/gap pair merged into one quad. */
+  /** The propellor: the same vertices, with each fan/gap pair merged into one quad. */
   weldFaces: number[][];
   weldFaceColor: GeomColor[];
   weldEdgeColor: Map<string, GeomColor>;
-  /** How many of `weldFaces` (the leading block) are X's own kept faces, so the propeller
+  /** How many of `weldFaces` (the leading block) are X's own kept faces, so the propellor
    *  recolor can tell them from the blade quads that follow. */
   weldKeptFaceCount: number;
-  /** The propeller's recolored colors (aligned to `weldFaces`), computed once at build so
+  /** The propellor's recolored colors (aligned to `weldFaces`), computed once at build so
    *  the drag preview's t=1 end and the committed weld share one source. */
   weldColors: ColorSet;
 }
@@ -167,11 +167,11 @@ interface VoluteData {
  * With `figureStart` the plan is a **volute** instead: the same snub, but the
  * rectification's vertex-figure faces (those with id ≥ `figureStart`, since a rectify
  * keeps the original faces first and appends one figure per original vertex) are kissed
- * back into the vertices they were cut from, rising as the twist runs. Kis-ing a
+ * back into the vertices they were cut from, rising as the twist runs. Kising a
  * rectify's figures *is* the subdivision — the vertex figure becomes a corner fan again —
  * which is why the volute extends a subdivide drag exactly as the snub extends a truncate
  * drag. Unlike the plain snub, that twist ends in a weld: at t=1 each fan triangle has
- * risen flush with the gap triangle beside it, and merging the two gives the propeller —
+ * risen flush with the gap triangle beside it, and merging the two gives the propellor —
  * the same shape a whirl's twist welds into, from the other side.
  */
 export function buildSnub(
@@ -451,7 +451,7 @@ export function buildSnub(
   // ---- Volute: kis each vertex figure back into the vertex it was cut from. ----------
   //
   // Everything the snub does is left exactly as it is; the only new geometry is one apex
-  // per figure. Each apex heads for the height at which its fan welds — `propellerApex`,
+  // per figure. Each apex heads for the height at which its fan welds — `propellorApex`,
   // out in the direction the original vertex stood — starting flush on its figure's plane
   // (so the un-twisted rectify still reads as one flat face) and tracking that plane as the
   // twist rotates and shrinks it beneath, so the pyramid never inverts.
@@ -473,7 +473,7 @@ export function buildSnub(
   }
 
   /**
-   * Where a figure's apex ends up at the propeller: the point at which every one of its
+   * Where a figure's apex ends up at the propellor: the point at which every one of its
    * fan triangles has gone coplanar with the snub gap triangle across its base, so the two
    * merge into one flat quad.
    *
@@ -486,7 +486,7 @@ export function buildSnub(
    * the original vertex stood at (`figureApexHome`), whose Tikhonov pull keeps a figure
    * with near-parallel gap planes from throwing its apex off to infinity.
    */
-  function propellerApex(
+  function propellorApex(
     fid: number,
     fans: FanTri[],
     at1: Vector3[],
@@ -541,7 +541,7 @@ export function buildSnub(
       }
       fansOf.set(f.id, fans);
 
-      const home = propellerApex(f.id, fans, at1);
+      const home = propellorApex(f.id, fans, at1);
       const p1 = ringPlane(loop.map((i) => at1[i]));
       // How far above the figure's final plane that lands: the apex rises to exactly this
       // as the twist runs, so the fan reaches its weld just as the snub reaches its end. A
@@ -566,7 +566,7 @@ export function buildSnub(
     const faceWeld: GeomColor[] = [];
     const fans: FanTri[] = [];
     // Preview-face bookkeeping, so the weld's recolored blade colors can be written back onto
-    // the right preview faces once the propeller is built: origFi → its preview index (kept
+    // the right preview faces once the propellor is built: origFi → its preview index (kept
     // faces), and, parallel to `fans`, the preview index of each fan triangle.
     const previewOfFace = new Map<number, number>();
     const fanPreview: number[] = [];
@@ -596,7 +596,7 @@ export function buildSnub(
         // tints into its own colors as the apex rises.
         faceStart.push(figColor);
         // …and at the weld it merges into the gap triangle beside it, forming a blade quad;
-        // this is overwritten below with that quad's recolored propeller color.
+        // this is overwritten below with that quad's recolored propellor color.
         faceWeld.push(va.faceColor[fan.gap]);
         edgeColor.set(edgeKey(fan.u, a.index), combine(dualRule(C.truncate.newEdge), {
           oldFace: figColor,
@@ -605,7 +605,7 @@ export function buildSnub(
       }
     }
 
-    // The propeller: each fan/gap pair merges across the figure edge they straddle, into
+    // The propellor: each fan/gap pair merges across the figure edge they straddle, into
     // the quad `[apex, u, z, w]` — the fan's two spokes, then the gap's two far sides. The
     // rotated original faces come through untouched, and nothing is recolored: the merged
     // quad is the gap triangle grown a corner, so it keeps the gap's color, and only the
@@ -620,7 +620,7 @@ export function buildSnub(
       weldFaceColor.push(va.faceColor[fi]);
     }
     // Everything pushed so far is one of X's own faces (the rotated originals); the fan/gap
-    // quads that follow are the propeller's new blades.
+    // quads that follow are the propellor's new blades.
     const weldKeptFaceCount = weldFaces.length;
     for (const fan of fans) {
       weldFaces.push([fan.apex, fan.u, fan.z, fan.w]);
@@ -629,14 +629,14 @@ export function buildSnub(
     const weldEdgeColor = new Map(edgeColor);
     for (const fan of fans) weldEdgeColor.delete(edgeKey(fan.u, fan.w));
 
-    // Recolor the propeller once — the same pass commit runs — so the live preview's t=1 end
+    // Recolor the propellor once — the same pass commit runs — so the live preview's t=1 end
     // and the committed weld share one source. The blade quads follow the kept faces in
     // `weldFaces` (one per fan, in `fans` order), so each fan's recolored color goes back
     // onto both preview faces that merge into it: the fan triangle and its gap triangle.
     const keptFaceIds = new Set<number>();
     for (let fi = 0; fi < weldKeptFaceCount; fi++) keptFaceIds.add(fi);
     const keptVertIds = new Set(apexes.map((a) => a.index));
-    const weldColors = recolorPropeller(
+    const weldColors = recolorPropellor(
       weldFaces.map((f) => f.slice()),
       { vertex: vertexColor.slice(), face: weldFaceColor.slice(), edge: new Map(weldEdgeColor) },
       keptFaceIds,
@@ -676,7 +676,7 @@ export function buildSnub(
     if (!vol) return variants[variantIndex()].faceColor.map((c) => paletteRGB(c));
     // A volute runs between two welds, so it reads like a base drag: the rectification at
     // t=0, the volute's own colors at t=0.5 (the shape an intermediate release commits),
-    // and the propeller at t=1, where each fan triangle merges into the gap triangle beside
+    // and the propellor at t=1, where each fan triangle merges into the gap triangle beside
     // it and takes its color. The seam between that pair is hidden at the weld, so the two
     // read as the one quad they are about to become and releasing doesn't snap.
     return stagedFaceColors(vol.faceStart, vol.faceColor, vol.faceWeld, t, weld);
@@ -709,9 +709,9 @@ export function buildSnub(
     const vol = volutes?.[variantIndex()];
     if (vol && weld) {
       // The twist's own weld: the fans have risen to where they lie flat against their gap
-      // triangles, so merge each pair into its quad — the propeller. Its colors were recolored
-      // from X at build (see recolorPropeller / weldColors), so both twists produce the
-      // identical propeller and the drag preview's t=1 end already matches this commit.
+      // triangles, so merge each pair into its quad — the propellor. Its colors were recolored
+      // from X at build (see recolorPropellor / weldColors), so both twists produce the
+      // identical propellor and the drag preview's t=1 end already matches this commit.
       return {
         mesh: { vertices: positions(1), faces: vol.weldFaces.map((f) => f.slice()) },
         colors: {
@@ -736,7 +736,7 @@ export function buildSnub(
     get previewEdgeColors() {
       return volutes?.[variantIndex()].edgeColor ?? variants[variantIndex()].edgeColor;
     },
-    // At the propeller each figure edge is the seam a fan triangle and its gap triangle
+    // At the propellor each figure edge is the seam a fan triangle and its gap triangle
     // merge across, so it dissolves. A plain snub welds nothing.
     get vanishingEdges(): Array<[number, number]> {
       const vol = volutes?.[variantIndex()];

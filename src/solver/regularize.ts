@@ -257,7 +257,7 @@ export function minAdjacentFaceAngle(
  * Recenter the shape at the origin and ease its scale so the average vertex distance
  * from the origin approaches `target`, by fraction `rate` each call. This is what
  * keeps the apparent size stable across edits, so truncating doesn't shrink the solid
- * and kis-ing doesn't grow it. Returns the average distance after this step, for the
+ * and kising doesn't grow it. Returns the average distance after this step, for the
  * convergence check.
  */
 export function normalizeStep(mesh: Mesh, target: number, rate: number): number {

@@ -59,11 +59,12 @@ describe("diagram graph", () => {
 });
 
 describe("computeVisible (directed neighbours)", () => {
-  it("reveals the Tetrahedron's whole compound chain (truncate → rectify → snub)", () => {
-    // With only the Tetrahedron made you see it, its truncation + kis (start), their
-    // rectification + join (middle: the Octahedron + Cube), and one further hop, the
-    // snub + gyro (end: the Icosahedron + Dodecahedron). Plus its dashed chamfer and
-    // subdivide leaves.
+  it("reveals the Tetrahedron's whole compound chain on both tracks", () => {
+    // With only the Tetrahedron made you see it and both of its compound chains. On the
+    // solid track: its truncation + kis (start), their rectification + join (middle: the
+    // Octahedron + Cube), and one further hop, the snub + gyro (end: the Icosahedron +
+    // Dodecahedron). On the dashed track, running in parallel: its chamfer + subdivide
+    // (start), their whirl + volute (middle), and one further hop, the propeller (end).
     const v = visibleNames(["Tetrahedron"]);
     expect(v).toEqual(
       new Set([
@@ -76,6 +77,9 @@ describe("computeVisible (directed neighbours)", () => {
         "Cube",
         "Icosahedron",
         "Dodecahedron",
+        "Whirl Tetrahedron",
+        "Volute Tetrahedron",
+        "Propello Tetrahedron",
       ]),
     );
   });
@@ -87,12 +91,14 @@ describe("computeVisible (directed neighbours)", () => {
     expect(visibleNames(["Tetrahedron"]).has("Cuboctahedron")).toBe(false);
   });
 
-  it("does NOT chain a dashed chamfer/subdivide leaf onward into a middle arrow", () => {
-    // The Cube reaches the Chamfered Cube by a dashed (:>) arrow, making it a leaf: the
-    // Rhombicuboctahedron it points on to, via a solid middle arrow, is not revealed by
-    // making the Cube.
+  it("does NOT let a dashed chain cross onto the solid track", () => {
+    // The Cube reaches the Chamfered Cube by a dashed (:>) arrow, opening a dashed chain.
+    // The Chamfered Cube's own dashed arrow continues it (to the Whirl Cube), but its
+    // solid middle arrow, to the Rhombicuboctahedron, belongs to the other track and is
+    // not followed: making the Cube does not reveal the Rhombicuboctahedron.
     const v = visibleNames(["Cube"]);
     expect(v.has("Chamfered Cube")).toBe(true);
+    expect(v.has("Whirl Cube")).toBe(true);
     expect(v.has("Rhombicuboctahedron")).toBe(false);
   });
 

@@ -184,7 +184,7 @@ function withChirality(s: string, chirality: "R" | "L" | undefined): string {
  *  after the special name is substituted, so it stacks onto that name rather than a modifier,
  *  and equally onto a chiral *ancestor* used as a derived name's base — carrying the prefix
  *  forward ("Truncated R-Snub Cube"). A no-op when `op` isn't a chiral drag. */
-function withResultChirality(name: string, op: OpDescriptor | null): string {
+export function withResultChirality(name: string, op: OpDescriptor | null): string {
   return isAchiralName(name) ? name : withChirality(name, op?.chirality);
 }
 

@@ -87,14 +87,14 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
 }
 
 /**
- * Recolor a propeller (`pX`) so it comes out identical whichever twist reached it — the
+ * Recolor a propellor (`pX`) so it comes out identical whichever twist reached it — the
  * whirl (off X's join) or the volute (off X's rectification). Both weld into the same
  * shape but color the new elements as duals of each other, so the two disagree (a whirl's
- * blade quad takes the color a volute gives a new vertex, and vice versa). Propeller is its
+ * blade quad takes the color a volute gives a new vertex, and vice versa). Propellor is its
  * own dual, so it must be colored by rules that are symmetric under face↔vertex — the
- * `config.colors.operations.propeller` set — read against X's own faces / edges / vertices.
+ * `config.colors.operations.propellor` set — read against X's own faces / edges / vertices.
  *
- * The fix keys entirely off the elements both paths already agree on: a propeller keeps X's
+ * The fix keys entirely off the elements both paths already agree on: a propellor keeps X's
  * faces (as n-gons), X's vertices, and X's edges (as the "over-edge" where each edge's two
  * blades meet), all at their own colors. Given which faces / vertices are those kept ones
  * (`keptFaceIds` / `keptVertIds` — everything else is new), every new element's color
@@ -116,16 +116,16 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
  * is order-independent, and every paired source is a mean (order-independent, and a distinct
  * unordered pair per element) so both twists agree and ids stay unique.
  */
-export function recolorPropeller(
+export function recolorPropellor(
   faces: number[][],
   colors: ColorSet,
   keptFaceIds: ReadonlySet<number>,
   keptVertIds: ReadonlySet<number>,
 ): ColorSet {
-  const P = config.colors.operations.propeller;
+  const P = config.colors.operations.propellor;
   const isKeptV = (v: number) => keptVertIds.has(v);
 
-  // Edge → the faces touching it (2 on a closed propeller), and each face's undirected
+  // Edge → the faces touching it (2 on a closed propellor), and each face's undirected
   // edge keys (in loop order).
   const faceOfEdge = new Map<string, number[]>();
   const edgesOfFace: string[][] = faces.map((loop, fi) => {
@@ -194,7 +194,7 @@ export function recolorPropeller(
     const va = spokeVertOf.get(oa), vb = spokeVertOf.get(ob);
     const src: ColorSources = { oldFace: face[kf], oldEdge: edge.get(overKey)! };
     if (va !== undefined && vb !== undefined) src.oldVertex = mean2(vertex[va], vertex[vb]);
-    face[fi] = combine(P.newFace, src, "propeller.newFace");
+    face[fi] = combine(P.newFace, src, "propellor.newFace");
   });
 
   // A new vertex sits on one over-edge and one spoke to its kept vertex; the two blades
@@ -216,7 +216,7 @@ export function recolorPropeller(
     const [g0, g1] = faceOfEdge.get(oe)!.map((g) => keptFaceOfBlade.get(g));
     const src: ColorSources = { oldVertex: vertex[kv], oldEdge: edge.get(oe)! };
     if (g0 !== undefined && g1 !== undefined) src.oldFace = mean2(face[g0], face[g1]);
-    vertex[vi] = combine(P.newVert, src, "propeller.newVert");
+    vertex[vi] = combine(P.newVert, src, "propellor.newVert");
   });
 
   // Edges: seam (kept n-gon ↔ blade) and spoke (kept vertex ↔ new vertex). Over-edges keep
@@ -233,7 +233,7 @@ export function recolorPropeller(
       if (overKey !== undefined) {
         const src: ColorSources = { oldFace: face[kept[0]], oldEdge: edge.get(overKey)! };
         if (va !== undefined && vb !== undefined) src.oldVertex = mean2(vertex[va], vertex[vb]);
-        edge.set(key, combine(P.newFaceEdge, src, "propeller.newFaceEdge"));
+        edge.set(key, combine(P.newFaceEdge, src, "propellor.newFaceEdge"));
       }
     } else if (kept.length === 0 && (isKeptV(a) || isKeptV(b))) {
       // Spoke: joins one kept vertex to a new vertex on its over-edge; the two blades it runs
@@ -245,7 +245,7 @@ export function recolorPropeller(
       if (overKey !== undefined) {
         const src: ColorSources = { oldVertex: vertex[kv], oldEdge: edge.get(overKey)! };
         if (g0 !== undefined && g1 !== undefined) src.oldFace = mean2(face[g0], face[g1]);
-        edge.set(key, combine(P.newVertEdge, src, "propeller.newVertEdge"));
+        edge.set(key, combine(P.newVertEdge, src, "propellor.newVertEdge"));
       }
     }
   }

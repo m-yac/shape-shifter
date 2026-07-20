@@ -115,7 +115,7 @@ describe("gyro twist (extends a join)", () => {
 // forced: whirl(P) has V+4E vertices, 7E edges, F+2E faces (the originals plus two hexagons
 // per edge), and volute(P) is exactly its dual, which the last describe checks directly.
 //
-// Both run out to a weld at t=1 (the propeller), so an un-welded commit part-way along the
+// Both run out to a weld at t=1 (the propellor), so an un-welded commit part-way along the
 // twist is what gives the whirl / volute themselves; t=1 is checked separately below.
 const MID = 0.5;
 
@@ -256,15 +256,15 @@ describe("volute is the dual of whirl", () => {
   }
 });
 
-// Both twists weld at t=1, and both weld into the same thing: the propeller, Conway's `p`
+// Both twists weld at t=1, and both weld into the same thing: the propellor, Conway's `p`
 // — the solid's own faces, rotated, with two quads per edge filling in around them
 // (V+2E, 5E, F+2E). The whirl arrives at it by running each apex cut out onto the gyro
 // vertex it was heading for; the volute by raising each fan flush with the gap triangle
 // beside it. They meet there because `p` is its own dual (dpd = p), and the whirl reaches
 // it through the join while the volute reaches it through the rectification: `w` welds to
 // `p`, so `dwd` welds to `dpd`, which is `p` again.
-describe("propeller (the weld both twists run into)", () => {
-  it("propeller(cube) = the 6 rotated squares + 2 quads per edge", () => {
+describe("propellor (the weld both twists run into)", () => {
+  it("propellor(cube) = the 6 rotated squares + 2 quads per edge", () => {
     const s = sig(whirlPlan("cube").commit(1, true).mesh);
     expect(s).toMatchObject({ V: 32, E: 60, F: 30 });
     // Each square is ringed by degree-4 vertices; each quad has one corner at a restored
@@ -274,7 +274,7 @@ describe("propeller (the weld both twists run into)", () => {
   });
 
   for (const name of PLATONICS) {
-    it(`whirl(${name}) and volute(${name}) weld into the same propeller`, () => {
+    it(`whirl(${name}) and volute(${name}) weld into the same propellor`, () => {
       const P = seed(name);
       const [V, E, F] = [P.vertices.length, counts(P.dcel).E, P.faces.length];
       const w = sig(whirlPlan(name).commit(1, true).mesh);
@@ -284,9 +284,9 @@ describe("propeller (the weld both twists run into)", () => {
     });
   }
 
-  // `p` is dual-invariant, so a propeller and the propeller of the dual solid are duals.
+  // `p` is dual-invariant, so a propellor and the propellor of the dual solid are duals.
   for (const [x, y] of [["cube", "octahedron"], ["dodecahedron", "icosahedron"]]) {
-    it(`propeller(${x}) is dual to propeller(${y})`, () => {
+    it(`propellor(${x}) is dual to propellor(${y})`, () => {
       const a = sig(whirlPlan(x).commit(1, true).mesh);
       const b = sig(whirlPlan(y).commit(1, true).mesh);
       expect([a.V, a.E, a.F]).toEqual([b.F, b.E, b.V]);
@@ -296,16 +296,16 @@ describe("propeller (the weld both twists run into)", () => {
   }
 });
 
-// The propeller isn't just the same shape from either twist — it is the same *coloring*.
-// A propeller is self-dual, so its color rules must be symmetric under face↔vertex, keyed
+// The propellor isn't just the same shape from either twist — it is the same *coloring*.
+// A propellor is self-dual, so its color rules must be symmetric under face↔vertex, keyed
 // to the root solid X: the whirl reaches it off X's join (the dual side), the volute off
 // X's rectification (the primal side), and the two used to disagree (each colored a new
-// face the way the other colored a new vertex). `recolorPropeller` fixes both to the same
+// face the way the other colored a new vertex). `recolorPropellor` fixes both to the same
 // X-keyed result. These helpers preserve colors through the chain (the earlier `*Plan`
 // helpers reseed, since they only check topology), and the fingerprint is order-independent
 // — the multiset of (element degree → swatch + provenance triple) — so it catches a
 // per-element color difference without depending on how either twist orders its output.
-describe("whirl and volute weld into an identically-colored propeller", () => {
+describe("whirl and volute weld into an identically-colored propellor", () => {
   const swatchKey = (c: readonly number[]) =>
     `${paletteSwatch(c)}[${collapse(c).map((x) => x.toFixed(3)).join(",")}]`;
   const fingerprint = (mesh: { vertices: Vector3[]; faces: number[][] }, colors: ColorSet) => {
@@ -399,7 +399,7 @@ describe("whirl faces stay ~planar through the drag", () => {
       const V = seed(s).vertices.length;
       const J = new Polyhedron(buildKis(seed(s), 0, null).commit(1, true).mesh);
       const plan = buildWhirl(J, V, J.vertices[V].clone());
-      const faces = plan.previewFaces; // the whirl's own; t=1 welds them into the propeller
+      const faces = plan.previewFaces; // the whirl's own; t=1 welds them into the propellor
       let worst = 0;
       for (let t = 0.05; t < 1; t += 0.05) {
         const P = plan.positions(t);

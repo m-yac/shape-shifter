@@ -136,48 +136,49 @@ interface Walk {
  *     middle arrow onward (to its rectification, the Deltoidal Icositetrahedron),
  *     reveals nothing: the ">…" hop that middle arrow continues (Cuboctahedron ->
  *     Subdivided Octahedron) was never traversed.
- *   - from a node the chain has reached, a solid arrow whose head style is strictly
- *     later than the one arrived by reveals its target and continues the chain. A
- *     start (>…) leads into a middle (…) into an end (…>): truncate, rectify, snub.
- *     With only the Tetrahedron made you therefore see its truncation and kis, their
- *     rectification and join (Octahedron, Cube), and one hop further, the snub and
- *     gyro (Icosahedron, Dodecahedron).
- *   - dashed arrows (:>…, the chamfer/subdivide branches) are followed only from a
- *     discovered solid and are leaves: they reveal their target but never chain on.
+ *   - from a node the chain has reached, an arrow whose head style is strictly later
+ *     than the one arrived by reveals its target and continues the chain. A start (>…)
+ *     leads into a middle (…) into an end (…>).
+ *   - there are two parallel tracks that never cross: the solid arrows (truncate,
+ *     rectify, snub) and the dashed arrows (:>…, chamfer/subdivide → whirl/volute →
+ *     propeller). A solid arrow never continues a dashed chain, nor a dashed arrow a
+ *     solid one — the arrow that opens a chain (from a root's start head) fixes its
+ *     track. With only the Tetrahedron made you therefore see, on the solid track, its
+ *     truncation and kis, their rectification and join (Octahedron, Cube), and one hop
+ *     further the snub and gyro (Icosahedron, Dodecahedron); and on the dashed track its
+ *     chamfer and subdivide, their whirl and volute, and one hop further the propeller.
  */
 function walk(graph: DiagramGraph, discovered: Set<number>): Walk {
   const visible = new Set<number>(discovered);
   const edges = new Set<number>();
-  // BFS over (node, phase) states; `phase` is the rank of the head arrived by, or -1
-  // for a discovered root, which may only open a chain at a start head.
+  // BFS over (node, phase, dashed) states; `phase` is the rank of the head arrived by,
+  // or -1 for a discovered root, which may only open a chain at a start head. `dashed`
+  // records which track the chain is on, so it can only ever continue along its own.
   const seen = new Set<string>();
-  const queue: { node: number; phase: number }[] = [];
+  const queue: { node: number; phase: number; dashed: boolean }[] = [];
   for (const d of discovered) {
-    queue.push({ node: d, phase: -1 });
+    queue.push({ node: d, phase: -1, dashed: false });
     seen.add(`${d}:-1`);
   }
   while (queue.length) {
-    const { node, phase } = queue.shift()!;
+    const { node, phase, dashed } = queue.shift()!;
     for (const ei of graph.outgoing[node]) {
       const e = graph.edges[ei];
-      if (e.dashed) {
-        // A chamfer/subdivide leaf: only from a discovered root, never chained.
-        if (phase === -1) {
-          visible.add(e.to);
-          edges.add(ei);
-        }
-        continue;
-      }
       const rank = HEAD_RANK[e.head];
-      // A root opens a chain only at its head (a start arrow); once inside a
-      // chain, each hop must be a strictly later stage of it.
-      if (phase === -1 ? rank !== HEAD_RANK.start : rank <= phase) continue;
+      if (phase === -1) {
+        // A root opens a chain only at a start head (>…); the arrow's own dashedness
+        // then picks the track — solid or dashed — the chain runs on.
+        if (rank !== HEAD_RANK.start) continue;
+      } else {
+        // Inside a chain, stay on its track and advance to a strictly later stage.
+        if (e.dashed !== dashed || rank <= phase) continue;
+      }
       visible.add(e.to);
       edges.add(ei);
-      const key = `${e.to}:${rank}`;
+      const key = `${e.to}:${rank}:${e.dashed ? "d" : "s"}`;
       if (!seen.has(key)) {
         seen.add(key);
-        queue.push({ node: e.to, phase: rank });
+        queue.push({ node: e.to, phase: rank, dashed: e.dashed });
       }
     }
   }

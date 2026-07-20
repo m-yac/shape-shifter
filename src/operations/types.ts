@@ -43,7 +43,7 @@ export interface TwistArc {
  * / whirl): t is the normalized position along the twist arc (0 = the plain rectify/join,
  * 1 = the full twist at the arc's end), and the chosen chirality is reported by
  * `chirality()`. Whirl and volute weld at that end — the restored elements meet the twist's
- * own and merge into the propeller — so for those two, and only those two, t = 1 is a weld
+ * own and merge into the propellor — so for those two, and only those two, t = 1 is a weld
  * like a base op's, and `commit`'s `weld` flag means it.
  */
 export interface MorphPlan {

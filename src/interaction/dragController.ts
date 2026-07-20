@@ -938,7 +938,11 @@ export class DragController {
     this.updateArc(d);
 
     const active = this.activeSlot(d);
-    this.readout.setDrag({ kind: active.plan.kind, weld: d.weld, t: d.t, selIds: d.sel, selKind: d.kind });
+    this.readout.setDrag({
+      kind: active.plan.kind, weld: d.weld, t: d.t,
+      selIds: d.sel, selKind: d.kind,
+      chirality: active.plan.chirality?.()
+    });
   }
 
   /**
@@ -946,7 +950,7 @@ export class DragController {
    *
    * Two of the four twists weld at their far end: a whirl's apex cuts run out onto the gyro
    * vertices they were heading for, and a volute's fans rise flush with the gap triangles
-   * beside them, and either weld gives the propeller. So `t = 1` there means what it means
+   * beside them, and either weld gives the propellor. So `t = 1` there means what it means
    * on a base drag — the welded max — and, like the rectify / join, it can be switched off,
    * in which case the drag stops just short rather than reaching coincident vertices. A
    * snub / gyro welds nothing at its end, so its `allowMax` is simply always on.
@@ -1057,7 +1061,11 @@ export class DragController {
       }
     }
     const active = this.activeSlot(d);
-    this.readout.setDrag({ kind: active.plan.kind, weld: d.weld, t: d.t, selIds: d.sel, selKind: d.kind });
+    this.readout.setDrag({
+      kind: active.plan.kind, weld: d.weld, t: d.t,
+      selIds: d.sel, selKind: d.kind,
+      chirality: active.plan.chirality?.()
+    });
   }
 
   /**
@@ -1213,6 +1221,7 @@ export class DragController {
     this.readout.setDrag({
       kind: plan.kind, weld: false, t: 0,
       selIds: this.drag.sel, selKind: this.drag.kind,
+      chirality: plan.chirality?.()
     });
     // The drag marker is positioned on the first move (when we have a snap point).
   }
@@ -1241,8 +1250,8 @@ export class DragController {
    * chamfer) by the gyro — or, off a chamfer, the whirl, the gyro with the join apexes
    * truncated back into the faces they were collapsed from. Those two restore what the
    * weld collapsed, so they have somewhere to arrive: both weld again at the far end of
-   * the twist, and both weld into the propeller, so an edge drag can run all the way from
-   * one solid to its propeller in a single gesture, along either branch.
+   * the twist, and both weld into the propellor, so an edge drag can run all the way from
+   * one solid to its propellor in a single gesture, along either branch.
    *
    * `weldPoint` is the base drag's current max target — the rectify vertex or join apex —
    * which is both where the twist's handle sits and where the drag left the cursor.
@@ -1254,9 +1263,9 @@ export class DragController {
       const R = new Polyhedron(mesh, colors);
       const kind = d.base.plan.kind;
       // A snub / gyro just ends at its full twist, so its far end is always reachable. A
-      // whirl / volute welds there instead, into the propeller, so that end is a weld the
-      // `propeller` feature can withhold — the drag then stops just short of it.
-      const twistMax = config.features.operations.propeller;
+      // whirl / volute welds there instead, into the propellor, so that end is a weld the
+      // `propellor` feature can withhold — the drag then stops just short of it.
+      const twistMax = config.features.operations.propellor;
 
       if (kind === "truncate" || kind === "subdivide") {
         // The rectify vertex nearest where the drag ended is the dragged corner: the
@@ -1427,7 +1436,9 @@ export class DragController {
       { faceColors: slot.plan.previewFaceColors(0), edgeColors: slot.plan.previewEdgeColors },
     );
     this.readout.setDrag({
-      kind: slot.plan.kind, weld: false, t: 0, selIds: null, selKind: "edge",
+      kind: slot.plan.kind, weld: false, t: 0,
+      selIds: null, selKind: "edge",
+      chirality: slot.plan.chirality?.()
     });
   }
 

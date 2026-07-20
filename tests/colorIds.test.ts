@@ -172,7 +172,7 @@ describe("single operation: unique input IDs → unique output IDs", () => {
 // twists with the weld's collapsed elements restored (the rectify's vertex figures
 // kissed back into vertices; the join's apexes truncated back into faces), so they take
 // the same input, plus where that weld's own elements start. Those two twists weld at
-// their far end, both into the propeller, so each is checked twice: part-way along
+// their far end, both into the propellor, so each is checked twice: part-way along
 // (the whirl / volute itself) and at the weld.
 // ---------------------------------------------------------------------------
 describe("snub / gyro / volute / whirl: unique input IDs → unique output IDs", () => {
@@ -202,7 +202,7 @@ describe("snub / gyro / volute / whirl: unique input IDs → unique output IDs",
       expect(collisions, `gyro collisions: ${collisions.join(", ")}`).toEqual([]);
     });
 
-    for (const [stage, t, weld] of [["volute", 0.5, false], ["propeller (via volute)", 1, true]] as const) {
+    for (const [stage, t, weld] of [["volute", 0.5, false], ["propellor (via volute)", 1, true]] as const) {
       it(`${stage} on rectify(${name})`, () => {
         const mesh = rectifiedMesh(name);
         const collisions = structuralCollisions((s) => {
@@ -213,7 +213,7 @@ describe("snub / gyro / volute / whirl: unique input IDs → unique output IDs",
       });
     }
 
-    for (const [stage, t, weld] of [["whirl", 0.5, false], ["propeller (via whirl)", 1, true]] as const) {
+    for (const [stage, t, weld] of [["whirl", 0.5, false], ["propellor (via whirl)", 1, true]] as const) {
       it(`${stage} on join(${name})`, () => {
         const mesh = joinedMesh(name);
         const apexStart = seedPoly.vertices.length;
@@ -259,14 +259,14 @@ describe("operation chains from a uniquely-identified seed", () => {
       run: (p: Polyhedron, prev: Polyhedron) =>
         buildWhirl(p, prev.vertices.length, p.vertices[prev.vertices.length].clone()).commit(0.5, false),
     },
-    // The welded end of each of those two twists: the same propeller, reached from the
+    // The welded end of each of those two twists: the same propellor, reached from the
     // rectification on one side and the join on the other.
-    "propeller(volute)": {
-      label: "propeller(volute)",
+    "propellor(volute)": {
+      label: "propellor(volute)",
       run: (p: Polyhedron, prev: Polyhedron) => buildVolute(p, 0, prev.faces.length).commit(1, true),
     },
-    "propeller(whirl)": {
-      label: "propeller(whirl)",
+    "propellor(whirl)": {
+      label: "propellor(whirl)",
       run: (p: Polyhedron, prev: Polyhedron) =>
         buildWhirl(p, prev.vertices.length, p.vertices[prev.vertices.length].clone()).commit(1, true),
     },
@@ -277,8 +277,8 @@ describe("operation chains from a uniquely-identified seed", () => {
     [S.join, S.gyro], // → dodecahedron
     [S.rectify, S.volute],
     [S.join, S.whirl],
-    [S.rectify, S["propeller(volute)"]],
-    [S.join, S["propeller(whirl)"]],
+    [S.rectify, S["propellor(volute)"]],
+    [S.join, S["propellor(whirl)"]],
     [S.truncate, S.subdivide],
     [S.subdivide, S.subdivide],
     [S.chamfer, S.chamfer],
@@ -288,7 +288,7 @@ describe("operation chains from a uniquely-identified seed", () => {
     [S.subdivide, S.chamfer],
     [S.rectify, S.snub, S.truncate],
     [S.join, S.whirl, S.truncate],
-    [S.join, S["propeller(whirl)"], S.truncate],
+    [S.join, S["propellor(whirl)"], S.truncate],
   ];
 
   const MAX_ELEMENTS = 4000; // stop a chain before it explodes

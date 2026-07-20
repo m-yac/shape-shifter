@@ -10,7 +10,7 @@ import { type Polyhedron, faceNormalHE, faceCentroidHE } from "../geometry/polyh
 import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 import { type MorphPlan, type TwistArc } from "./types";
 import { type InViewTest } from "./truncate";
-import { combine, dualRule, lerpFaceColors, recolorPropeller, stagedFaceColors } from "./colorUtil";
+import { combine, dualRule, lerpFaceColors, recolorPropellor, stagedFaceColors } from "./colorUtil";
 import { config } from "../config";
 
 const BLACK: GeomColor = [0, 0, 0];
@@ -109,16 +109,16 @@ interface WhirlData {
   faceColor: GeomColor[];
   faceStart: GeomColor[];
   /** Index in `faces` where the apex rings begin: everything before is a welded gyro face
-   *  (a propeller blade at the weld); each ring is one of X's own faces, kept. */
+   *  (a propellor blade at the weld); each ring is one of X's own faces, kept. */
   keptFaceStart: number;
   vertexColor: GeomColor[];
   edgeColor: Map<string, GeomColor>;
-  /** The spoke remnants (cut → its q), which run out to zero length at the propeller. */
+  /** The spoke remnants (cut → its q), which run out to zero length at the propellor. */
   spokes: Array<[number, number]>;
   /** Vertex count after that weld: the cuts are the tail of the index space, and each
    *  merges into its q, so the survivors are exactly the leading `weldCount`. */
   weldCount: number;
-  /** whirl vertex index → propeller index (a cut maps onto the q it welds into). */
+  /** whirl vertex index → propellor index (a cut maps onto the q it welds into). */
   weldMap: number[];
 }
 
@@ -140,8 +140,8 @@ interface WhirlData {
  * chamfer — the join's rhombi each have two apex corners, so they open into hexagons —
  * which is why the whirl extends a chamfer drag exactly as the gyro extends a kis drag.
  * Unlike the plain gyro, that twist ends in a weld: at t=1 each cut has slid the whole way
- * onto the gyro vertex it was heading for, and welding the two gives the propeller (see
- * `propellerFrom`), which is also where a volute's twist ends.
+ * onto the gyro vertex it was heading for, and welding the two gives the propellor (see
+ * `propellorFrom`), which is also where a volute's twist ends.
  */
 export function buildGyro(
   poly: Polyhedron,
@@ -490,7 +490,7 @@ export function buildGyro(
    * across 2E pentagons).
    *
    * Each cut rides out along its spoke, reaching the q itself at the full twist, where it
-   * welds into it: that weld is the propeller (see `propellerFrom`). Cutting along the
+   * welds into it: that weld is the propellor (see `propellorFrom`). Cutting along the
    * spoke (rather than straight back down the join edge toward the original vertex, where
    * the chamfer's inset seam would have sat) is what keeps the hexagons flat: the two cuts
    * replacing a pentagon's apex corner land on that pentagon's own two edges, so the
@@ -608,7 +608,7 @@ export function buildGyro(
       faceStart.push(c); // it grows out of the apex, so it never changes color
     }
 
-    // The propeller weld: every cut runs out into its q. The cuts were indexed last, so
+    // The propellor weld: every cut runs out into its q. The cuts were indexed last, so
     // the survivors are the leading block and the map only has to redirect the tail.
     const weldCount = n - cuts.length;
     const weldMap: number[] = new Array(n);
@@ -626,7 +626,7 @@ export function buildGyro(
   }
 
   /**
-   * Propeller: the whirl at its limit, where every cut has ridden the whole way out along
+   * Propellor: the whirl at its limit, where every cut has ridden the whole way out along
    * its spoke and coincides with the q there.
    *
    * Welding the two together costs each hexagon its two cut corners — the apex corner the
@@ -636,13 +636,13 @@ export function buildGyro(
    *
    * The topology comes straight from the weld (a cut merging into its q leaves the q; the
    * hexagons lose their two cut corners to become quads; the n-gons stay). Coloring is then
-   * handed to `recolorPropeller`, so a propeller reached this way (off X's join) comes out
+   * handed to `recolorPropellor`, so a propellor reached this way (off X's join) comes out
    * identical to one reached as a volute (off X's rectification): X's own faces are the
    * apex rings (indices ≥ `keptFaceStart`), X's own vertices are the join's original
    * vertices (the leading `apexStart` indices, unmoved by the whirl), and every new element
    * is recolored from those.
    */
-  function propellerFrom(w: WhirlData): {
+  function propellorFrom(w: WhirlData): {
     faces: number[][];
     faceColor: GeomColor[];
     vertexColor: GeomColor[];
@@ -672,7 +672,7 @@ export function buildGyro(
     // leaves in place (only the apexes were cut, and they sit after them).
     const keptVertIds = new Set<number>();
     for (let i = 0; apexStart !== null && i < apexStart; i++) keptVertIds.add(i);
-    const recolored = recolorPropeller(
+    const recolored = recolorPropellor(
       faces,
       { vertex: w.vertexColor.slice(0, w.weldCount), face: w.faceColor.slice(), edge: edgeColor },
       keptFaceIds,
@@ -681,11 +681,11 @@ export function buildGyro(
     return { faces, faceColor: recolored.face, vertexColor: recolored.vertex, edgeColor: recolored.edge };
   }
 
-  // The whirl overlay of each chirality (null for a plain gyro), and the propeller each
+  // The whirl overlay of each chirality (null for a plain gyro), and the propellor each
   // welds into — precomputed so the live preview's t=1 end and the committed weld read from
   // the one recolored source (its faces align 1:1 with the whirl's, by index).
   const whirls = apexStart === null ? null : variants.map(buildWhirlData);
-  const propellers = whirls ? whirls.map(propellerFrom) : null;
+  const propellors = whirls ? whirls.map(propellorFrom) : null;
 
   // ---- Handle: a rotation arc about the join apex the drag ended on.
   //
@@ -778,7 +778,7 @@ export function buildGyro(
   /** Whirl: the gyro's positions with each apex cut away, replaced by the ring of cuts
    *  riding out along its spokes (the apex itself never moves), so the face it was
    *  collapsed from re-opens in step with the twist. The cut rides the same `t` as the
-   *  twist, so it arrives on its q exactly as the gyro finishes: the propeller weld. */
+   *  twist, so it arrives on its q exactly as the gyro finishes: the propellor weld. */
   function positions(t: number): Vector3[] {
     const g = gyroPositions(t);
     const w = whirls?.[variantIndex()];
@@ -799,10 +799,10 @@ export function buildGyro(
     }
     // A whirl runs between two welds, so it reads like a base drag: the join at t=0, the
     // whirl's own colors at t=0.5 (the shape an intermediate release commits), and the
-    // propeller at t=1. Losing its two cut corners keeps a hexagon the same face, but the
-    // weld recolors it (recolorPropeller), so the second half fades into the propeller's
+    // propellor at t=1. Losing its two cut corners keeps a hexagon the same face, but the
+    // weld recolors it (recolorPropellor), so the second half fades into the propellor's
     // colors — the same ones commit lands on.
-    return stagedFaceColors(w.faceStart, w.faceColor, propellers![variantIndex()].faceColor, t, weld);
+    return stagedFaceColors(w.faceStart, w.faceColor, propellors![variantIndex()].faceColor, t, weld);
   }
 
   // Where the arc's swept tip sits at signed twist `sg·t` (t=0 at the midpoint).
@@ -849,9 +849,9 @@ export function buildGyro(
     if (w) {
       // The whirl is already built on the welded gyro faces, so a plain commit takes its
       // topology as it stands. At the twist's own weld the cuts have reached their q's, so
-      // there is one weld left to do: the propeller.
+      // there is one weld left to do: the propellor.
       if (weld) {
-        const p = propellers![variantIndex()];
+        const p = propellors![variantIndex()];
         return {
           mesh: { vertices: positions(1).slice(0, w.weldCount), faces: p.faces.map((f) => f.slice()) },
           colors: {
@@ -885,7 +885,7 @@ export function buildGyro(
     },
     // The gyro previews each join quad as two halves, whose shared join edge is dissolved
     // from the start: never a real edge, so hidden throughout. The whirl's spokes are real
-    // edges the whole way and only vanish at the propeller weld.
+    // edges the whole way and only vanish at the propellor weld.
     get hiddenEdges() { return whirls ? [] : dissolveList; },
     get vanishingEdges() { return whirls?.[variantIndex()].spokes ?? []; },
     positions,
