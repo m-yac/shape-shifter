@@ -3,6 +3,7 @@ import { type MarkerKind } from "../render/sceneView";
 import { type OperationKind } from "./types";
 import { type HistoryEntry } from "../history/history";
 import { vertexConfig, faceConfig, formatConfig } from "../identify/configurations";
+import { isAutoName, isAchiralName } from "../data/namedPolyhedra";
 import { config } from "../config";
 
 /**
@@ -172,14 +173,24 @@ function qualifyLabel(verb: string, sel: SelDesc, kind: MarkerKind): string {
   return `${verb} ${sel.groups.map((g) => longGroup(g, kind)).join(", ")}`;
 }
 
-/** Append the chirality suffix (snub / gyro) when present. */
+/** Prepend the chirality prefix (snub / gyro) when present: "Snub" → "L-Snub". */
 function withChirality(s: string, chirality: "R" | "L" | undefined): string {
-  return chirality ? `${s} (${chirality})` : s;
+  return chirality ? `${chirality}-${s}` : s;
+}
+
+/** Decorate an identified name with the handedness of the chiral drag that produced it, so
+ *  the two enantiomorphs read apart ("R-Snub Cube"). A chiral op stamps every result by
+ *  default; the two achiral exceptions (icosahedron, dodecahedron) are left bare. Applied
+ *  after the special name is substituted, so it stacks onto that name rather than a modifier,
+ *  and equally onto a chiral *ancestor* used as a derived name's base — carrying the prefix
+ *  forward ("Truncated R-Snub Cube"). A no-op when `op` isn't a chiral drag. */
+function withResultChirality(name: string, op: OpDescriptor | null): string {
+  return isAchiralName(name) ? name : withChirality(name, op?.chirality);
 }
 
 /**
  * The action label for a committed operation, shown in the HISTORY rows
- * (e.g. "Rectify", "2,3-Truncate", "Kis 1× degree-3 vertex (R)").
+ * (e.g. "Rectify", "2,3-Truncate", "R-Snub", "Kis 1× degree-3 vertex").
  */
 export function operationLabel(op: OpDescriptor): string {
   const [labelVerb] = verbs(op.kind, op.weld);
@@ -187,7 +198,7 @@ export function operationLabel(op: OpDescriptor): string {
 }
 
 /** The modifier prepended to an ancestor's name to derive this entry's name
- *  (e.g. "Truncated", "2,3-Truncated", "Truncated (2×(3.6²))", "Snub (R)"). */
+ *  (e.g. "Truncated", "2,3-Truncated", "Truncated (2×(3.6²))", "R-Snub"). */
 function operationModifier(op: OpDescriptor): string {
   return withChirality(qualifyName(verbs(op.kind, op.weld)[1], op.sel), op.chirality);
 }
@@ -208,10 +219,12 @@ function collapseRuns(mods: string[]): string[] {
 
 /**
  * The display name for history entry `index`: its identified name when known,
- * otherwise the operation modifiers from here back to the nearest known-named
- * ancestor, prepended to that ancestor's name (so modifiers stack across
- * unidentified steps, with consecutive repeats collapsed to "Nx"). Returns null
- * for an invalid (non-planarizable) entry.
+ * otherwise the operation modifiers from here back to the nearest *specially*-named
+ * ancestor, prepended to that ancestor's name (so modifiers stack across unidentified
+ * steps, with consecutive repeats collapsed to "Nx"). An ancestor with an auto-generated
+ * name ("Truncated Cube") is transparent: its own modifier joins the stack rather than
+ * ending the walk, so truncating it again reads "2x Truncated Cube", not
+ * "Truncated Truncated Cube". Returns null for an invalid (non-planarizable) entry.
  */
 export function composeName(
   entries: readonly HistoryEntry[],
@@ -219,19 +232,27 @@ export function composeName(
 ): string | null {
   const e = entries[index];
   if (!e) return null;
-  if (e.name) return e.name; // a known, identified shape
+  // A known, identified shape uses its database name directly, decorated with the drag's
+  // handedness when a chiral op produced it (added *after* the special name is substituted).
+  // A library or reveal-all open carries no `op`, so those stay unprefixed.
+  if (e.name) return withResultChirality(e.name, e.op);
   if (e.invalid || !e.op) return null;
 
-  // Walk back collecting this entry's modifier and those of any unidentified
-  // ancestors, until a known-named ancestor (or the seed) supplies the base.
+  // Walk back collecting this entry's modifier and those of any unidentified (or
+  // auto-named) ancestors, until a specially-named ancestor (or the seed) supplies the
+  // base. An auto-named ancestor is treated like an unidentified one: its own modifier
+  // joins the stack so repeats collapse ("2x Truncated Cube") instead of nesting.
   const mods: string[] = [];
   let base: string | null = null;
   for (let j = index; j >= 0; j--) {
     const a = entries[j];
     if (j < index) {
       if (a.invalid) continue; // ignore non-planarizable intermediate states
-      if (a.name) { base = a.name; break; } // nearest known-named ancestor
-      if (!a.op) break; // seed without a name (shouldn't happen) — give up
+      // Nearest special name — the derived name's base. A chiral special ancestor (e.g. the
+      // pentagonal icositetrahedron) carries its handedness onto the base, so the prefix
+      // stacks forward: "Truncated R-Pentagonal icositetrahedron".
+      if (a.name && !isAutoName(a.name)) { base = withResultChirality(a.name, a.op); break; }
+      if (!a.name && !a.op) break; // seed without a name (shouldn't happen) — give up
     }
     if (a.op) mods.push(operationModifier(a.op));
   }

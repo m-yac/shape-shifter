@@ -33,7 +33,12 @@ import { config } from "../config";
 import { Screen, Popup, centered } from "./screen";
 import { makeActionButton } from "./controls";
 import { libraryShapeFor } from "../data/libraryShapes";
-import { computeSignature, describeSignature } from "../identify/configurations";
+import {
+  type Signature,
+  computeSignature,
+  describeSignature,
+  summarizeSignature,
+} from "../identify/configurations";
 import { clearAllProgress } from "../history/historyStore";
 import { faceColorsRGB, darkRGB, getColorScheme, setColorScheme } from "../geometry/colors";
 import { EdgeTubes, type EdgeTubeSpec } from "../render/edgeTubes";
@@ -49,13 +54,21 @@ import {
   type DiagramGraph,
 } from "../data/libraryDiagram";
 
+// Longest line the SHAPE dialog's abbreviated summary may occupy before it's
+// broken onto another line (matches the main readout).
+const SUMMARY_MAX_CHARS = config.ui.readoutSummaryMaxChars;
+
+// Hanging-indent (in whole cells) for the wrapped signature under the name, so a
+// wrapped line sits indented from the flush-left name — like the main readout.
+const READOUT_INDENT_COLS = config.ui.readoutIndentCols;
+
 /** The render side of a diagram node: its world position, group, and the materials
  *  re-tinted as its discovered / ghost / hidden state changes. `faceMat` /
  *  `edgeMat` are null for a node whose solid couldn't be built. */
 interface RenderNode {
   pos: Vector3; // world position (the diagram coordinate)
   name: string; // the diagram name (for the hover SHAPE dialog + click-to-open)
-  sigText: string | null; // describeSignature(...) for the SHAPE dialog (null if unbuilt)
+  sig: Signature | null; // configuration signature for the SHAPE dialog (null if unbuilt)
   discoverable: boolean; // true once the user has actually made this shape
   group: Group;
   faceMat: MeshStandardMaterial | null;
@@ -107,6 +120,11 @@ export class LibraryBrowser {
   // / click can tell which solids are interactable.
   private discoveredNow = new Set<number>();
   private hoveredNode: number | null = null;
+  // Whether the SHAPE dialog shows the full signature rather than the abbreviated
+  // element counts; toggled by the [show more] / [show less] button, reset each
+  // time a different solid is hovered.
+  private shapeExpanded = false;
+  private shapeToggle: HTMLElement | null = null;
   // Click-vs-pan bookkeeping: the press position + the interactable node under it,
   // so a release that didn't move far opens that shape (a drag pans instead).
   private downX = 0;
@@ -150,6 +168,12 @@ export class LibraryBrowser {
     this.shapePopup.el.classList.add("library-panel");
     this.shapeBody = document.createElement("div");
     this.shapeBody.className = "popup-resize";
+    // Hanging indent: the name sits flush left, the signature under it wraps
+    // indented (see setupWrap in ui/readout.ts).
+    const indent = screen.colW * READOUT_INDENT_COLS;
+    this.shapeBody.style.whiteSpace = "pre-wrap";
+    this.shapeBody.style.paddingLeft = `${indent}px`;
+    this.shapeBody.style.textIndent = `${-indent}px`;
     this.shapePopup.body.appendChild(this.shapeBody);
     this.shapePopup.el.style.display = "none";
 
@@ -252,7 +276,7 @@ export class LibraryBrowser {
         name: info.name,
         // The SHAPE dialog mirrors the main readout's signature line, computed once
         // from the solid's own (database) connectivity.
-        sigText: entry ? describeSignature(computeSignature(entry.poly.dcel)) : null,
+        sig: entry ? computeSignature(entry.poly.dcel) : null,
         discoverable: entry !== null,
         group,
         faceMat: null,
@@ -528,26 +552,50 @@ export class LibraryBrowser {
       this.shapePopup.el.style.display = "none";
       this.refresh(); // restore normal opacities
     } else {
+      this.shapeExpanded = false; // a newly-hovered solid starts collapsed
       this.showShapeDialog(i);
       this.refresh(); // reset to normal, then dim every other solid
       this.dimOthers(i);
     }
   }
 
+  /** The [show more] / [show less] button that expands the SHAPE dialog's signature
+   *  in place. Built once and reused, so a re-render doesn't drop a pending click. */
+  private toggleEl(): HTMLElement {
+    if (!this.shapeToggle) {
+      this.shapeToggle = document.createElement("span");
+      this.shapeToggle.className = "readout-toggle";
+      this.shapeToggle.addEventListener("click", () => {
+        this.shapeExpanded = !this.shapeExpanded;
+        if (this.hoveredNode !== null) this.showShapeDialog(this.hoveredNode);
+      });
+    }
+    this.shapeToggle.textContent = this.shapeExpanded ? "[show less]" : "[show more]";
+    return this.shapeToggle;
+  }
+
   /** Fill + place the bottom-left SHAPE dialog with a solid's name + signature. */
   private showShapeDialog(i: number): void {
     const node = this.nodes[i];
-    this.shapeBody.textContent = node.sigText ? `${node.name}\n${node.sigText}` : node.name;
-    // Hug the content (like the main readout), then pin one cell in from the
-    // bottom-left corner of the frame.
     const s = this.screen;
-    const lines = this.shapeBody.textContent.split("\n");
-    const inner = Math.max(...lines.map((l) => l.length));
-    const cols = Math.min(s.cols - 2, Math.max(3, inner + 2));
-    const rows = Math.min(s.rows - 2, Math.max(3, lines.length + 2));
+    if (node.sig) {
+      const [body] = this.shapeExpanded
+        ? [describeSignature(node.sig)]
+        : summarizeSignature(node.sig, SUMMARY_MAX_CHARS);
+      this.shapeBody.replaceChildren(`${node.name}\n${body}\n`, this.toggleEl());
+    } else {
+      this.shapeBody.textContent = node.name;
+    }
+    // Hug the rendered content (like the main readout's fit), then pin one cell in
+    // from the bottom-left corner of the frame. Measure rather than count characters
+    // so the hanging indent + any wrapping is reflected in the size. The +indent cap
+    // leaves room for the hanging-indent padding so the box can still reach the frame.
+    this.shapeBody.style.maxWidth = `${(s.cols - 2 - READOUT_INDENT_COLS) * s.colW}px`;
+    this.shapePopup.el.style.display = ""; // make it measurable before sizing
+    const cols = Math.min(s.cols - 2, Math.max(3, Math.ceil(this.shapeBody.offsetWidth / s.colW) + 2));
+    const rows = Math.min(s.rows - 2, Math.max(3, Math.ceil(this.shapeBody.offsetHeight / s.rowH) + 2));
     this.shapePopup.resize(cols, rows);
     this.shapePopup.placeAt(1, s.rows - rows - 1);
-    this.shapePopup.el.style.display = "";
   }
 
   /** Drop every other visible solid to 15% opacity so the hovered one stands out. */

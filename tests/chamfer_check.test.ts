@@ -22,7 +22,7 @@ describe("named database integrity", () => {
       "Chamfered icosahedron", "Subdivided cube", "Subdivided octahedron",
       "Subdivided dodecahedron", "Subdivided icosahedron",
     ]) {
-      const e = NAMED.find((n) => n.name === name)!;
+      const e = NAMED.find((n) => n.name.toLowerCase() === name.toLowerCase())!;
       const s = computeSignature(e.poly.dcel);
       console.log(`${name}: V=${s.V} E=${s.E} F=${s.F}  faces=${JSON.stringify(s.faceConfigs)}`);
     }

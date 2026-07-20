@@ -12,9 +12,13 @@ import { edgeKey } from "../src/geometry/colors";
 const cube = () => new Polyhedron(getSeed("cube"));
 const octahedron = () => new Polyhedron(getSeed("octahedron"));
 
+/** A named-database entry by name, case-insensitively (auto-generated names are
+ *  Title Case, e.g. "Chamfered Cube"). */
+const byName = (name: string) =>
+  NAMED.find((n) => n.name.toLowerCase() === name.toLowerCase())!;
+
 /** The signature of a named-database entry, by name. */
-const namedSig = (name: string): Signature =>
-  computeSignature(NAMED.find((n) => n.name === name)!.poly.dcel);
+const namedSig = (name: string): Signature => computeSignature(byName(name).poly.dcel);
 
 /** A representative undirected edge + one bordering face of a polyhedron. */
 const anyEdge = (p: Polyhedron): { edge: [number, number]; face: number } => {
@@ -63,7 +67,7 @@ describe("chamfer stays planar on solids with mixed face sizes", () => {
 
   for (const name of cases) {
     it(`${name}: hexagons stay planar and original vertices hold still`, () => {
-      const poly = NAMED.find((n) => n.name === name)!.poly;
+      const poly = byName(name).poly;
       const { edge, face } = anyEdge(poly);
       const plan = buildChamfer(poly, edge, face);
       const V = poly.dcel.vertices.length;
@@ -123,7 +127,7 @@ describe("subdivide stays planar and convex", () => {
 
   for (const name of cases) {
     it(`${name}: no concave faces, and edge vertices sweep outward`, () => {
-      const poly = NAMED.find((n) => n.name === name)!.poly;
+      const poly = byName(name).poly;
       const { edge } = anyEdge(poly);
       const plan = buildSubdivide(poly, edge);
       const E = plan.positions(0).length - poly.dcel.vertices.length;
@@ -218,7 +222,7 @@ describe("subdivide's drag can always reach the weld", () => {
   });
 
   it("snap tracks the dragged vertex mid-drag", () => {
-    const poly = NAMED.find((n) => n.name === "Triakis icosahedron")!.poly;
+    const poly = byName("Triakis icosahedron").poly;
     const plan = buildSubdivide(poly, anyEdge(poly).edge);
     const perp = new Vector3(1, 0, 0).cross(plan.positions(0)[0]).normalize();
     for (const t0 of [0.25, 0.5, 0.75]) {

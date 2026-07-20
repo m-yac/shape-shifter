@@ -202,6 +202,17 @@ canvas {
   white-space: pre;
   width: max-content; /* shrink to the widest line so the frame can hug it */
 }
+
+/* The SHAPE box's [show more] / [show less] button (ui/readout.ts). */
+.readout-toggle {
+  cursor: pointer;
+  opacity: 0.6;
+}
+.readout-toggle:hover {
+  opacity: 1;
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
+}
 .popup-body::-webkit-scrollbar {
   width: 6px;
 }

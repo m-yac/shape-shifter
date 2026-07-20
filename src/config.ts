@@ -606,6 +606,11 @@ export const config = {
     // their label (ui/readout.ts). Whole cells, so the indent stays on the grid.
     readoutIndentCols: 2,
 
+    // Longest line (characters) of the SHAPE box's name and abbreviated summary
+    // before they break — the name at a space, the summary between its clauses
+    // (ui/readout.ts, identify/configurations.ts).
+    readoutSummaryMaxChars: 35,
+
     // Initial / max width (columns) of the HISTORY panel (ui/historyPanel.ts).
     historyCols: 28,
 
@@ -678,7 +683,7 @@ export const config = {
     //   subset → a per-figure "count×figure" breakdown, short and parenthesized for the
     //            name ("Truncated (1×4)", "Truncated (2×(3.6²))") and verbose for the
     //            label ("Truncate 1× degree-3 vertex", "Kis 1×(4.5³)").
-    // Snub and gyro additionally get a " (R)" or " (L)" chirality suffix.
+    // The chiral operations get an "L-" or "R-" chirality prefix ("L-Snub").
     operationLabels: {
       truncate: { unwelded: ["Truncate", "Truncated"], welded: ["Rectify", "Rectified"] },
       kis:      { unwelded: ["Kis", "Kis"], welded: ["Join", "Joined"] },
@@ -686,10 +691,8 @@ export const config = {
       gyro:     { unwelded: ["Gyro", "Gyro"], welded: ["Gyro", "Gyro"] },
       chamfer:  { unwelded: ["Chamfer", "Chamfered"], welded: ["Join", "Joined"] },
       subdivide: { unwelded: ["Subdivide", "Subdivided"], welded: ["Rectify", "Rectified"] },
-      // Whirl and volute share a welded end: both weld into the propeller, so either
-      // drag names the same shape (Propeller Cube) whichever way it was reached.
-      whirl:    { unwelded: ["Whirl", "Whirled"], welded: ["Propeller", "Propeller"] },
-      volute:   { unwelded: ["Volute", "Voluted"], welded: ["Propeller", "Propeller"] },
+      whirl:    { unwelded: ["Whirl", "Whirled"], welded: ["Propeller", "Propellerized"] },
+      volute:   { unwelded: ["Volute", "Voluted"], welded: ["Propeller", "Propellerized"] },
     },
   },
 
@@ -747,7 +750,7 @@ export const config = {
       [ -6,  0,  0, "Pentagonal Icositetrahedron", [] ],
       [ -4,  0,  0, "Rhombic Dodecahedron", [">f2r2d1", ">f2r2u1", ">b2r2", "l2>"] ],
       [  4,  0,  0, "Cuboctahedron", [">b2l2d1", ">b2l2u1", ">f2l2", "r2>"] ],
-      [  6,  0,  0, "Snub Cuboctahedron", [] ],
+      [  6,  0,  0, "Snub Cube", [] ],
       [ -2, -2,  0, "Tetrakis Hexahedron", ["u2l2"] ],
       [  2, -2,  0, "Truncated Cube", ["u2r2"] ],
       // Icosahedron / Dodecahedron family
@@ -756,7 +759,7 @@ export const config = {
       [-10,  0,  0, "Pentagonal Hexecontahedron", [] ],
       [ -8,  0,  0, "Rhombic Triacontahedron", [">f4r4d1", ">f4r4u1", ">b4r4", "l2>"] ],
       [  8,  0,  0, "Icosidodecahedron", [">b4l4d1", ">b4l4u1", ">f4l4", "r2>"] ],
-      [ 10,  0,  0, "Snub Icosidodecahedron", [] ],
+      [ 10,  0,  0, "Snub Dodecahedron", [] ],
       [ -4, -3,  0, "Pentakis Dodecahedron", ["u3l4"] ],
       [  4, -3,  0, "Truncated Dodecahedron", ["u3r4"] ],
       // Cuboctahedron / Rhombic Dodecahedron family

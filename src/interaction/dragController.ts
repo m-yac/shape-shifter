@@ -24,7 +24,7 @@ import { buildSubdivide } from "../operations/subdivide";
 import { faceCentroidHE, faceNormalHE } from "../geometry/polyhedron";
 import { type HalfEdge } from "../geometry/HalfEdge";
 import { closestLineParam, distancePointToRay } from "../util/lines";
-import { operationLabel, classifySelection, type OpDescriptor } from "../operations/naming";
+import { operationLabel, classifySelection, composeName, type OpDescriptor } from "../operations/naming";
 import { RelaxSolver, type Strategy } from "../solver/solver";
 import { extractTopology } from "../solver/topology";
 import { type Signature, describeSignature } from "../identify/configurations";
@@ -347,19 +347,24 @@ export class DragController {
       const np = namedPolyhedronFor(name);
       if (!steps || !np) return;
       const opts = { scheme: np.scheme, strategy: config.solver.defaultStrategy };
+      // Each synthesized entry carries the same op a live edit would (the database step
+      // records it), so its row label and derived name are built exactly as they were made:
+      // the label is already `operationLabel(op)` ("R-Snub"), and `composeName` layers the
+      // handedness onto the shape name ("R-Snub Cube").
       entries = steps.map((s): HistoryEntry => {
         const id = identify(s.poly);
         return {
           poly: s.poly.clone(),
           label: s.label,
           name: id.name,
-          displayName: id.name ?? s.label,
-          op: null,
+          displayName: null, // composed below, once every entry's name / op is in place
+          op: s.op,
           invalid: false,
           isSeed: s.isSeed,
           options: { ...opts },
         };
       });
+      entries.forEach((e, i) => (e.displayName = composeName(entries, i) ?? e.name ?? e.label));
       index = entries.length - 1;
       fallback = true;
     }

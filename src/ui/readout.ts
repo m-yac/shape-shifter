@@ -1,4 +1,8 @@
-import { type Signature, describeSignature } from "../identify/configurations";
+import {
+  type Signature,
+  describeSignature,
+  summarizeSignature,
+} from "../identify/configurations";
 import { type MarkerKind } from "../render/sceneView";
 import { type OperationKind } from "../operations/types";
 import { config } from "../config";
@@ -9,6 +13,25 @@ import { Screen, Popup, fadeIn } from "./screen";
 // label when a long configuration list wraps. Whole cells, so the indent stays on
 // the character grid (see setupWrap).
 const READOUT_INDENT_COLS = config.ui.readoutIndentCols;
+
+// Longest line the SHAPE box's title and abbreviated summary may occupy before
+// they're broken onto another line.
+const SUMMARY_MAX_CHARS = config.ui.readoutSummaryMaxChars;
+
+/** Greedily break `text` onto lines of at most `maxChars`, at spaces only (a word
+ *  longer than the limit overflows rather than being split). */
+function wrapWords(text: string, maxChars: number): string {
+  const lines: string[] = [];
+  for (const word of text.split(" ")) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last].length + 1 + word.length <= maxChars) {
+      lines[last] += ` ${word}`;
+    } else {
+      lines.push(word);
+    }
+  }
+  return lines.join("\n");
+}
 
 /** "vertex"/"vertices" or "face"/"faces" agreeing with `n`. */
 function plural(element: "vertex" | "face", n: number): string {
@@ -140,6 +163,10 @@ export class Readout {
   // The top-left SELECTION box stays hidden until the first edit, like the SHAPES
   // and HISTORY panels.
   private selectionEnabled: boolean = false;
+  // Whether the SHAPE box shows the full configuration signature rather than the
+  // abbreviated element counts; toggled by the [show more] / [show less] button.
+  private expanded: boolean = false;
+  private toggle: HTMLElement | null = null;
 
   constructor(
     private readonly screen: Screen,
@@ -164,6 +191,21 @@ export class Readout {
     this.polyBox.el.style.display = "none"; // nothing to show until setPoly()
     this.selBox.el.style.display = "none"; //  shown only while something is selected
     screen.onLayout(() => this.layout());
+  }
+
+  /** The [show more] / [show less] button that expands the signature in place. It's
+   *  built once and reused, so a re-render doesn't drop a pending click. */
+  private toggleEl(): HTMLElement {
+    if (!this.toggle) {
+      this.toggle = document.createElement("span");
+      this.toggle.className = "readout-toggle";
+      this.toggle.addEventListener("click", () => {
+        this.expanded = !this.expanded;
+        this.show();
+      });
+    }
+    this.toggle.textContent = this.expanded ? "[show less]" : "[show more]";
+    return this.toggle;
   }
 
   /** Fade the bottom-left POLYHEDRON box in (its first appearance after the intro). */
@@ -246,7 +288,12 @@ export class Readout {
     }
     const title = this.name ?? "Unnamed non-uniform polyhedron";
     const status = this.solving ? "  …relaxing" : "";
-    this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}`;
+    const [body, max_width] = this.expanded
+      ? [describeSignature(this.signature), 1024]
+      : summarizeSignature(this.signature, SUMMARY_MAX_CHARS);
+    const wrap_width = Math.max(max_width, SUMMARY_MAX_CHARS);
+    const head = wrapWords(`${title}${status}`, wrap_width);
+    this.polyEl.replaceChildren(`${head}\n${body}\n`, this.toggleEl());
     this.polyBox.el.style.display = "";
 
     if (this.selectionEnabled && (this.drag || this.selection.size > 0)) {

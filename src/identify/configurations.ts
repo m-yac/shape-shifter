@@ -115,6 +115,112 @@ export function formatConfig(canonical: string): string {
   return out.join(".");
 }
 
+/** Names for small polygon side counts; beyond the table they read "13-gon" etc. */
+// const POLYGON_NAMES = [
+//   "triangle", "quadrilateral", "pentagon", "hexagon", "heptagon", "octagon",
+//   "nonagon", "decagon", "hendecagon", "dodecagon",
+// ];
+const SHORT_POLYGON_NAMES = [
+  "tri", "quad", "pent", "hex", "hept", "oct", "non", "dec", "hendec", "dodec"
+];
+const SHORT_POLYGON_PLURAL_NAMES = [
+  "tris", "quads", "pents", "hexes", "hepts", "octs", "nons", "decs", "hendecs", "dodecs"
+];
+function polygonName(a: number, n: number): string {
+  if (n == 1)
+    return SHORT_POLYGON_NAMES[a - 3] ?? `${a}-gon`;
+  return SHORT_POLYGON_PLURAL_NAMES[a - 3] ?? `${a}-gons`;
+}
+
+/**
+ * Count the elements of a signature map by arity — a face's side count or a
+ * vertex's degree, both being the length of the canonical configuration key —
+ * as [arity, count] pairs sorted by arity.
+ */
+function byArity(m: Record<string, number>): [arity: number, count: number][] {
+  const counts = new Map<number, number>();
+  for (const [k, n] of Object.entries(m)) {
+    const a = k.split(".").length;
+    counts.set(a, (counts.get(a) ?? 0) + n);
+  }
+  return [...counts].sort((x, y) => x[0] - y[0]);
+}
+
+/**
+ * One "N things" clause with a per-arity breakdown: a single arity folds into the
+ * head ("15 pentagonal faces"), several are parenthesized ("12 faces (8 pentagons,
+ * 4 triangles)").
+ */
+function summarizeGroups(
+  groups: [arity: number, count: number][],
+  total: number,
+  noun: string,
+  nounPlural: string,
+  item: (arity: number, count: number) => string,
+): string {
+  const things = total === 1 ? noun : nounPlural;
+  if (groups.length == 1)
+    return `${total} ${things} (all ${item(groups[0][0], total)})`;
+  groups.sort(([_1, n1], [_2, n2]) => n2 - n1);
+  const gs = groups.slice(0, groups.length == 3 ? 3 : 2)
+                   .map(([a, n]) => `${n} ${item(a, n)}`)
+                   .join(", ");
+  if (groups.length <= 3)
+    return `${total} ${things} (${gs})`;
+  else
+    return `${total} ${things} (${gs}, ...)`;
+}
+
+/**
+ * Short form of a signature: element counts with a breakdown by face side count
+ * and vertex degree, but without the configuration strings. Broken across lines so
+ * no line exceeds `maxChars`, only ever between the face/vertex/edge clauses.
+ */
+export function summarizeSignature(sig: Signature, maxChars: number): [string, number] {
+  const faces = summarizeGroups(
+    byArity(sig.faceConfigs),
+    sig.F,
+    "face",
+    "faces",
+    polygonName
+  );
+  const vertices = summarizeGroups(
+    byArity(sig.vertexConfigs),
+    sig.V,
+    "vertex",
+    "vertices",
+    (a) => `deg-${a}`,
+  );
+  const edges = `${sig.E} ${sig.E === 1 ? "edge" : "edges"}`;
+  return packLines([faces, vertices, edges], maxChars);
+}
+
+/**
+ * Join `parts` with ", " onto as few lines as possible without exceeding
+ * `maxChars`, breaking only between parts (so an over-long part simply overflows).
+ * The separating comma stays on the line its part ends.
+ * Also returns the max width of a line.
+ */
+export function packLines(parts: string[], maxChars: number): [string, number] {
+  const lines: string[] = [];
+  let max_width = 0;
+  for (const part of parts) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last].length + 2 + part.length <= maxChars) {
+      lines[last] += `, ${part}`;
+      max_width = Math.max(max_width, lines[last].length);
+    } else {
+      if (last >= 0) {
+        lines[last] += ",";
+        max_width = Math.max(max_width, lines[last].length);
+      }
+      lines.push(part);
+      max_width = Math.max(max_width, lines[last+1].length);
+    }
+  }
+  return [lines.join("\n"), max_width];
+}
+
 /** Human-readable one-liner, handy for the console / readout. */
 export function describeSignature(sig: Signature): string {
   const fmt = (m: Record<string, number>) =>

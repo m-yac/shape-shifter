@@ -166,6 +166,10 @@ export class Screen {
   ) {
     this.applyTheme();
     window.addEventListener("resize", () => this.layout());
+    // Panels that hug their content measure it in px (see Readout.fit), so a first
+    // layout run before the webfont arrives sizes them to the fallback font's
+    // metrics. Re-run once the real font is in.
+    document.fonts?.ready.then(() => this.layout());
   }
 
   /** Register a callback run now and on every (re)layout. */
