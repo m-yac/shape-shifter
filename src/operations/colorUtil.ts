@@ -1,5 +1,6 @@
 import { Color } from "three";
-import { type GeomColor, paletteRGB } from "../geometry/colors";
+import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
+import { config } from "../config";
 
 /**
  * Shared color-propagation helpers for the operations. Each operation reads the old
@@ -83,6 +84,173 @@ export function combine(rule: ColorRule, src: ColorSources, label?: string): Geo
     for (let i = 0; i < c.length; i++) out[i] = (out[i] ?? 0) + c[i] * coeff;
   }
   return out;
+}
+
+/**
+ * Recolor a propeller (`pX`) so it comes out identical whichever twist reached it — the
+ * whirl (off X's join) or the volute (off X's rectification). Both weld into the same
+ * shape but color the new elements as duals of each other, so the two disagree (a whirl's
+ * blade quad takes the color a volute gives a new vertex, and vice versa). Propeller is its
+ * own dual, so it must be colored by rules that are symmetric under face↔vertex — the
+ * `config.colors.operations.propeller` set — read against X's own faces / edges / vertices.
+ *
+ * The fix keys entirely off the elements both paths already agree on: a propeller keeps X's
+ * faces (as n-gons), X's vertices, and X's edges (as the "over-edge" where each edge's two
+ * blades meet), all at their own colors. Given which faces / vertices are those kept ones
+ * (`keptFaceIds` / `keptVertIds` — everything else is new), every new element's color
+ * follows from adjacency to the kept ones, so both paths produce the same result by
+ * construction. Each new element neighbors kept elements of every kind, and we hand its rule
+ * a source for each — an oldFace, an oldEdge, an oldVertex — so the config is free to weight
+ * whichever it likes without changing this code. The neighbors, per element:
+ *   - blade quad (a new face): one kept n-gon (oldFace), one over-edge (oldEdge), and the two
+ *     kept vertices its over-edge corners slid off (oldVertex, their mean);
+ *   - new vertex: its kept vertex (oldVertex), its over-edge (oldEdge), and the two kept
+ *     n-gons the blades flanking its over-edge border (oldFace, their mean);
+ *   - seam edge (kept n-gon ↔ blade): that n-gon (oldFace), the blade's over-edge (oldEdge),
+ *     and the two kept vertices its ends slid off (oldVertex, their mean);
+ *   - spoke edge (kept vertex ↔ new vertex): that vertex (oldVertex), the new vertex's
+ *     over-edge (oldEdge), and the two kept n-gons the flanking blades border (oldFace, mean).
+ * Blade/new-vertex and seam/spoke are dual pairs, so the whole set is symmetric under
+ * face↔vertex, as a self-dual operation demands. Kept faces / vertices and the over-edges are
+ * left exactly as they came in. Nothing here reads another new element's color, so the pass
+ * is order-independent, and every paired source is a mean (order-independent, and a distinct
+ * unordered pair per element) so both twists agree and ids stay unique.
+ */
+export function recolorPropeller(
+  faces: number[][],
+  colors: ColorSet,
+  keptFaceIds: ReadonlySet<number>,
+  keptVertIds: ReadonlySet<number>,
+): ColorSet {
+  const P = config.colors.operations.propeller;
+  const isKeptV = (v: number) => keptVertIds.has(v);
+
+  // Edge → the faces touching it (2 on a closed propeller), and each face's undirected
+  // edge keys (in loop order).
+  const faceOfEdge = new Map<string, number[]>();
+  const edgesOfFace: string[][] = faces.map((loop, fi) => {
+    const keys: string[] = [];
+    for (let i = 0; i < loop.length; i++) {
+      const k = edgeKey(loop[i], loop[(i + 1) % loop.length]);
+      keys.push(k);
+      (faceOfEdge.get(k) ?? faceOfEdge.set(k, []).get(k)!).push(fi);
+    }
+    return keys;
+  });
+  const otherFace = (key: string, fi: number): number | undefined =>
+    (faceOfEdge.get(key) ?? []).find((g) => g !== fi);
+  const isKeptF = (fi: number) => keptFaceIds.has(fi);
+
+  // Each new vertex slides off exactly one kept vertex, reached by its lone spoke.
+  const spokeVertOf = new Map<number, number>(); // new vertex → the kept vertex it slid off
+  for (const [key] of faceOfEdge) {
+    const [a, b] = key.split("_").map(Number);
+    if (isKeptV(a) && !isKeptV(b)) spokeVertOf.set(b, a);
+    else if (isKeptV(b) && !isKeptV(a)) spokeVertOf.set(a, b);
+  }
+
+  // Each blade borders exactly one kept n-gon, across its seam edge (its other new-new edge
+  // is the over-edge, whose far side is the twin blade). Record that n-gon per blade.
+  const keptFaceOfBlade = new Map<number, number>();
+  faces.forEach((_, fi) => {
+    if (isKeptF(fi)) return;
+    for (const k of edgesOfFace[fi]) {
+      const g = otherFace(k, fi);
+      if (g !== undefined && isKeptF(g)) { keptFaceOfBlade.set(fi, g); break; }
+    }
+  });
+
+  const face = colors.face.slice();
+  const vertex = colors.vertex.slice();
+  const edge = new Map(colors.edge);
+  /** Componentwise mean of two id vectors (over the longer length). */
+  const mean2 = (c: GeomColor, d: GeomColor): GeomColor => {
+    const out: number[] = [];
+    for (let i = 0; i < Math.max(c.length, d.length); i++) out[i] = ((c[i] ?? 0) + (d[i] ?? 0)) / 2;
+    return out;
+  };
+
+  // Each new element sits amongst kept elements of every kind, so we offer a source for each
+  // token — oldFace, oldEdge, oldVertex — and let its rule weight whichever it names. Where a
+  // token maps to a pair of kept elements (e.g. two vertices, two n-gons), we pass their
+  // mean, which is order-independent (so both twists agree) and distinct per element (so ids
+  // stay unique).
+
+  // A blade quad borders one kept n-gon and one over-edge; its two over-edge corners each
+  // slid off a kept vertex.
+  const overEdgeOfBlade = new Map<number, string>(); // blade → its over-edge key
+  faces.forEach((loop, fi) => {
+    if (isKeptF(fi)) return;
+    const kf = keptFaceOfBlade.get(fi);
+    let overKey: string | undefined;
+    edgesOfFace[fi].forEach((k, i) => {
+      const a = loop[i], b = loop[(i + 1) % loop.length];
+      const g = otherFace(k, fi);
+      if (!isKeptV(a) && !isKeptV(b) && !(g !== undefined && isKeptF(g))) overKey = k;
+    });
+    if (overKey === undefined || kf === undefined) return;
+    overEdgeOfBlade.set(fi, overKey);
+    const [oa, ob] = overKey.split("_").map(Number);
+    const va = spokeVertOf.get(oa), vb = spokeVertOf.get(ob);
+    const src: ColorSources = { oldFace: face[kf], oldEdge: edge.get(overKey)! };
+    if (va !== undefined && vb !== undefined) src.oldVertex = mean2(vertex[va], vertex[vb]);
+    face[fi] = combine(P.newFace, src, "propeller.newFace");
+  });
+
+  // A new vertex sits on one over-edge and one spoke to its kept vertex; the two blades
+  // flanking its over-edge each border a kept n-gon.
+  const overEdgeOf = new Map<number, string>(); // new vertex → its over-edge key
+  for (const [key] of faceOfEdge) {
+    const [a, b] = key.split("_").map(Number);
+    if (isKeptV(a) || isKeptV(b)) continue;
+    const [f0, f1] = faceOfEdge.get(key)!;
+    if (isKeptF(f0) || isKeptF(f1)) continue; // a seam, not an over-edge
+    overEdgeOf.set(a, key);
+    overEdgeOf.set(b, key);
+  }
+  vertex.forEach((_, vi) => {
+    if (isKeptV(vi)) return;
+    const kv = spokeVertOf.get(vi);
+    const oe = overEdgeOf.get(vi);
+    if (kv === undefined || oe === undefined) return;
+    const [g0, g1] = faceOfEdge.get(oe)!.map((g) => keptFaceOfBlade.get(g));
+    const src: ColorSources = { oldVertex: vertex[kv], oldEdge: edge.get(oe)! };
+    if (g0 !== undefined && g1 !== undefined) src.oldFace = mean2(face[g0], face[g1]);
+    vertex[vi] = combine(P.newVert, src, "propeller.newVert");
+  });
+
+  // Edges: seam (kept n-gon ↔ blade) and spoke (kept vertex ↔ new vertex). Over-edges keep
+  // their incoming (X-edge) color.
+  for (const [key, faceList] of faceOfEdge) {
+    const [a, b] = key.split("_").map(Number);
+    const kept = faceList.filter(isKeptF);
+    if (kept.length === 1 && !isKeptV(a) && !isKeptV(b)) {
+      // Seam: borders one kept n-gon and the blade's over-edge; its two ends each slid off a
+      // kept vertex.
+      const blade = faceList.find((g) => !isKeptF(g));
+      const overKey = blade !== undefined ? overEdgeOfBlade.get(blade) : undefined;
+      const va = spokeVertOf.get(a), vb = spokeVertOf.get(b);
+      if (overKey !== undefined) {
+        const src: ColorSources = { oldFace: face[kept[0]], oldEdge: edge.get(overKey)! };
+        if (va !== undefined && vb !== undefined) src.oldVertex = mean2(vertex[va], vertex[vb]);
+        edge.set(key, combine(P.newFaceEdge, src, "propeller.newFaceEdge"));
+      }
+    } else if (kept.length === 0 && (isKeptV(a) || isKeptV(b))) {
+      // Spoke: joins one kept vertex to a new vertex on its over-edge; the two blades it runs
+      // between each border a kept n-gon.
+      const kv = isKeptV(a) ? a : b;
+      const nv = isKeptV(a) ? b : a;
+      const overKey = overEdgeOf.get(nv);
+      const [g0, g1] = faceList.map((g) => keptFaceOfBlade.get(g));
+      if (overKey !== undefined) {
+        const src: ColorSources = { oldVertex: vertex[kv], oldEdge: edge.get(overKey)! };
+        if (g0 !== undefined && g1 !== undefined) src.oldFace = mean2(face[g0], face[g1]);
+        edge.set(key, combine(P.newVertEdge, src, "propeller.newVertEdge"));
+      }
+    }
+  }
+
+  return { vertex, face, edge };
 }
 
 /**

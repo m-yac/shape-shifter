@@ -317,7 +317,7 @@ export const config = {
         // see investigations/ico_snub_color_rules)
         newVertex: {oldVertex: 3/4, oldEdge: 1/4},
       },
-      // Operation on an edge, where n is in {1,2}:
+      // Operations on an edge, where n is in {1,2}:
       // - oldEdge is the color of the edge being operated on
       // - oldVertex is the color of the nth vertex adjacent to it
       // - oldFace is the color of the nth face adjacent to it
@@ -350,6 +350,23 @@ export const config = {
         // faces via rectify - they keep their color via the newFace rule of
         // truncate)
         newVertex: {oldEdge: 1.0},
+      },
+      // NB: Unlike snub, propeller does operate directly on the original
+      // elements of the shape. Also note that it is its own dual, so if you
+      // switch "vert" and "face", you should get the same set of rules
+      propeller: {
+        // Each new face connects an old face to an old edge, so it is given
+        // the average of the two colors
+        newFace: { oldFace: 1/2, oldEdge: 1/2 },
+        // Each new edge between an old face and a new face is given the
+        // average of the two colors
+        newFaceEdge: { oldFace: 3/4, oldEdge: 1/4 },
+        // Each new edge between an old vertex and a new vertex is given the
+        // average of the two colors
+        newVertEdge: { oldVertex: 3/4, oldEdge: 1/4 },
+        // Each new face connects an old vertex to an old edge, so it is given
+        // the average of the two colors
+        newVert: { oldVertex: 1/2, oldEdge: 1/2 },
       },
     },
   },

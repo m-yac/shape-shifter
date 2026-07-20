@@ -10,7 +10,7 @@ import { type Polyhedron, faceNormalHE, faceCentroidHE } from "../geometry/polyh
 import { type ColorSet, type GeomColor, edgeKey } from "../geometry/colors";
 import { type MorphPlan, type TwistArc } from "./types";
 import { type InViewTest } from "./truncate";
-import { combine, dualRule, lerpFaceColors, stagedFaceColors } from "./colorUtil";
+import { combine, dualRule, lerpFaceColors, recolorPropeller, stagedFaceColors } from "./colorUtil";
 import { config } from "../config";
 
 const BLACK: GeomColor = [0, 0, 0];
@@ -108,6 +108,9 @@ interface WhirlData {
   faces: number[][];
   faceColor: GeomColor[];
   faceStart: GeomColor[];
+  /** Index in `faces` where the apex rings begin: everything before is a welded gyro face
+   *  (a propeller blade at the weld); each ring is one of X's own faces, kept. */
+  keptFaceStart: number;
   vertexColor: GeomColor[];
   edgeColor: Map<string, GeomColor>;
   /** The spoke remnants (cut → its q), which run out to zero length at the propeller. */
@@ -548,8 +551,8 @@ export function buildGyro(
       edgeColor.set(edgeKey(cutOf.get(`${apex}_${q}`)!, remap[q]), c);
     }
 
-    // Vertices: kept ones carry over; a cut ← truncate.newVertex, from the apex it was
-    // cut off (whose color is its original face's) and the spoke it slid along.
+    // Vertices: kept ones carry over; each cut takes the apex it was cut off from (whose
+    // color is its original face's) and the spoke it slid along.
     const vertexColor: GeomColor[] = new Array(n);
     for (let i = 0; i < va.vertexCount; i++) {
       if (remap[i] >= 0) vertexColor[remap[i]] = va.vertexColor[i];
@@ -584,9 +587,8 @@ export function buildGyro(
         const cIn = cutOf.get(`${c}_${loop[(i - 1 + loop.length) % loop.length]}`)!;
         const cOut = cutOf.get(`${c}_${loop[(i + 1) % loop.length]}`)!;
         out.push(cIn, cOut);
-        // (cIn, cOut) is both an edge of this face and one of the new n-gon's sides, so
-        // it is truncate's n-gon perimeter edge: ← truncate.newEdge, from the apex and
-        // the face it borders.
+        // (cIn, cOut) is both an edge of this face and one of the new n-gon's sides — an
+        // n-gon perimeter edge, taking the apex and the face it borders.
         edgeColor.set(edgeKey(cIn, cOut), combine(C.truncate.newEdge, {
           oldVertex: va.vertexColor[c],
           oldFace: welded.faceColors[fi],
@@ -596,10 +598,11 @@ export function buildGyro(
       faceColor.push(welded.faceColors[fi]);
       faceStart.push(weldedStart[fi]);
     }
+    const keptFaceStart = faces.length; // the apex rings (X's faces) follow
     for (const [apex, ring] of rings) {
       faces.push(ring.slice());
-      // ← truncate.newFace, i.e. the apex's own color, which is the color of the original
-      // face it was collapsed from — so the face it re-opens into is the face it was.
+      // The n-gon takes the apex's own color, which is the color of the original face it
+      // was collapsed from — so the face it re-opens into is the face it was.
       const c = combine(C.truncate.newFace, { oldVertex: va.vertexColor[apex] }, "truncate.newFace");
       faceColor.push(c);
       faceStart.push(c); // it grows out of the apex, so it never changes color
@@ -617,8 +620,8 @@ export function buildGyro(
     }
 
     return {
-      vertexCount: n, remap, cuts, faces, faceColor, faceStart, vertexColor, edgeColor,
-      spokes, weldCount, weldMap,
+      vertexCount: n, remap, cuts, faces, faceColor, faceStart, keptFaceStart, vertexColor,
+      edgeColor, spokes, weldCount, weldMap,
     };
   }
 
@@ -631,9 +634,13 @@ export function buildGyro(
    * hexagons become quads, while each apex's n-gon is left ringed by the q's its cuts slid
    * onto. That is Conway's propellor: the original faces, plus two quads per edge.
    *
-   * Nothing is recolored. A cut merging into its q leaves the q, so the vertex keeps the
-   * q's color; the quads keep the hexagons' (which were the gyro faces') and the n-gons
-   * keep the apexes'. Only the spokes go, having shrunk to nothing.
+   * The topology comes straight from the weld (a cut merging into its q leaves the q; the
+   * hexagons lose their two cut corners to become quads; the n-gons stay). Coloring is then
+   * handed to `recolorPropeller`, so a propeller reached this way (off X's join) comes out
+   * identical to one reached as a volute (off X's rectification): X's own faces are the
+   * apex rings (indices ≥ `keptFaceStart`), X's own vertices are the join's original
+   * vertices (the leading `apexStart` indices, unmoved by the whirl), and every new element
+   * is recolored from those.
    */
   function propellerFrom(w: WhirlData): {
     faces: number[][];
@@ -659,16 +666,26 @@ export function buildGyro(
       if (x === y) continue; // a spoke, run out to zero length
       edgeColor.set(edgeKey(x, y), c);
     }
-    return {
+    const keptFaceIds = new Set<number>();
+    for (let fi = w.keptFaceStart; fi < faces.length; fi++) keptFaceIds.add(fi);
+    // X's vertices are the join's original vertices: indices [0, apexStart), which the whirl
+    // leaves in place (only the apexes were cut, and they sit after them).
+    const keptVertIds = new Set<number>();
+    for (let i = 0; apexStart !== null && i < apexStart; i++) keptVertIds.add(i);
+    const recolored = recolorPropeller(
       faces,
-      faceColor: w.faceColor.slice(),
-      vertexColor: w.vertexColor.slice(0, w.weldCount),
-      edgeColor,
-    };
+      { vertex: w.vertexColor.slice(0, w.weldCount), face: w.faceColor.slice(), edge: edgeColor },
+      keptFaceIds,
+      keptVertIds,
+    );
+    return { faces, faceColor: recolored.face, vertexColor: recolored.vertex, edgeColor: recolored.edge };
   }
 
-  // The whirl overlay of each chirality (null for a plain gyro).
+  // The whirl overlay of each chirality (null for a plain gyro), and the propeller each
+  // welds into — precomputed so the live preview's t=1 end and the committed weld read from
+  // the one recolored source (its faces align 1:1 with the whirl's, by index).
   const whirls = apexStart === null ? null : variants.map(buildWhirlData);
+  const propellers = whirls ? whirls.map(propellerFrom) : null;
 
   // ---- Handle: a rotation arc about the join apex the drag ended on.
   //
@@ -782,10 +799,10 @@ export function buildGyro(
     }
     // A whirl runs between two welds, so it reads like a base drag: the join at t=0, the
     // whirl's own colors at t=0.5 (the shape an intermediate release commits), and the
-    // propeller at t=1. The propeller recolors nothing — a hexagon losing its two cut
-    // corners is still the same face — so the whirl's colors are also its welded ones, and
-    // the second half of the schedule holds them.
-    return stagedFaceColors(w.faceStart, w.faceColor, w.faceColor, t, weld);
+    // propeller at t=1. Losing its two cut corners keeps a hexagon the same face, but the
+    // weld recolors it (recolorPropeller), so the second half fades into the propeller's
+    // colors — the same ones commit lands on.
+    return stagedFaceColors(w.faceStart, w.faceColor, propellers![variantIndex()].faceColor, t, weld);
   }
 
   // Where the arc's swept tip sits at signed twist `sg·t` (t=0 at the midpoint).
@@ -834,10 +851,14 @@ export function buildGyro(
       // topology as it stands. At the twist's own weld the cuts have reached their q's, so
       // there is one weld left to do: the propeller.
       if (weld) {
-        const p = propellerFrom(w);
+        const p = propellers![variantIndex()];
         return {
-          mesh: { vertices: positions(1).slice(0, w.weldCount), faces: p.faces },
-          colors: { vertex: p.vertexColor, face: p.faceColor, edge: p.edgeColor },
+          mesh: { vertices: positions(1).slice(0, w.weldCount), faces: p.faces.map((f) => f.slice()) },
+          colors: {
+            vertex: p.vertexColor.map((c) => c.slice()),
+            face: p.faceColor.map((c) => c.slice()),
+            edge: new Map(p.edgeColor),
+          },
         };
       }
       return {

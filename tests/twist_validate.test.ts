@@ -10,6 +10,7 @@ import { buildSnub, buildVolute } from "../src/operations/snub";
 import { buildGyro, buildWhirl } from "../src/operations/gyro";
 import { buildSubdivide } from "../src/operations/subdivide";
 import { computeSignature } from "../src/identify/configurations";
+import { collapse, paletteSwatch, type ColorSet } from "../src/geometry/colors";
 
 const seed = (n: string) => new Polyhedron(getSeed(n));
 const sig = (mesh: { vertices: any; faces: number[][] }) => computeSignature(buildDCEL(mesh));
@@ -291,6 +292,52 @@ describe("propeller (the weld both twists run into)", () => {
       expect([a.V, a.E, a.F]).toEqual([b.F, b.E, b.V]);
       expect(a.vertexConfigs).toEqual(b.faceConfigs);
       expect(a.faceConfigs).toEqual(b.vertexConfigs);
+    });
+  }
+});
+
+// The propeller isn't just the same shape from either twist — it is the same *coloring*.
+// A propeller is self-dual, so its color rules must be symmetric under face↔vertex, keyed
+// to the root solid X: the whirl reaches it off X's join (the dual side), the volute off
+// X's rectification (the primal side), and the two used to disagree (each colored a new
+// face the way the other colored a new vertex). `recolorPropeller` fixes both to the same
+// X-keyed result. These helpers preserve colors through the chain (the earlier `*Plan`
+// helpers reseed, since they only check topology), and the fingerprint is order-independent
+// — the multiset of (element degree → swatch + provenance triple) — so it catches a
+// per-element color difference without depending on how either twist orders its output.
+describe("whirl and volute weld into an identically-colored propeller", () => {
+  const swatchKey = (c: readonly number[]) =>
+    `${paletteSwatch(c)}[${collapse(c).map((x) => x.toFixed(3)).join(",")}]`;
+  const fingerprint = (mesh: { vertices: Vector3[]; faces: number[][] }, colors: ColorSet) => {
+    const vdeg = new Array(mesh.vertices.length).fill(0);
+    for (const f of mesh.faces) for (const v of f) vdeg[v]++;
+    const bag = new Map<string, number>();
+    const add = (s: string) => bag.set(s, (bag.get(s) ?? 0) + 1);
+    mesh.faces.forEach((f, i) => add(`F${f.length}:${swatchKey(colors.face[i])}`));
+    colors.vertex.forEach((c, i) => add(`V${vdeg[i]}:${swatchKey(c)}`));
+    for (const [k, c] of colors.edge) {
+      const [a, b] = k.split("_").map(Number);
+      add(`E${[vdeg[a], vdeg[b]].sort((x, y) => x - y).join("-")}:${swatchKey(c)}`);
+    }
+    return [...bag.entries()].sort().map(([s, n]) => `${n}x ${s}`).join("\n");
+  };
+  const whirlP = (s: string) => {
+    const P = seed(s);
+    const j = buildKis(P, 0, null).commit(1, true);
+    const J = new Polyhedron(j.mesh, j.colors);
+    return buildWhirl(J, P.vertices.length, J.vertices[P.vertices.length].clone()).commit(1, true);
+  };
+  const voluteP = (s: string) => {
+    const P = seed(s);
+    const r = buildSubdivide(P, [P.faces[0][0], P.faces[0][1]]).commit(1, true);
+    const R = new Polyhedron(r.mesh, r.colors);
+    return buildVolute(R, 0, P.faces.length).commit(1, true);
+  };
+  for (const name of PLATONICS) {
+    it(name, () => {
+      const w = whirlP(name);
+      const v = voluteP(name);
+      expect(fingerprint(v.mesh, v.colors)).toEqual(fingerprint(w.mesh, w.colors));
     });
   }
 });

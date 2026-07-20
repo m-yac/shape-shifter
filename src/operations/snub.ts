@@ -12,7 +12,7 @@ import {
   newellNormal,
 } from "../geometry/polyhedron";
 import { type ColorSet, type GeomColor, edgeKey, paletteRGB } from "../geometry/colors";
-import { combine, dualRule, stagedFaceColors } from "./colorUtil";
+import { combine, dualRule, recolorPropeller, stagedFaceColors } from "./colorUtil";
 import { type MorphPlan } from "./types";
 import { type InViewTest } from "./truncate";
 import { closestLineParam, distancePointToRay } from "../util/lines";
@@ -128,8 +128,8 @@ interface VoluteData {
   faces: number[][];
   faceColor: GeomColor[];
   faceStart: GeomColor[];
-  /** Per preview face, the color it takes at the propeller weld: a fan triangle merges
-   *  into its gap triangle, so it shows that triangle's color there. */
+  /** Per preview face, the color it takes at the propeller weld: a fan triangle and its gap
+   *  triangle merge into a blade quad, so both show that quad's recolored color there. */
   faceWeld: GeomColor[];
   vertexColor: GeomColor[];
   edgeColor: Map<string, GeomColor>;
@@ -139,6 +139,12 @@ interface VoluteData {
   weldFaces: number[][];
   weldFaceColor: GeomColor[];
   weldEdgeColor: Map<string, GeomColor>;
+  /** How many of `weldFaces` (the leading block) are X's own kept faces, so the propeller
+   *  recolor can tell them from the blade quads that follow. */
+  weldKeptFaceCount: number;
+  /** The propeller's recolored colors (aligned to `weldFaces`), computed once at build so
+   *  the drag preview's t=1 end and the committed weld share one source. */
+  weldColors: ColorSet;
 }
 
 /**
@@ -551,19 +557,24 @@ export function buildSnub(
     }
 
     // Faces: a figure becomes its fan of kis triangles; every other snub face is kept.
-    // Colors are kis's, read against the snub's own (kis is truncate dualized, so an apex
-    // ← dual(truncate.newFace) = the face it rises from, a triangle ← dual(truncate
-    // .newVertex) from that face and its base edge, a fan edge ← dual(truncate.newEdge)
-    // from that face and the split vertex it hangs off).
+    // Colors are read against the snub's own faces/edges/vertices: an apex takes the figure
+    // face it rises from, a fan triangle takes that face and its base edge, and a fan edge
+    // takes that face and the split vertex it hangs off.
     const faces: number[][] = [];
     const faceColor: GeomColor[] = [];
     const faceStart: GeomColor[] = [];
     const faceWeld: GeomColor[] = [];
     const fans: FanTri[] = [];
+    // Preview-face bookkeeping, so the weld's recolored blade colors can be written back onto
+    // the right preview faces once the propeller is built: origFi → its preview index (kept
+    // faces), and, parallel to `fans`, the preview index of each fan triangle.
+    const previewOfFace = new Map<number, number>();
+    const fanPreview: number[] = [];
     const edgeColor = new Map(va.edgeColor);
     const vertexColor = va.vertexColor.slice();
     for (let fi = 0; fi < va.faces.length; fi++) {
       if (fi >= F || !isFigure(fi)) {
+        previewOfFace.set(fi, faces.length);
         faces.push(va.faces[fi].slice());
         faceColor.push(va.faceColor[fi]);
         faceStart.push(va.faceColor[fi]);
@@ -574,6 +585,7 @@ export function buildSnub(
       const figColor = va.faceColor[fi];
       vertexColor[a.index] = combine(dualRule(C.truncate.newFace), { oldFace: figColor });
       for (const fan of fansOf.get(fi)!) {
+        fanPreview.push(faces.length);
         faces.push([fan.u, fan.w, a.index]);
         fans.push(fan);
         faceColor.push(combine(dualRule(C.truncate.newVertex), {
@@ -583,7 +595,8 @@ export function buildSnub(
         // The fan lies flat inside the figure at t=0, so it starts as that one face and
         // tints into its own colors as the apex rises.
         faceStart.push(figColor);
-        // …and at the weld it disappears into the gap triangle beside it, taking its color.
+        // …and at the weld it merges into the gap triangle beside it, forming a blade quad;
+        // this is overwritten below with that quad's recolored propeller color.
         faceWeld.push(va.faceColor[fan.gap]);
         edgeColor.set(edgeKey(fan.u, a.index), combine(dualRule(C.truncate.newEdge), {
           oldFace: figColor,
@@ -606,6 +619,9 @@ export function buildSnub(
       weldFaces.push(va.faces[fi].slice());
       weldFaceColor.push(va.faceColor[fi]);
     }
+    // Everything pushed so far is one of X's own faces (the rotated originals); the fan/gap
+    // quads that follow are the propeller's new blades.
+    const weldKeptFaceCount = weldFaces.length;
     for (const fan of fans) {
       weldFaces.push([fan.apex, fan.u, fan.z, fan.w]);
       weldFaceColor.push(va.faceColor[fan.gap]);
@@ -613,9 +629,29 @@ export function buildSnub(
     const weldEdgeColor = new Map(edgeColor);
     for (const fan of fans) weldEdgeColor.delete(edgeKey(fan.u, fan.w));
 
+    // Recolor the propeller once — the same pass commit runs — so the live preview's t=1 end
+    // and the committed weld share one source. The blade quads follow the kept faces in
+    // `weldFaces` (one per fan, in `fans` order), so each fan's recolored color goes back
+    // onto both preview faces that merge into it: the fan triangle and its gap triangle.
+    const keptFaceIds = new Set<number>();
+    for (let fi = 0; fi < weldKeptFaceCount; fi++) keptFaceIds.add(fi);
+    const keptVertIds = new Set(apexes.map((a) => a.index));
+    const weldColors = recolorPropeller(
+      weldFaces.map((f) => f.slice()),
+      { vertex: vertexColor.slice(), face: weldFaceColor.slice(), edge: new Map(weldEdgeColor) },
+      keptFaceIds,
+      keptVertIds,
+    );
+    for (let j = 0; j < fans.length; j++) {
+      const blade = weldColors.face[weldKeptFaceCount + j];
+      faceWeld[fanPreview[j]] = blade;
+      const gp = previewOfFace.get(fans[j].gap);
+      if (gp !== undefined) faceWeld[gp] = blade;
+    }
+
     return {
       vertexCount: idx, apexes, faces, faceColor, faceStart, faceWeld, vertexColor,
-      edgeColor, fans, weldFaces, weldFaceColor, weldEdgeColor,
+      edgeColor, fans, weldFaces, weldFaceColor, weldEdgeColor, weldKeptFaceCount, weldColors,
     };
   }
 
@@ -673,13 +709,15 @@ export function buildSnub(
     const vol = volutes?.[variantIndex()];
     if (vol && weld) {
       // The twist's own weld: the fans have risen to where they lie flat against their gap
-      // triangles, so merge each pair into its quad — the propeller.
+      // triangles, so merge each pair into its quad — the propeller. Its colors were recolored
+      // from X at build (see recolorPropeller / weldColors), so both twists produce the
+      // identical propeller and the drag preview's t=1 end already matches this commit.
       return {
         mesh: { vertices: positions(1), faces: vol.weldFaces.map((f) => f.slice()) },
         colors: {
-          vertex: vol.vertexColor.slice(),
-          face: vol.weldFaceColor.slice(),
-          edge: new Map(vol.weldEdgeColor),
+          vertex: vol.weldColors.vertex.map((c) => c.slice()),
+          face: vol.weldColors.face.map((c) => c.slice()),
+          edge: new Map(vol.weldColors.edge),
         },
       };
     }
